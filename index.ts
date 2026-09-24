@@ -3,7 +3,7 @@
 
 import { getActive, isProbeName, requireProbe, sequenceName } from "./src/guard";
 import { buildReport, readEnv, type Env } from "./src/report";
-import { RUN_ALL_ORDER, runOne, scanSetup, TESTS, type TestResult } from "./src/tests";
+import { resetRunState, RUN_ALL_ORDER, runOne, scanSetup, TESTS, type TestResult } from "./src/tests";
 import { errText } from "./src/timeline";
 import { answer, byId, clearLog, isAsking, log, setReportText } from "./src/ui";
 
@@ -100,6 +100,7 @@ async function exclusive(label: string, fn: () => Promise<void>): Promise<void> 
 async function runAll(): Promise<void> {
   log(`Hepsini çalıştır — sıra: ${RUN_ALL_ORDER.join(", ")} (silen testler sona)`, "head");
   results.clear(); // eski koşunun sonuçları bu raporu/kararı etkilemesin
+  resetRunState();
   setupLines = [];
   let pin: string;
   try {

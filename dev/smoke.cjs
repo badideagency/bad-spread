@@ -1,50 +1,45 @@
 // SMOKE TEST — Premiere OLMADAN, sahte ("mock") bir premierepro modülüyle dist/'i Node'da çalıştırır.
-// Amaç: panelin kod yollarını (akış, sorular, rapor, PROBE_ kilidi, hata yakalama) denemek.
+// Amaç: panelin kod yollarını (akış, sorular, rapor, PROBE_ kilidi, hata yakalama/sınıflama) denemek.
 // UYARI: Buradaki davranışlar TAHMİNDİR, gerçek API gerçeği DEĞİLDİR. Gerçek cevap yalnızca Premiere'deki testten gelir.
-// Kullanım: npm run build && node dev/smoke.cjs
+// v0.1.0'ın gerçek Premiere 26.5.1 raporundan alınan tek kesin davranış burada da uygulanır:
+//   bir transaction işlendikten sonra ESKİ TrackItem / seçim nesneleri "The script object is no longer valid" verir.
+// Kullanım: npm run build && node dev/smoke.cjs [happy|grim|throw]
 
 /* eslint-disable */
 const Module = require("module");
 const path = require("path");
 
 const TPS = 254016000000n; // tick / saniye
-// "happy": her şey yolunda varsayımı. "grim": kötümser varsayımlar (hata/yedek yollarını denemek için).
-// "throw": olmayan track'e clone istisna fırlatır, gerisi yolunda (yedek yol + karar mantığı denenir).
-const MODE = ["grim", "throw"].includes(process.argv[2]) ? process.argv[2] : "happy";
+// "happy": her şey yolunda. "grim": kötümser varsayımlar (API yok / davranış yok → CEP kararı).
+// "throw": olmayan track'e clone/overwrite istisna fırlatır (sınıflanamayan hata → GEÇİCİ karar, CEP DEĞİL).
+// "strict": happy + clearSelection/setSelection de eski referansları geçersiz kılar (en kötü ihtimal) → yine hepsi PASS olmalı.
+const MODE = ["grim", "throw", "strict"].includes(process.argv[2]) ? process.argv[2] : "happy";
 const G = MODE === "grim";
 const TH = MODE === "throw";
+const ST = MODE === "strict";
 const sec = (s) => BigInt(Math.round(s * 1000)) * (TPS / 1000n);
 
 // ------------------------------------------------------------ sahte model
 let nextId = 1;
-const mkTT = (t) => ({
-  ticks: t.toString(),
-  seconds: Number(t) / Number(TPS),
-  ticksNumber: Number(t),
-});
+let mockGen = 0; // her işlenen transaction / undo'da artar; eski sarmalayıcılar geçersiz olur
+const STALE = "The script object is no longer valid";
+const stale = (w) => {
+  if (w.__gen !== mockGen) throw new Error(STALE);
+};
+const mkTT = (t) => ({ ticks: t.toString(), seconds: Number(t) / Number(TPS), ticksNumber: Number(t) });
 const mkGuid = (s) => ({ toString: () => s });
 const projItems = {
-  cam: { name: "CAM_A001.mp4", getId: () => "pi-cam", dur: sec(10) },
-  ext1: { name: "ZOOM_01.wav", getId: () => "pi-ext1", dur: sec(8) },
-  ext2: { name: "ZOOM_02.wav", getId: () => "pi-ext2", dur: sec(6) },
+  cam: { name: "CAM_A001.MP4", getId: () => "pi-cam", dur: sec(12) },
+  cam2: { name: "CAM_A002.MP4", getId: () => "pi-cam2", dur: sec(10) },
+  ext1: { name: "260912_133224_Tr1.WAV", getId: () => "pi-ext1", dur: sec(8) },
+  ext2: { name: "260912_133224_Tr2.WAV", getId: () => "pi-ext2", dur: sec(6) },
+  ext3: { name: "ZOOM0001.WAV", getId: () => "pi-ext3", dur: sec(12) },
 };
+for (const p of Object.values(projItems)) p.__gen = -1; // ProjectItem'lar kuşaktan bağımsız
 
-function mkClip(kind, pi, start, end, linkId = null) {
-  return {
-    id: nextId++,
-    kind,
-    pi,
-    start,
-    end,
-    inPt: 0n,
-    outPt: end - start,
-    speed: 1,
-    disabled: false,
-    name: pi.name,
-    linkId,
-  };
+function mkClip(kind, pi, start, end, linkId = null, inPt = 0n) {
+  return { id: nextId++, kind, pi, start, end, inPt, outPt: inPt + (end - start), speed: 1, disabled: false, name: pi.name, linkId };
 }
-
 function mkSequence(name, guid) {
   return { name, guid, v: [[], [], []], a: [[], [], []], sel: new Set() };
 }
@@ -53,18 +48,15 @@ const state = { sequences: [], activeGuid: null };
 const hooks = { onVCount: null, onCloneSeq: null, onGetActive: null };
 const undoStack = [];
 
-function deepCopy() {
-  return JSON.parse(
-    JSON.stringify(state, (k, v) => (typeof v === "bigint" ? { __b: v.toString() } : v instanceof Set ? { __s: [...v] } : k === "pi" ? v.getId() : v))
-  );
-}
+const repl = (k, v) => (typeof v === "bigint" ? { __b: v.toString() } : v instanceof Set ? { __s: [...v] } : k === "pi" ? v.getId() : v);
+const rev = (k, v) => {
+  if (v && typeof v === "object" && "__b" in v) return BigInt(v.__b);
+  if (v && typeof v === "object" && "__s" in v) return new Set(v.__s);
+  if (k === "pi") return Object.values(projItems).find((p) => p.getId() === v);
+  return v;
+};
+const deepCopy = () => JSON.parse(JSON.stringify(state, repl));
 function restore(snap) {
-  const rev = (k, v) => {
-    if (v && typeof v === "object" && "__b" in v) return BigInt(v.__b);
-    if (v && typeof v === "object" && "__s" in v) return new Set(v.__s);
-    if (k === "pi") return Object.values(projItems).find((p) => p.getId() === v);
-    return v;
-  };
   const s = JSON.parse(JSON.stringify(snap), rev);
   state.sequences = s.sequences;
   state.activeGuid = s.activeGuid;
@@ -72,7 +64,9 @@ function restore(snap) {
 function undo() {
   const s = undoStack.pop();
   if (s) restore(s);
+  mockGen++;
 }
+const deepCopyOne = (seq) => JSON.stringify(seq, repl);
 
 const seqByGuid = (g) => state.sequences.find((s) => s.guid === g);
 function findClip(id) {
@@ -86,17 +80,27 @@ function findClip(id) {
 }
 function need(id) {
   const f = findClip(id);
-  if (!f) throw new Error(`stale track item ${id}`);
+  if (!f) throw new Error(STALE);
   return f;
 }
-function ensureTrack(grp, idx) {
+const ensureTrack = (grp, idx) => {
   while (grp.length <= idx) grp.push([]);
+};
+function placeOverwrite(grp, idx, clip) {
+  ensureTrack(grp, idx);
+  grp[idx] = grp[idx].filter((x) => x.end <= clip.start || x.start >= clip.end);
+  grp[idx].push(clip);
 }
 
 function wrapItem(id) {
-  const g = (fn) => async () => fn(need(id));
-  return {
-    __id: id,
+  const w = { __id: id, __gen: mockGen };
+  const g = (fn) => async () => (stale(w), fn(need(id)));
+  const act = (fn) => (t) => {
+    stale(w);
+    need(id);
+    return { apply: () => fn(need(id), BigInt(t.ticks)) };
+  };
+  Object.assign(w, {
     getStartTime: g((f) => mkTT(f.c.start)),
     getEndTime: g((f) => mkTT(f.c.end)),
     getInPoint: g((f) => mkTT(f.c.inPt)),
@@ -107,24 +111,31 @@ function wrapItem(id) {
     getTrackIndex: g((f) => f.t),
     getIsSelected: g((f) => f.s.sel.has(id)),
     getProjectItem: g((f) => f.c.pi),
-  };
+    // kırpma anlamı (tahmin): in/out değişince start sabit kalır; start/end değişince karşı kenar sabit kalır
+    createSetInPointAction: act(({ c }, t) => ((c.inPt = t), (c.end = c.start + (c.outPt - c.inPt)))),
+    createSetOutPointAction: act(({ c }, t) => ((c.outPt = t), (c.end = c.start + (c.outPt - c.inPt)))),
+    createSetStartAction: act(({ c }, t) => ((c.inPt += t - c.start), (c.start = t))),
+    createSetEndAction: act(({ c }, t) => ((c.outPt += t - c.end), (c.end = t))),
+  });
+  return w;
 }
 
 function wrapSelection(ids) {
   const set = new Set(ids);
-  return {
-    __ids: set,
-    addItem: (it) => (set.add(it.__id), true),
-    removeItem: (it) => set.delete(it.__id),
-    getTrackItems: async () => [...set].filter((i) => findClip(i)).map(wrapItem),
-  };
+  const w = { __ids: set, __gen: mockGen };
+  Object.assign(w, {
+    addItem: (it) => (stale(w), stale(it), set.add(it.__id), true),
+    removeItem: (it) => (stale(w), set.delete(it.__id)),
+    getTrackItems: async () => (stale(w), [...set].filter((i) => findClip(i)).map(wrapItem)),
+  });
+  return w;
 }
 
 function wrapTrack(seqGuid, kind, idx) {
   return {
     getTrackItems: () => {
       const s = seqByGuid(seqGuid);
-      return (kind === "V" ? s.v : s.a)[idx].map((c) => wrapItem(c.id));
+      return ((kind === "V" ? s.v : s.a)[idx] ?? []).map((c) => wrapItem(c.id));
     },
   };
 }
@@ -145,99 +156,98 @@ function wrapSequence(guid) {
       for (const grp of [s().v, s().a]) for (const tr of grp) for (const c of tr) if (c.end > m) m = c.end;
       return mkTT(m);
     },
+    clearSelection: async () => ((s().sel = new Set()), ST && mockGen++, true),
     getSelection: async () => wrapSelection([...s().sel]),
     setSelection: (sel) => {
+      stale(sel);
       if (G) return false;
       s().sel = new Set(sel.__ids);
+      if (ST) mockGen++;
       return true;
     },
     createCloneAction: () => {
-      if (G) throw new Error("mock: createCloneAction yok");
+      if (G) throw new TypeError("sequence.createCloneAction is not a function");
       return {
-      apply() {
-        const src = s();
-        const copy = JSON.parse(deepCopyOne(src));
-        const g = restoreSeqInto(copy, src.name + " Copy", "guid-" + nextId++);
-        if (hooks.onCloneSeq) hooks.onCloneSeq(g);
-      },
-    };
+        apply() {
+          const seq = JSON.parse(deepCopyOne(s()), rev);
+          seq.name = s().name + " Copy";
+          seq.guid = "guid-" + nextId++;
+          seq.sel = new Set();
+          for (const grp of [seq.v, seq.a]) for (const tr of grp) for (const c of tr) c.id = nextId++;
+          state.sequences.push(seq);
+          if (hooks.onCloneSeq) hooks.onCloneSeq(seq.guid);
+        },
+      };
     },
   };
-}
-function deepCopyOne(seq) {
-  return JSON.stringify(seq, (k, v) => (typeof v === "bigint" ? { __b: v.toString() } : v instanceof Set ? { __s: [] } : k === "pi" ? v.getId() : v));
-}
-function restoreSeqInto(raw, name, guid) {
-  const rev = (k, v) => {
-    if (v && typeof v === "object" && "__b" in v) return BigInt(v.__b);
-    if (v && typeof v === "object" && "__s" in v) return new Set();
-    if (k === "pi") return Object.values(projItems).find((p) => p.getId() === v);
-    return v;
-  };
-  const seq = JSON.parse(JSON.stringify(raw), rev);
-  seq.name = name;
-  seq.guid = guid;
-  for (const grp of [seq.v, seq.a]) for (const tr of grp) for (const c of tr) c.id = nextId++;
-  state.sequences.push(seq);
-  return guid;
-}
-
-function cloneClipTo(seq, c, trackIdx, linkId) {
-  const grp = c.kind === "V" ? seq.v : seq.a;
-  ensureTrack(grp, trackIdx);
-  const n = { ...c, id: nextId++, linkId };
-  // overwrite: çakışanı sil
-  grp[trackIdx] = grp[trackIdx].filter((x) => x.end <= n.start || x.start >= n.end);
-  grp[trackIdx].push(n);
 }
 
 const editorFor = (seqW) => {
   const guid = seqW.guid.toString();
+  const seq = () => seqByGuid(guid);
+  const grpOf = (k) => (k === "V" ? seq().v : seq().a);
+  const target = (kind, idx) => {
+    if (TH && idx >= grpOf(kind).length) throw new Error(`mock: hedef track ${idx} yok`);
+    return G ? Math.min(idx, grpOf(kind).length - 1) : idx;
+  };
   return {
-    createCloneTrackItemAction: (item, off, vOff, aOff, align, isInsert) => ({
-      apply() {
-        const f = need(item.__id);
-        const seq = seqByGuid(guid);
-        const newLink = f.c.linkId ? "L" + nextId++ : null;
-        const offT = BigInt(off.ticks);
-        const shift = (c) => ({ ...c, start: c.start + offT, end: c.end + offT });
-        const grpOf = (k) => (k === "V" ? seq.v : seq.a);
-        const tgt = (c, t, off) => {
-          if (TH && t + off >= grpOf(c.kind).length) throw new Error(`mock: hedef track ${t + off} yok`);
-          return G ? Math.min(t + off, grpOf(c.kind).length - 1) : t + off;
-        };
-        cloneClipTo(seq, shift(f.c), tgt(f.c, f.t, f.c.kind === "V" ? vOff : aOff), newLink);
-        if (f.c.linkId && !G) {
-          for (const grp of [seq.v, seq.a])
-            for (let t = 0; t < grp.length; t++)
-              for (const p of grp[t])
-                if (p.linkId === f.c.linkId && p.id !== f.c.id) cloneClipTo(seq, shift(p), t + (p.kind === "V" ? vOff : aOff), newLink);
-        }
-      },
-    }),
-    createRemoveItemsAction: (sel, ripple, mt) => ({
-      apply() {
-        const seq = seqByGuid(guid);
-        for (const id of sel.__ids) {
-          const f = findClip(id);
-          if (!f || f.s !== seq) continue;
-          f.grp[f.t] = f.grp[f.t].filter((x) => x.id !== id);
-          if (G) {
-            const d = f.c.end - f.c.start;
-            for (const x of f.grp[f.t]) if (x.start >= f.c.end) (x.start -= d), (x.end -= d);
+    createCloneTrackItemAction: (item, off, vOff, aOff, align, isInsert) => {
+      stale(item);
+      return {
+        apply() {
+          const f = need(item.__id);
+          const newLink = f.c.linkId ? "L" + nextId++ : null;
+          const offT = BigInt(off.ticks);
+          const copy = (c, t) =>
+            placeOverwrite(grpOf(c.kind), target(c.kind, t + (c.kind === "V" ? vOff : aOff)), {
+              ...c,
+              id: nextId++,
+              start: c.start + offT,
+              end: c.end + offT,
+              linkId: newLink,
+            });
+          const partners = [];
+          if (f.c.linkId && !G)
+            for (const grp of [seq().v, seq().a])
+              for (let t = 0; t < grp.length; t++) for (const p of grp[t]) if (p.linkId === f.c.linkId && p.id !== f.c.id) partners.push([p, t]);
+          copy(f.c, f.t);
+          for (const [p, t] of partners) copy(p, t);
+        },
+      };
+    },
+    createRemoveItemsAction: (sel, ripple, mt) => {
+      stale(sel);
+      const ids = [...sel.__ids];
+      return {
+        apply() {
+          for (const id of ids) {
+            const f = findClip(id);
+            if (!f || f.s !== seq()) continue;
+            f.grp[f.t] = f.grp[f.t].filter((x) => x.id !== id);
+            if (G) {
+              const d = f.c.end - f.c.start;
+              for (const x of f.grp[f.t]) if (x.start >= f.c.end) (x.start -= d), (x.end -= d);
+            }
           }
-        }
-      },
-    }),
+        },
+      };
+    },
     createInsertProjectItemAction: (pi, time, vIdx, aIdx, limitShift) => ({
       apply() {
-        const seq = seqByGuid(guid);
         const st = BigInt(time.ticks);
         const L = "L" + nextId++;
-        ensureTrack(seq.v, vIdx);
-        ensureTrack(seq.a, aIdx);
-        seq.v[vIdx].push({ ...mkClip("V", pi, st, st + pi.dur, L) });
-        seq.a[aIdx].push({ ...mkClip("A", pi, st, st + pi.dur, L) });
+        ensureTrack(seq().v, vIdx);
+        ensureTrack(seq().a, aIdx);
+        seq().v[vIdx].push(mkClip("V", pi, st, st + pi.dur, L));
+        seq().a[aIdx].push(mkClip("A", pi, st, st + pi.dur, L));
+      },
+    }),
+    createOverwriteItemAction: (pi, time, vIdx, aIdx) => ({
+      apply() {
+        const st = BigInt(time.ticks);
+        const L = "L" + nextId++;
+        placeOverwrite(seq().v, target("V", vIdx), mkClip("V", pi, st, st + pi.dur, L));
+        if (!G) placeOverwrite(seq().a, target("A", aIdx), mkClip("A", pi, st, st + pi.dur, L));
       },
     }),
   };
@@ -249,13 +259,10 @@ const ppro = {
     TrackItemType: { EMPTY: 0, CLIP: 1, TRANSITION: 2, PREVIEW: 3, FEEDBACK: 4 },
     MediaType: { ANY: 0, DATA: 1, VIDEO: 2, AUDIO: 3 },
   },
-  Application: { version: Promise.resolve("26.0.0-MOCK") },
-  TickTime: { TIME_ZERO: mkTT(0n) },
+  TickTime: { TIME_ZERO: mkTT(0n), createWithTicks: (t) => mkTT(BigInt(t)) },
   TrackItemSelection: {
-    createEmptySelection: (cb) => {
-      if (G) throw new Error("mock: createEmptySelection desteklenmiyor");
-      cb(wrapSelection([]));
-      return true;
+    createEmptySelection: () => {
+      throw new Error("v0.1.1 createEmptySelection KULLANMAMALI (Adobe kalıbı: getSelection)");
     },
   },
   SequenceEditor: { getEditor: (s) => editorFor(s) },
@@ -268,10 +275,7 @@ projectW = {
   },
   getSequences: async () => state.sequences.map((s) => wrapSequence(s.guid)),
   lockedAccess: (cb) => cb(),
-  setActiveSequence: async (seqW) => {
-    state.activeGuid = seqW.guid.toString();
-    return true;
-  },
+  setActiveSequence: async (seqW) => ((state.activeGuid = seqW.guid.toString()), true),
   executeTransaction: (cb, name) => {
     const acts = [];
     cb({
@@ -285,21 +289,27 @@ projectW = {
       for (const a of acts) a.apply();
     } catch (e) {
       restore(snap); // atomik: hata olursa hiçbir şey uygulanmaz
+      mockGen++;
       throw e;
     }
     undoStack.push(snap);
+    mockGen++; // KESİN DAVRANIŞ (26.5.1): işlenen transaction eski referansları geçersiz kılar
     return true;
   },
 };
 
-// ------------------------------------------------------------ kurulum
+// ------------------------------------------------------------ kurulum (kullanıcının gerçek düzeni)
 function setupProbe(withOtherProbe = false) {
   const s = mkSequence("PROBE_test", "guid-probe");
-  const L = "Lcam";
-  s.v[0].push(mkClip("V", projItems.cam, 0n, sec(10), L));
-  s.a[0].push(mkClip("A", projItems.cam, 0n, sec(10), L));
-  s.a[0].push(mkClip("A", projItems.ext1, sec(10), sec(18)));
-  s.a[0].push(mkClip("A", projItems.ext2, sec(18), sec(24)));
+  // V1: kameralar arka arkaya (sesleri A1'de bağlı). CAM_A001 kırpılmış: in=1s out=11s
+  s.v[0].push(mkClip("V", projItems.cam, 0n, sec(10), "Lcam", sec(1)));
+  s.a[0].push(mkClip("A", projItems.cam, 0n, sec(10), "Lcam", sec(1)));
+  s.v[0].push(mkClip("V", projItems.cam2, sec(10), sec(20), "Lcam2"));
+  s.a[0].push(mkClip("A", projItems.cam2, sec(10), sec(20), "Lcam2"));
+  // A2: iki harici ses arka arkaya; A3: bir harici ses
+  s.a[1].push(mkClip("A", projItems.ext1, 0n, sec(8)));
+  s.a[1].push(mkClip("A", projItems.ext2, sec(8), sec(14)));
+  s.a[2].push(mkClip("A", projItems.ext3, 0n, sec(12)));
   const other = mkSequence("Main Edit", "guid-main");
   other.v[0].push(mkClip("V", projItems.cam, 0n, sec(10), "Lmain"));
   state.sequences = [s, other];
@@ -310,6 +320,7 @@ function setupProbe(withOtherProbe = false) {
   }
   state.activeGuid = "guid-probe";
   undoStack.length = 0;
+  mockGen++;
 }
 
 // ------------------------------------------------------------ sahte DOM
@@ -341,10 +352,7 @@ function mkEl(id) {
   };
   return el;
 }
-global.document = {
-  getElementById: (id) => (els[id] ??= mkEl(id)),
-  createElement: () => mkEl(null),
-};
+global.document = { getElementById: (id) => (els[id] ??= mkEl(id)), createElement: () => mkEl(null) };
 let copied = null;
 Object.defineProperty(globalThis, "navigator", {
   value: { clipboard: { setContent: async (d) => (copied = d["text/plain"]) } },
@@ -354,31 +362,27 @@ Object.defineProperty(globalThis, "navigator", {
 Module._load = ((orig) =>
   function (request) {
     if (request === "premierepro") return ppro;
-    if (request === "uxp") return { versions: { uxp: "uxp-MOCK" }, host: { name: "premierepro", version: "mock" } };
+    if (request === "uxp") return { versions: { uxp: "uxp-MOCK" }, host: { name: "premierepro", version: "26.5.1" } };
     return orig.apply(this, arguments);
   })(Module._load);
 
-// ------------------------------------------------------------ çalıştır
+// ------------------------------------------------------------ yardımcılar
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const logText = () => (els.log?.children ?? []).map((c) => c.textContent).join("\n");
 const fail = (m) => {
   console.error("SMOKE FAIL:", m);
   process.exit(1);
 };
-
 let logMark = 0;
 const markLog = () => (logMark = (els.log?.children ?? []).length);
 const newLog = () => (els.log?.children ?? []).slice(logMark).map((c) => c.textContent).join("\n");
 
-/** "Hepsini çalıştır" bitene (Bitti. / durduruldu / KİLİT) kadar soruları cevaplar. */
-async function waitIdle(answerer, timeoutMs = 60000) {
+/** "Hepsini çalıştır" bitene (Bitti. / durduruldu) kadar soruları cevaplar. */
+async function waitIdle(answerer, timeoutMs = 90000) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
     await sleep(25);
-    if (els.ask?.style.display === "block") {
-      const q = els["ask-text"].textContent;
-      await answerer(q);
-    }
+    if (els.ask?.style.display === "block") await answerer(els["ask-text"].textContent);
     if (/Bitti\.|kalan testler durduruldu/.test(newLog())) {
       await sleep(100);
       return;
@@ -386,83 +390,121 @@ async function waitIdle(answerer, timeoutMs = 60000) {
   }
   fail("zaman aşımı");
 }
+/** Kullanıcı sorudaki track'teki videoya tıklar → Linked Selection bağlı partnerleri de seçer. */
+function clickVideoIn(q) {
+  const m = q.match(/(V\d+) üzerindeki (?:KOPYA|YENİ) videoya/);
+  if (!m) return;
+  const s = seqByGuid("guid-probe");
+  const v = (s.v[Number(m[1].slice(1)) - 1] ?? []).find((c) => c.pi === projItems.cam);
+  if (!v) return;
+  s.sel = new Set([v.id, ...s.v.flat().concat(s.a.flat()).filter((c) => v.linkId && c.linkId === v.linkId).map((c) => c.id)]);
+}
 const happyAnswer = async (q) => {
-  if (/Ctrl\+Z/.test(q)) undo();
-  if (/KOPYA videoya/.test(q)) {
-    const s = seqByGuid("guid-probe");
-    const v = s.v.flat().filter((c) => c.pi === projItems.cam).pop();
-    s.sel = new Set(s.v.flat().concat(s.a.flat()).filter((c) => c.linkId && c.linkId === v.linkId).map((c) => c.id));
-  }
+  if (/Ctrl\+Z/.test(q)) undo(); // kullanıcı bir kez geri alıyor
+  clickVideoIn(q);
   els["ask-yes"].click();
   await sleep(30);
 };
-
-async function grimScenario() {
+function summary(report) {
+  const out = {};
+  for (const t of ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8"]) {
+    const m = report.match(new RegExp(`^  ${t} .*? (PASS|FAIL|BELİRSİZ|ÇALIŞMADI)(?: \\[([^\\]]+)\\])?$`, "m"));
+    if (!m) fail(`${t} özeti yok`);
+    out[t] = m[2] ? `${m[1]} [${m[2]}]` : m[1];
+  }
+  return out;
+}
+function expectSummary(report, want) {
+  const got = summary(report);
+  for (const [t, w] of Object.entries(want)) if (got[t] !== w) fail(`${t}: beklenen ${w}, gelen ${got[t]}`);
+}
+async function runAll(answerer) {
   markLog();
   els["btn-all"].click();
   await sleep(50);
-  await waitIdle(async (q) => {
+  await waitIdle(answerer);
+  return els.report.value;
+}
+const mainUntouched = () => {
+  const main = seqByGuid("guid-main");
+  if (main.v[0].length !== 1 || main.v.length !== 3 || main.a.length !== 3) fail("Main Edit değişti!");
+};
+
+// ------------------------------------------------------------ senaryolar
+async function grimScenario() {
+  const report = await runAll(async () => {
     els["ask-no"].click(); // kullanıcı her şeye "Hayır" diyor, Ctrl+Z'ye de basmıyor
     await sleep(30);
   });
-  const report = els.report.value;
   console.log(report);
-  // T3 BELİRSİZ: T6'da Ctrl+Z yapılmadığı için asıl kamera videosu silinmiş kalıyor (tasarım gereği).
-  const expect = { T1: "FAIL", T2: "PASS", T3: "BELİRSİZ", T4: "PASS", T5: "FAIL", T6: "FAIL", T7: "FAIL" };
-  for (const [t, want] of Object.entries(expect)) {
-    const m = report.match(new RegExp(`^  ${t} .*? (PASS|FAIL|BELİRSİZ|ÇALIŞMADI)$`, "m"));
-    if (!m) fail(`${t} özeti yok`);
-    if (m[1] !== want) fail(`${t}: beklenen ${want}, gelen ${m[1]}`);
-  }
-  for (const needle of [
-    "HATA (yakalandı): Error: mock: createCloneAction yok",
-    "YEDEK YÖNTEM",
-    "yedek yol: getSelection + removeItem",
-    "Öneri: CEP'e geç",
-    "T7: ripple=false olsa bile",
-  ])
+  expectSummary(report, {
+    T1: "FAIL [API]",
+    T2: "FAIL [API]",
+    T3: "FAIL [API]",
+    T4: "PASS",
+    T5: "FAIL [API]",
+    T6: "BELİRSİZ",
+    T7: "FAIL [API]",
+    T8: "FAIL [API]",
+  });
+  for (const needle of ["Öneri: CEP'e geç", "Engeller (API — CEP gerekçesi):", "birebir: HAYIR", "YEDEK YÖNTEM"])
     if (!report.includes(needle)) fail(`raporda yok: ${needle}`);
-  const main = seqByGuid("guid-main");
-  if (main.v[0].length !== 1 || main.v.length !== 3 || main.a.length !== 3) fail("Main Edit değişti!");
+  mainUntouched();
   console.log("\nSMOKE (grim) OK");
   process.exit(0);
 }
 
 async function throwScenario() {
-  markLog();
-  els["btn-all"].click();
-  await sleep(50);
-  await waitIdle(async (q) => {
-    if (/Ctrl\+Z/.test(q)) undo();
-    if (/KOPYA videoya/.test(q)) {
-      const s = seqByGuid("guid-probe");
-      const v = s.v.flat().filter((c) => c.pi === projItems.cam).pop();
-      s.sel = new Set(s.v.flat().concat(s.a.flat()).filter((c) => c.linkId && c.linkId === v.linkId).map((c) => c.id));
-    }
-    els["ask-yes"].click();
-    await sleep(30);
-  });
-  const report = els.report.value;
+  const report = await runAll(happyAnswer);
   console.log(report);
-  const expect = { T1: "PASS", T2: "PASS", T3: "PASS", T4: "PASS", T5: "PASS", T6: "PASS", T7: "PASS" };
-  for (const [t, want] of Object.entries(expect)) {
-    const m = report.match(new RegExp(`^  ${t} .*? (PASS|FAIL|BELİRSİZ|ÇALIŞMADI)$`, "m"));
-    if (!m) fail(`${t} özeti yok`);
-    if (m[1] !== want) fail(`${t}: beklenen ${want}, gelen ${m[1]}`);
-  }
-  for (const needle of ["clone HATA verdi", "YEDEK YÖNTEM", "Öneri: UXP + workaround"])
+  expectSummary(report, {
+    T1: "PASS",
+    T2: "PASS",
+    T3: "FAIL [BELİRSİZ]",
+    T4: "FAIL [BELİRSİZ]",
+    T5: "PASS",
+    T6: "BELİRSİZ",
+    T7: "PASS",
+    T8: "FAIL [BELİRSİZ]",
+  });
+  // İstisna tek başına "API yok" değildir → CEP önerilmemeli, karar GEÇİCİ olmalı
+  if (report.includes("Öneri: CEP")) fail("sınıflanamayan istisnalar CEP önerisine yol açtı");
+  for (const needle of ["Öneri: GEÇİCİ: UXP + workaround", "Sınıflanamayan hatalar:", "clone HATA verdi", "YEDEK YÖNTEM"])
     if (!report.includes(needle)) fail(`raporda yok: ${needle}`);
   console.log("\nSMOKE (throw) OK");
   process.exit(0);
 }
 
 (async () => {
+  // 0) mock öz-sınaması: transaction sonrası eski referans hata vermeli (gerçek 26.5.1 davranışı)
+  setupProbe();
+  {
+    const it = (await wrapSequence("guid-probe").getVideoTrack(0)).getTrackItems(1, false)[0];
+    await it.getName();
+    projectW.executeTransaction(() => {}, "öz-sınama");
+    let threw = false;
+    try {
+      await it.getName();
+    } catch (e) {
+      threw = String(e.message).includes(STALE);
+    }
+    if (!threw) fail("mock öz-sınaması: bayat referans hata vermedi");
+  }
   setupProbe();
   require(path.join(__dirname, "..", "dist", "index.js"));
   await sleep(100);
   if (G || TH) {
     await sleep(1700);
     return G ? grimScenario() : throwScenario();
+  }
+  if (ST) {
+    await sleep(1700);
+    const report = await runAll(happyAnswer);
+    expectSummary(report, { T1: "PASS", T2: "PASS", T3: "PASS", T4: "PASS", T5: "PASS", T6: "PASS", T7: "PASS", T8: "PASS" });
+    if (/no longer valid|BAYAT REFERANS/.test(report)) fail("bayat referans kullanıldı (strict)");
+    console.log(report.split("KARAR ÖNERİSİ")[1]);
+    console.log("\nSMOKE (strict) OK — seçim çağrıları referansları geçersiz kılsa bile hiçbir referans aşılmadı");
+    process.exit(0);
   }
 
   // 1) KİLİT: aktif sequence PROBE_ değilken hiçbir şey değişmemeli
@@ -477,34 +519,19 @@ async function throwScenario() {
   if (!/kilitli/i.test(logText())) fail("kilit mesajı loga düşmedi");
   console.log("✓ kilit: PROBE_ dışı sequence'ta butonlar kilitli ve hiçbir şey değişmedi");
 
-  // 2) Hepsini çalıştır
+  // 2) Hepsini çalıştır (bayat referans kullanılsaydı mock "no longer valid" verirdi)
   state.activeGuid = "guid-probe";
   await sleep(1700);
   if (els["btn-all"].hasAttribute("disabled")) fail("PROBE_test aktifken butonlar kilitli");
-  markLog();
-  els["btn-all"].click();
-  await sleep(50);
-  await waitIdle(async (q) => {
-    if (/Ctrl\+Z/.test(q)) undo(); // kullanıcı bir kez geri alıyor
-    if (/KOPYA videoya/.test(q)) {
-      // kullanıcı kopya videoya tıklıyor → linked selection ikisini de seçer
-      const s = seqByGuid("guid-probe");
-      const v = s.v.flat().filter((c) => c.pi === projItems.cam).pop();
-      s.sel = new Set(s.v.flat().concat(s.a.flat()).filter((c) => c.linkId && c.linkId === v.linkId).map((c) => c.id));
-    }
-    els["ask-yes"].click();
-    await sleep(30);
-  });
-  const report = els.report.value;
+  const report = await runAll(happyAnswer);
   console.log(report);
-  for (const t of ["T1", "T2", "T3", "T4", "T5", "T6", "T7"]) {
-    const m = report.match(new RegExp(`^  ${t} .*? (PASS|FAIL|BELİRSİZ|ÇALIŞMADI)$`, "m"));
-    if (!m) fail(`${t} özeti yok`);
-    if (m[1] !== "PASS") fail(`${t} mock'ta PASS değil: ${m[1]}`);
-  }
+  expectSummary(report, { T1: "PASS", T2: "PASS", T3: "PASS", T4: "PASS", T5: "PASS", T6: "PASS", T7: "PASS", T8: "PASS" });
   if (!/Öneri: UXP yeterli\./.test(report)) fail("karar önerisi beklenen gibi değil");
-  const main = seqByGuid("guid-main");
-  if (main.v[0].length !== 1 || main.v.length !== 3 || main.a.length !== 3) fail("Main Edit değişti!");
+  if (!/Premiere: 26\.5\.1/.test(report)) fail("Premiere sürümü host'tan okunmadı");
+  if (/no longer valid|BAYAT REFERANS/.test(report)) fail("bayat referans kullanıldı");
+  if (/Order of operations|createEmptySelection KULLANMAMALI/.test(report)) fail("createEmptySelection kullanıldı");
+  mainUntouched();
+  console.log("✓ Hepsini çalıştır: T1–T8 PASS, hiçbir TrackItem referansı transaction sınırını aşmadı, Premiere 26.5.1 raporda");
 
   // 3) Kopyalama
   els["btn-copy"].click();
@@ -536,15 +563,11 @@ async function throwScenario() {
     state.activeGuid = g;
     hooks.onCloneSeq = null;
   };
-  markLog();
-  els["btn-all"].click();
-  await sleep(50);
   let cloneSnap = null;
-  await waitIdle(async (q) => {
+  const r5 = await runAll(async (q) => {
     if (!cloneSnap && cloneGuid) cloneSnap = deepCopyOne(seqByGuid(cloneGuid));
     await happyAnswer(q);
   });
-  const r5 = els.report.value;
   if (!/yeni kopya aktif oldu/.test(r5) || !/tekrar aktif yapıldı \(setActiveSequence\): true/.test(r5)) fail("T1 kopyadan aslına dönmedi");
   if (/sequence: "PROBE_test Copy"/.test(r5)) fail("testler yedek sequence üzerinde koştu");
   if (!cloneSnap || deepCopyOne(seqByGuid(cloneGuid)) !== cloneSnap) fail("yedek sequence değişti");
@@ -559,11 +582,7 @@ async function throwScenario() {
     hooks.onCloneSeq = null;
   };
   const main6 = deepCopyOne(seqByGuid("guid-main"));
-  markLog();
-  els["btn-all"].click();
-  await sleep(50);
-  await waitIdle(happyAnswer);
-  const r6 = els.report.value;
+  const r6 = await runAll(happyAnswer);
   if (state.activeGuid !== "guid-main") fail("kullanıcı Main Edit'e geçtiği hâlde panel geri çekti");
   if (deepCopyOne(seqByGuid("guid-main")) !== main6) fail("Main Edit değişti");
   if (!/^  T2 .*ÇALIŞMADI$/m.test(r6)) fail("eski koşunun T2 sonucu raporda kaldı / koşu durmadı");
@@ -572,7 +591,6 @@ async function throwScenario() {
 
   // 7) Koşu ortasında başka bir PROBE_* sequence aktif olursa (sabitleme) → durur, ona dokunulmaz
   setupProbe(true);
-  state.activeGuid = "guid-probe";
   await sleep(1700);
   // T1 bittikten sonra (T1'in son getActive'i = 1. çağrı), T2'nin requireProbe'undan önce (2. çağrı) geç
   hooks.onCloneSeq = () => {
@@ -586,10 +604,7 @@ async function throwScenario() {
     };
   };
   const other7 = deepCopyOne(seqByGuid("guid-probe-other"));
-  markLog();
-  els["btn-all"].click();
-  await sleep(50);
-  await waitIdle(happyAnswer);
+  await runAll(happyAnswer);
   if (deepCopyOne(seqByGuid("guid-probe-other")) !== other7) fail("PROBE_other değişti");
   if (!/başladığı sequence değil/.test(newLog())) fail("sabitleme (pin) kilidi devreye girmedi");
   if (!/^  T1 .*PASS$/m.test(els.report.value)) fail("7. aşamada T1 PASS değil");

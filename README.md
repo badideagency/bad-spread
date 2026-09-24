@@ -1,7 +1,7 @@
 # Spread — Premiere Pro UXP eklentisi
 
 **ADIM 1: API yoklama paneli (Spread Probe).** Özellik yok; SPREAD / RE-STACK için gereken Premiere UXP
-API'lerinin gerçekten çalışıp çalışmadığını ölçen 7 test (T1–T7) ve bir rapor + karar önerisi üretir.
+API'lerinin gerçekten çalışıp çalışmadığını ölçen 8 test (T1–T8) ve bir rapor + sınıflı karar önerisi üretir (v0.1.1).
 
 - Kullanıcı kurulumu ve test adımları: **[KURULUM_TR.md](KURULUM_TR.md)**
 - Geliştirici devir notu (tasarım, API tablosu, riskler, sonraki adım): **[handoff.md](handoff.md)**

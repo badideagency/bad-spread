@@ -1,24 +1,23 @@
 // Rapor metni + karar önerisi ("UXP yeterli / UXP + workaround / CEP'e geç").
+// v0.1.1 kuralı: yakalanan bir istisna tek başına "API yok" demek DEĞİL. Her FAIL sınıflıdır:
+//   api      → taze referans + Adobe kalıbıyla denendi, API eksik ya da davranış yok (yalnız bu CEP gerekçesi olabilir)
+//   kod      → bizim kullanımımız (bayat referans, geçersiz nesne) → panel düzeltilir, karar "GEÇİCİ" kalır
+//   belirsiz → sınıflanamadı → karar "GEÇİCİ" kalır
 
-import { ppro } from "./ppro";
 import { TESTS, type TestResult } from "./tests";
+import { FAIL_LABEL } from "./timeline";
 
-export const PANEL_VERSION = "0.1.0";
+export const PANEL_VERSION = "0.1.1";
 export const TYPINGS_VERSION = "@adobe/premierepro 26.5.0";
 
 export interface Env {
   premiere: string;
   uxp: string;
-  host: string;
 }
 
+/** Premiere sürümü UXP host bilgisinden okunur (v0.1.0'da Application.version "undefined" döndü). */
 export async function readEnv(): Promise<Env> {
-  const env: Env = { premiere: "?", uxp: "?", host: "?" };
-  try {
-    env.premiere = String(await ppro.Application.version); // d.ts:L379 Application.version
-  } catch (e) {
-    env.premiere = `okunamadı (${String(e)})`;
-  }
+  const env: Env = { premiere: "?", uxp: "?" };
   try {
     // UXP çekirdek modülü (Premiere API değil; tipi @adobe/cc-ext-uxp-types içinde "uxp" modülü)
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -26,10 +25,11 @@ export async function readEnv(): Promise<Env> {
       versions?: { uxp?: unknown };
       host?: { name?: unknown; version?: unknown };
     };
+    const hv = uxp.host?.version;
+    env.premiere = hv !== undefined && hv !== null && String(hv) !== "" ? `${String(hv)} (${String(uxp.host?.name ?? "host")})` : "?";
     env.uxp = String(uxp.versions?.uxp ?? "?");
-    env.host = `${String(uxp.host?.name ?? "?")} ${String(uxp.host?.version ?? "")}`.trim();
   } catch (e) {
-    env.uxp = `okunamadı (${String(e)})`;
+    env.premiere = `okunamadı (${String(e)})`;
   }
   return env;
 }
@@ -39,143 +39,115 @@ interface Decision {
   reasons: string[];
   workarounds: string[];
   blockers: string[];
+  codeBugs: string[];
+  unclear: string[];
   missing: string[];
 }
 
 const f = (r: TestResult | undefined, k: string): unknown => (r ? r.facts[k] : undefined);
-
-/** Testin ilk hata satırı (yakalanan istisna) ya da genel not. */
-function firstError(r: TestResult): string {
-  const l = r.lines.find((x) => x.startsWith("HATA") || x.includes("HATA verdi"));
-  return l ? l.trim() : "ayrıntıya bak";
-}
+const CORE = new Set(["T2", "T3", "T4", "T7"]);
 
 export function decide(results: Map<string, TestResult>): Decision {
   const reasons: string[] = [];
   const workarounds: string[] = [];
   const blockers: string[] = [];
+  const codeBugs: string[] = [];
+  const unclear: string[] = [];
   const missing: string[] = [];
   const get = (id: string) => results.get(id);
-  const need = (id: string) => {
-    const r = get(id);
-    if (!r) missing.push(`${id} çalıştırılmadı`);
-    else if (r.status === "BELİRSİZ") missing.push(`${id} BELİRSİZ`);
-    return r;
-  };
-  /** Özel kurallar bir şey eklemediyse FAIL'i genel madde olarak yaz (ör. istisna ile düşen test). */
-  const fallback = (r: TestResult | undefined, before: number, core: boolean) => {
-    if (!r || r.status !== "FAIL" || blockers.length + workarounds.length > before) return;
-    if (core) blockers.push(`${r.id}: FAIL — ${firstError(r)}`);
-    else workarounds.push(`${r.id}: FAIL — ${firstError(r)} (engel değil; elle yapılabilir)`);
-  };
-  let n: number;
+  const pass = (id: string) => get(id)?.status === "PASS";
 
-  // T2 — track açma (SPREAD için zorunlu)
-  const t2 = need("T2");
-  n = blockers.length + workarounds.length;
-  if (t2) {
-    if (f(t2, "openedV") === true && f(t2, "openedA") === true) {
-      reasons.push("T2: createCloneTrackItemAction, track sayısını aşan ofsetle yeni V ve A track açıyor.");
-    } else if (t2.status === "PASS") {
-      workarounds.push(
-        "T2: Clone ofseti track açmıyor → önce createInsertProjectItemAction (index = track sayısı) ile boş track aç, eklenen klibi sil, sonra clone et."
-      );
-    } else if (t2.status === "FAIL" && f(t2, "fallbackRan") === true) {
-      blockers.push(
-        "T2: UXP ile yeni track açılamadı (clone ve insert yolları). Tek UXP çaresi: kullanıcı yeterli boş track'i elle ekler (Sequence > Add Tracks)."
-      );
+  for (const t of TESTS) {
+    const r = get(t.id);
+    if (!r) {
+      missing.push(`${t.id} çalıştırılmadı`);
+      continue;
+    }
+    if (r.status === "BELİRSİZ") {
+      missing.push(`${t.id} BELİRSİZ${r.lockError ? " (kilit)" : ""}`);
+      continue;
+    }
+    if (r.status !== "FAIL") continue;
+    const cls = r.failClass ?? "belirsiz";
+    const why = r.failWhy ?? "ayrıntıya bak";
+    if (cls === "kod") {
+      codeBugs.push(`${t.id}: ${why}`);
+      continue;
+    }
+    if (cls === "belirsiz") {
+      unclear.push(`${t.id}: ${why}`);
+      continue;
+    }
+    // cls === "api": taze referans + Adobe kalıbıyla ölçülmüş davranış
+    const mm = (f(r, "mismatchFields") as string[] | undefined) ?? [];
+    const onlyTimeFields = mm.length > 0 && mm.every((m) => /:(start|end|inPoint|outPoint)$/.test(m));
+    switch (t.id) {
+      case "T2":
+        blockers.push(`T2: yeni track açılamadı (clone ve insert yolları) — ${why}. Tek UXP çaresi: kullanıcı boş track'leri elle ekler.`);
+        break;
+      case "T3":
+        if (onlyTimeFields && pass("T8"))
+          workarounds.push(`T3: kopya zamanları farklı (${mm.join(", ")}) → T8'de çalışan set In/Out/Start/End action'larıyla düzelt.`);
+        else if (pass("T4") && pass("T7") && mm.length === 0 && Number(f(r, "collateral") ?? 0) === 0)
+          workarounds.push(`T3: tek transaction'da taşıma olmadı (${why}) ama clone (T4) ve silme (T7) ayrı ayrı çalışıyor → taşımayı iki adımda yap (tek Ctrl+Z olmaz; önce T1 yedeği).`);
+        else blockers.push(`T3: ${why}`);
+        break;
+      case "T4":
+        if (onlyTimeFields && pass("T8"))
+          workarounds.push(`T4: kopya zamanları farklı (${mm.join(", ")}) → set In/Out/Start/End action'larıyla aslının değerlerine geri yaz (T8'de çalıştı).`);
+        else blockers.push(`T4: ${why}`);
+        break;
+      case "T7":
+        blockers.push(`T7: ${why} → zaman konumu korunamaz.`);
+        break;
+      case "T1":
+        workarounds.push(`T1: otomatik yedek yok (${why}) → kullanıcı SPREAD öncesi sequence'ı elle Duplicate eder.`);
+        break;
+      case "T5":
+        workarounds.push(`T5: programla seçim timeline'a yansımıyor (${why}) → SPREAD sonrası kullanıcı klipleri elle seçip Synchronize çalıştırır.`);
+        break;
+      case "T6":
+        workarounds.push(`T6: tek Ctrl+Z hepsini geri almıyor (${why}) → SPREAD öncesi T1 yöntemiyle otomatik sequence yedeği al.`);
+        break;
+      case "T8":
+        workarounds.push(`T8: ${why} → taşınan video+ses bağsız kalabilir; gerekirse kullanıcı Clip > Link ile bağlar.`);
+        break;
+      default:
+        (CORE.has(t.id) ? blockers : workarounds).push(`${t.id}: ${why}`);
     }
   }
-  fallback(t2, n, true);
 
-  // T4 — sadakat (zorunlu: senkron zamanlara bağlı)
-  const t4 = need("T4");
-  n = blockers.length + workarounds.length;
-  if (t4) {
-    const mm = (f(t4, "mismatchFields") as string[] | undefined) ?? [];
-    if (t4.status === "PASS") reasons.push("T4: Kopyanın start/end/in/out/speed/disabled/name değerleri tick düzeyinde birebir aynı.");
-    else if (t4.status === "FAIL" && mm.length) {
-      if (mm.some((m) => m.endsWith(":speed") || m.endsWith(":kopya-yok"))) {
-        blockers.push(`T4: Kopya aslıyla aynı değil ve UXP'de düzeltilemez (hız ayarı yok / kopya oluşmuyor): ${mm.join(", ")}`);
-      } else {
-        workarounds.push(
-          `T4: Kopyada fark var (${mm.join(", ")}) → kopya sonrası createSetStartAction/createSetEndAction/createSetInPointAction/createSetOutPointAction/createSetDisabledAction/createSetNameAction ile aslının değerlerine geri yaz.`
-        );
-      }
-    }
+  if (pass("T1")) reasons.push(`T1: createCloneAction yedek sequence oluşturuyor ("${String(f(get("T1"), "cloneName"))}").`);
+  if (pass("T2")) {
+    const t2 = get("T2");
+    reasons.push(
+      f(t2, "openedV") === true && f(t2, "openedA") === true
+        ? "T2: createCloneTrackItemAction, track sayısını aşan ofsetle yeni V ve A track açıyor."
+        : "T2: clone track açmıyor ama insert+sil yedek yoluyla boş track açılabiliyor."
+    );
+    if (!(f(t2, "openedV") === true && f(t2, "openedA") === true))
+      workarounds.push("T2: SPREAD önce createInsertProjectItemAction (index = track sayısı) + sil ile boş track açmalı, sonra clone.");
   }
-  fallback(t4, n, true);
-
-  // T7 — ripple (zorunlu: senkron bozulmamalı)
-  const t7 = need("T7");
-  n = blockers.length + workarounds.length;
-  if (t7) {
-    if (t7.status === "PASS") reasons.push("T7: ripple=false silme diğer klipleri kaydırmıyor.");
-    else if (t7.status === "FAIL") {
-      if (f(t7, "targetRemoved") === false) blockers.push("T7: createRemoveItemsAction klibi silemedi.");
-      if (Number(f(t7, "shifted") ?? 0) > 0 || Number(f(t7, "missing") ?? 0) > 0)
-        blockers.push("T7: ripple=false olsa bile silme başka klipleri kaydırıyor/siliyor → zaman konumu korunamaz.");
-    }
-  }
-  fallback(t7, n, true);
-
-  // T5 — seçim (SPREAD sonunda seçili bırakmak için; elle seçim mümkün olduğundan engel değil)
-  const t5 = need("T5");
-  n = blockers.length + workarounds.length;
-  if (t5) {
-    if (t5.status === "PASS") reasons.push("T5: Programla çoklu seçim yapılabiliyor ve timeline'da görünüyor.");
-    else if (t5.status === "FAIL")
-      workarounds.push("T5: Programla seçim timeline'a yansımıyor → SPREAD sonrası kullanıcı klipleri elle seçip Synchronize çalıştırır.");
-  }
-  fallback(t5, n, false);
-
-  // T3 — bağlı çift stratejisi (bilgi; asıl silinemiyorsa engel)
-  const t3 = need("T3");
-  n = blockers.length + workarounds.length;
-  if (t3) {
-    const came = f(t3, "linkedAudioCame");
-    const linked = f(t3, "copyLinked");
-    const orphan = f(t3, "orphanAudio");
-    if (t3.status === "FAIL" && f(t3, "camVRemoved") === false) blockers.push("T3: Asıl video createRemoveItemsAction ile silinemedi.");
-    if (came === true)
-      reasons.push(
-        `T3: Video kopyalanınca bağlı sesi de geliyor (kopya bağlı: ${String(linked)}) → SPREAD kamera klibini tek clone ile V+A olarak taşıyabilir.`
-      );
-    else if (came === false)
-      reasons.push("T3: Video kopyalanınca bağlı ses gelmiyor → SPREAD video ve sesi ayrı ayrı clone etmeli.");
-    // Not: ölçüm yalnız "seçimde sadece video + mediaType=VIDEO" çağrısı için geçerli.
-    if (orphan === true)
-      reasons.push("T3: Seçimde yalnız video varken (mediaType=VIDEO) silinince asıl ses yetim kalıyor → SPREAD bu çağrıyla sildiğinde asıl sesi ayrıca silmeli.");
-    else if (orphan === false)
-      reasons.push("T3: Seçimde yalnız video varken (mediaType=VIDEO) silinince bağlı ses de gidiyor → SPREAD sesi ayrıca silmemeli (çift silme).");
-  }
-  fallback(t3, n, true);
-
-  // T6 — geri alma (UX; engel değil)
-  const t6 = need("T6");
-  n = blockers.length + workarounds.length;
-  if (!t6) {
-    /* need() eksik olarak yazdı */
-  } else if (t6.status === "PASS") reasons.push("T6: Tek transaction tek Ctrl+Z ile tamamen geri alınıyor.");
-  else if (t6.status === "FAIL" && f(t6, "restored") === false)
-    workarounds.push("T6: Tek Ctrl+Z hepsini geri almıyor → SPREAD öncesi T1 yöntemiyle otomatik sequence yedeği al.");
-  fallback(t6, n, false);
-
-  // T1 — yedek (UX; engel değil)
-  const t1 = need("T1");
-  n = blockers.length + workarounds.length;
-  if (!t1) {
-    /* need() eksik olarak yazdı */
-  } else if (t1.status === "PASS") reasons.push(`T1: createCloneAction yedek sequence oluşturuyor ("${String(f(t1, "cloneName"))}").`);
-  else if (t1.status === "FAIL") workarounds.push(`T1: Otomatik yedek yok (${firstError(t1)}) → kullanıcı SPREAD öncesi sequence'ı elle Duplicate eder.`);
-  fallback(t1, n, false);
+  if (pass("T3")) reasons.push("T3: TEK transaction'da V+A clone + asılları silme çalışıyor; kopyalar tick düzeyinde birebir.");
+  const t3 = get("T3");
+  if (t3 && f(t3, "linkedAnswer") === "Hayır")
+    workarounds.push("T3: clone ile taşınan video+ses kopyaları birbirine BAĞLI değil → bağ gerekiyorsa T8 yolu (overwrite) kullanılmalı.");
+  else if (t3 && f(t3, "linkedAnswer") === "Evet") reasons.push("T3: clone ile taşınan video+ses kopyaları bağlı kalıyor.");
+  if (pass("T4")) reasons.push("T4: clone kopyası start/end/in/out/speed/disabled/name olarak aslıyla birebir.");
+  if (pass("T5")) reasons.push("T5: Adobe kalıbıyla (getSelection+addItem+setSelection) çoklu seçim yapılıyor ve timeline'da görünüyor.");
+  if (pass("T6")) reasons.push("T6: T3'ün tek transaction'ı tek Ctrl+Z ile tamamen geri alınıyor.");
+  if (pass("T7")) reasons.push("T7: ripple=false silme başka hiçbir klibi kaydırmıyor.");
+  if (pass("T8")) reasons.push("T8: createOverwriteItemAction V+A'yı bağlı doğuruyor; set In/Out/Start/End ile aslına birebir eşitleniyor.");
+  reasons.push("Genel bulgu: TrackItem referansları transaction sonrası geçersiz → SPREAD/RE-STACK tüm taşımaları TEK transaction'da yapmalı; aradaki her adımda sequence yeniden okunmalı.");
 
   let verdict: string;
-  if (blockers.length) verdict = "CEP'e geç (ya da ilgili adımı elle yaptır) — UXP'de aşılamayan engel var.";
+  if (blockers.length)
+    verdict = "CEP'e geç — aşağıdaki engeller taze referans + Adobe kalıbıyla denenip yine başarısız olan API'ler için.";
   else if (workarounds.length) verdict = "UXP + workaround (aşağıdaki maddeler).";
   else verdict = "UXP yeterli.";
-  if (missing.length && !blockers.length) verdict = `GEÇİCİ: ${verdict} (eksik/belirsiz test var; kesin karar için tamamla)`;
-  return { verdict, reasons, workarounds, blockers, missing };
+  if (!blockers.length && (codeBugs.length || unclear.length || missing.length))
+    verdict = `GEÇİCİ: ${verdict} (kod hatası / belirsiz / eksik test var; kesin karar için düzeltip tekrar çalıştır)`;
+  return { verdict, reasons, workarounds, blockers, codeBugs, unclear, missing };
 }
 
 export function buildReport(results: Map<string, TestResult>, env: Env | null, setup: string[]): string {
@@ -184,24 +156,25 @@ export function buildReport(results: Map<string, TestResult>, env: Env | null, s
   L.push(`SPREAD PROBE RAPORU — panel v${PANEL_VERSION}`);
   L.push("================================================");
   L.push(`Tarih: ${new Date().toISOString()}`);
-  if (env) L.push(`Premiere: ${env.premiere} | UXP: ${env.uxp} | host: ${env.host} | tipler: ${TYPINGS_VERSION}`);
+  if (env) L.push(`Premiere: ${env.premiere} | UXP: ${env.uxp} | tipler: ${TYPINGS_VERSION}`);
   if (setup.length) {
     L.push("");
     L.push("KURULUM TARAMASI (testlerden önce)");
     for (const s of setup) L.push(`  ${s}`);
   }
   L.push("");
-  L.push("ÖZET");
+  L.push("ÖZET  (FAIL sınıfı: [API] = API eksik/davranış yok, [KOD] = bizim kullanım hatamız, [BELİRSİZ])");
   for (const t of TESTS) {
     const r = results.get(t.id);
-    L.push(`  ${t.id} ${t.title.padEnd(52, ".")} ${r ? r.status : "ÇALIŞMADI"}`);
+    const st = r ? `${r.status}${r.failClass ? ` [${FAIL_LABEL[r.failClass]}]` : ""}` : "ÇALIŞMADI";
+    L.push(`  ${t.id} ${t.title.padEnd(54, ".")} ${st}`);
   }
   L.push("");
   L.push("AYRINTI");
   for (const t of TESTS) {
     const r = results.get(t.id);
     L.push("");
-    L.push(`[${t.id}] ${t.title} — ${r ? r.status : "ÇALIŞMADI"}${r ? `  (${r.ranAt})` : ""}`);
+    L.push(`[${t.id}] ${t.title} — ${r ? r.status : "ÇALIŞMADI"}${r?.failClass ? ` [${FAIL_LABEL[r.failClass]}]` : ""}${r ? `  (${r.ranAt})` : ""}`);
     if (!r) continue;
     for (const line of r.lines) L.push(`  ${line}`);
     L.push(`  facts: ${JSON.stringify(r.facts)}`);
@@ -212,21 +185,16 @@ export function buildReport(results: Map<string, TestResult>, env: Env | null, s
   L.push("KARAR ÖNERİSİ");
   L.push("================================================");
   L.push(`Öneri: ${d.verdict}`);
-  if (d.blockers.length) {
-    L.push("Engeller:");
-    for (const b of d.blockers) L.push(`  ✗ ${b}`);
-  }
-  if (d.workarounds.length) {
-    L.push("Workaround'lar:");
-    for (const w of d.workarounds) L.push(`  ~ ${w}`);
-  }
-  if (d.reasons.length) {
-    L.push("Gerekçe (ölçülenler):");
-    for (const x of d.reasons) L.push(`  ✓ ${x}`);
-  }
-  if (d.missing.length) {
-    L.push("Eksik / belirsiz:");
-    for (const m of d.missing) L.push(`  ? ${m}`);
-  }
+  const section = (title: string, items: string[], mark: string) => {
+    if (!items.length) return;
+    L.push(title);
+    for (const x of items) L.push(`  ${mark} ${x}`);
+  };
+  section("Engeller (API — CEP gerekçesi):", d.blockers, "✗");
+  section("Workaround'lar:", d.workarounds, "~");
+  section("Kod/kullanım hataları (panel düzeltilecek; API hakkında karar verdirmez):", d.codeBugs, "!");
+  section("Sınıflanamayan hatalar:", d.unclear, "?");
+  section("Gerekçe (ölçülenler):", d.reasons, "✓");
+  section("Eksik / belirsiz:", d.missing, "?");
   return L.join("\n");
 }

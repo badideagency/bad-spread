@@ -1,6 +1,6 @@
 {
   "name": "spread-probe",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "commonjs",
   "scripts": {
@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "check:api": "node scripts/check-api-refs.mjs",
     "api:table": "node scripts/check-api-refs.mjs --table",
-    "smoke": "npm run build && node dev/smoke.cjs && node dev/smoke.cjs grim && node dev/smoke.cjs throw",
+    "smoke": "npm run build && node dev/smoke.cjs && node dev/smoke.cjs grim && node dev/smoke.cjs throw && node dev/smoke.cjs strict",
     "check": "npm run typecheck && npm run lint && npm run check:api && npm run smoke",
     "package": "bash scripts/package-ccx.sh",
     "verify:ccx": "python3 scripts/verify-ccx.py release/spread-probe.ccx"
