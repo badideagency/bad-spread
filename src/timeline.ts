@@ -342,12 +342,20 @@ export interface SelectOutcome {
 /**
  * Tam olarak verilen klipleri seçer ve doğrular.
  * Adobe kalıbı: sel = await sequence.getSelection(); sel.addItem(item, false); sequence.setSelection(sel).
- * Ek güvenlik: önce clearSelection (başka seçili bir şey silinmesin), sonra geri okuyup birebir kontrol.
+ * Ek güvenlik: önce clearSelection (başka seçili bir şey silinmesin), sonra geri okuyup kontrol.
  * clips yalnızca DEĞER olarak kullanılır: clearSelection'dan sonra sequence baştan okunur ve klipler
  * (tür, track, start, end, kaynak adı) ile yeniden bulunur. clearSelection/setSelection de temkinle
  * "referansları geçersiz kılabilir" sayılır → sonraki transaction dönen `snap`'teki referansları kullanmalı.
+ *
+ * exact = istenen her klip seçili VE seçili her klip (istenen ∪ allow) içinde VE getSelection'ın öğeleri
+ * (track, start, end, kaynak adı) olarak seçili kliplerle birebir aynı. `allow`: Linked Selection'ın ekleyebileceği,
+ * silinmesinde sakınca olmayan klipler (ör. T2'de insert'in kendi bağlı partneri). Birebir değilse çağıran silmez.
  */
-export async function selectExactly(ctx: ProbeContext, clips: ClipInfo[]): Promise<SelectOutcome> {
+export async function selectExactly(
+  ctx: ProbeContext,
+  clips: ClipInfo[],
+  opts: { allow?: ClipInfo[] } = {}
+): Promise<SelectOutcome> {
   await assertStillProbe(ctx);
   const notes: string[] = [];
   const cleared = await ctx.sequence.clearSelection(); // d.ts:L3112 Sequence.clearSelection
@@ -370,22 +378,42 @@ export async function selectExactly(ctx: ProbeContext, clips: ClipInfo[]): Promi
   invalidateRefs();
   notes.push(`addItem → [${addResults.join(", ")}]; setSelection → ${String(setOk)}`);
 
-  // Geri oku: getSelection sayısı + her klibin getIsSelected'i (taze okuma, transaction yok → kuşak aynı)
+  // Geri oku (transaction yok → kuşak aynı): getSelection öğeleri + her klibin getIsSelected'i
   const rb = await ctx.sequence.getSelection(); // d.ts:L3211 Sequence.getSelection
-  const readCount = (await rb.getTrackItems()).length; // d.ts:L4039 TrackItemSelection.getTrackItems
+  const rbGen = refGen;
+  const rbItems = await rb.getTrackItems(); // d.ts:L4039 TrackItemSelection.getTrackItems
+  const rbKeys: string[] = [];
+  for (const it of rbItems) {
+    const errs: string[] = [];
+    const tr = await safe("getTrackIndex", () => it.getTrackIndex(), -1, errs); // d.ts:L4241 VideoClipTrackItem.getTrackIndex / d.ts:L522 AudioClipTrackItem.getTrackIndex
+    const st = tt(await safe("getStartTime", () => it.getStartTime(), null, errs)); // d.ts:L4236 VideoClipTrackItem.getStartTime / d.ts:L517 AudioClipTrackItem.getStartTime
+    const en = tt(await safe("getEndTime", () => it.getEndTime(), null, errs)); // d.ts:L4191 VideoClipTrackItem.getEndTime / d.ts:L472 AudioClipTrackItem.getEndTime
+    const pi = await safe("getProjectItem", () => it.getProjectItem(), null, errs); // d.ts:L4226 VideoClipTrackItem.getProjectItem / d.ts:L507 AudioClipTrackItem.getProjectItem
+    rbKeys.push([tr, st.ticks, en.ticks, pi ? pi.name : "?"].join("|")); // d.ts:L2854 ProjectItem.name
+    for (const e of errs) notes.push(`   geri okuma hatası: ${e}`);
+  }
+  const readCount = rbItems.length;
   const s = await snapshot(ctx);
+  const noKind = (c: ClipInfo) => [c.track, c.start, c.end, c.projName].join("|");
   const want = new Set(clips.map(locKey));
+  const allowed = new Set([...clips, ...(opts.allow ?? [])].map(locKey));
   const selectedNow = s.clips.filter((c) => c.selected);
-  const exact =
-    readCount === clips.length &&
-    selectedNow.length === clips.length &&
-    selectedNow.every((c) => want.has(locKey(c)));
+  const allWanted = [...want].every((k) => selectedNow.some((c) => locKey(c) === k));
+  const noStranger = selectedNow.every((c) => allowed.has(locKey(c)));
+  const sameAsRb = rbKeys.slice().sort().join("\n") === selectedNow.map(noKind).sort().join("\n");
+  const exact = allWanted && noStranger && sameAsRb;
+  const extra = selectedNow.length - clips.length;
   notes.push(
-    `geri okuma: getSelection ${readCount} öğe, getIsSelected ${selectedNow.length} klip → birebir: ${exact ? "EVET" : "HAYIR"}`
+    `geri okuma: getSelection ${readCount} öğe, getIsSelected ${selectedNow.length} klip` +
+      (extra > 0 && noStranger ? ` (+${extra} izinli bağlı partner)` : "") +
+      ` → ${exact ? "uygun" : "UYGUN DEĞİL"}` +
+      (!allWanted ? " [istenenlerden seçilmeyen var]" : "") +
+      (!noStranger ? " [izinsiz klip seçili]" : "") +
+      (!sameAsRb ? " [getSelection öğeleri getIsSelected ile uyuşmuyor]" : "")
   );
   if (!exact) for (const c of selectedNow) notes.push(`   seçili: ${fmtClip(c)}`);
   const fresh = clips.map((c) => relocate(s, c));
-  return { sel: { sel: rb, gen: refGen }, snap: s, fresh, addResults, setOk, readCount, exact, notes };
+  return { sel: { sel: rb, gen: rbGen }, snap: s, fresh, addResults, setOk, readCount, exact, notes };
 }
 
 /** Kullanıcı timeline'da tıkladıktan sonra: kaç öğe seçili (getSelection) ve hangileri (getIsSelected). */
@@ -502,10 +530,10 @@ export type FailClass = "api" | "kod" | "belirsiz";
 export const FAIL_LABEL: Record<FailClass, string> = { api: "API", kod: "KOD", belirsiz: "BELİRSİZ" };
 
 /**
- * Yakalanan bir istisna tek başına "API yok" demek değildir.
+ * Yakalanan bir istisna tek başına "API yok" demek DEĞİLDİR → bu fonksiyon asla "api" döndürmez.
+ * "api" yalnızca testlerin içinde, taze referans + Adobe kalıbıyla yapılmış bir çağrının ÖLÇÜLEN sonucu için verilir.
  *  kod     : bizim kullanımımız (bayat referans, geçersiz nesne) — panel düzeltilir, API hakkında karar verdirmez
- *  api     : metot çalışma zamanında yok / desteklenmiyor
- *  belirsiz: sınıflanamadı — kararı "GEÇİCİ" yapar, CEP gerekçesi olamaz
+ *  belirsiz: sınıflanamadı / kanıt yok — kararı "GEÇİCİ" yapar, CEP gerekçesi olamaz
  */
 export function classifyError(e: unknown): { cls: FailClass; why: string } {
   const t = errText(e);
@@ -513,6 +541,6 @@ export function classifyError(e: unknown): { cls: FailClass; why: string } {
     return { cls: "kod", why: "bayat TrackItem referansı (transaction sonrası yeniden okunmamış)" };
   if (/nullptr|null pointer/i.test(t)) return { cls: "kod", why: "geçersiz nesneyle çağrı (nullptr) — kullanım hatası" };
   if (/is not a function|has no method|not supported|not implemented|undefined is not/i.test(t))
-    return { cls: "api", why: "metot çalışma zamanında yok / desteklenmiyor" };
+    return { cls: "belirsiz", why: "metot yok / desteklenmiyor gibi görünüyor — istisna tek başına kanıt değil, ölçümle doğrulanmalı" };
   return { cls: "belirsiz", why: "sınıflanamayan istisna" };
 }

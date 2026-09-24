@@ -280,6 +280,7 @@ const t2: TestFn = async (ctx, r) => {
 
   // --- Video (clone hata verirse de yedek yönteme geçilsin diye yakalanır)
   let openedV = false;
+  let measured = true; // tüm denemeler istisnasız çalıştı mı (değilse sonuç "api" değil "belirsiz" olur)
   try {
     const v = await cloneToTracks(ctx, r, ps.camV, ps.camA, "T2 video");
     const newV = v.newClips.filter((c) => c.kind === "V" && c.projId === v.src.projId);
@@ -287,7 +288,8 @@ const t2: TestFn = async (ctx, r) => {
     if (!openedV && newV.length) r.m(`   kopya mevcut bir track'e düştü: ${newV.map(fmtClip).join("; ")}`, "warn");
   } catch (e) {
     if (e instanceof ProbeLockError) throw e;
-    r.m(`   clone HATA verdi: ${errText(e)} [${classifyError(e).cls}]`, "err");
+    measured = false;
+    r.m(`   clone HATA verdi: ${errText(e)} [${FAIL_LABEL[classifyError(e).cls]}]`, "err");
   }
   r.m(`→ Video: yeni track açıldı mı: ${yesNo(openedV)}`, openedV ? "ok" : "err");
 
@@ -304,7 +306,8 @@ const t2: TestFn = async (ctx, r) => {
       if (!openedA && newA.length) r.m(`   kopya mevcut bir track'e düştü: ${newA.map(fmtClip).join("; ")}`, "warn");
     } catch (e) {
       if (e instanceof ProbeLockError) throw e;
-      r.m(`   clone HATA verdi: ${errText(e)} [${classifyError(e).cls}]`, "err");
+      measured = false;
+      r.m(`   clone HATA verdi: ${errText(e)} [${FAIL_LABEL[classifyError(e).cls]}]`, "err");
     }
     r.m(`→ Ses: yeni track açıldı mı: ${yesNo(openedA)}`, openedA ? "ok" : "err");
   }
@@ -336,22 +339,30 @@ const t2: TestFn = async (ctx, r) => {
     const shifted = removed(pre, mid);
     if (shifted.length) listClips(r, "   ⚠ insert eski klipleri değiştirdi", shifted, "warn");
 
-    // Her tür için: seç (Adobe kalıbı; selectExactly sequence'ı baştan okuyup yeniden bulur) → sil. Referans transaction aşmaz.
-    for (const kind of ["V", "A"] as Kind[]) {
-      const list = ins.filter((c) => c.kind === kind);
-      if (!list.length) continue;
-      const so = await selectExactly(ctx, list);
+    // Eklenenlerin HEPSİ tek seçimle silinir (Linked Selection partneri ekleyebilir: izinli küme = eklenenler).
+    // Silmeden sonra hâlâ kalan varsa (ör. mediaType filtre gibi davranırsa) kalanlar kendi türüyle ikinci kez silinir.
+    // selectExactly sequence'ı her seferinde baştan okuyup yeniden bulur; referans transaction aşmaz.
+    let guardAbort = false;
+    for (let pass = 1; pass <= 2 && !guardAbort; pass++) {
+      const now = await snapshot(ctx);
+      const remaining = ins.filter((c) => relocate(now, c) !== null);
+      if (!remaining.length) break;
+      const kinds = new Set(remaining.map((c) => c.kind));
+      const kind: "V" | "A" | "mixed" = kinds.size > 1 ? "mixed" : (remaining[0].kind as Kind);
+      const so = await selectExactly(ctx, remaining, { allow: ins });
       for (const n of so.notes) r.m(`   ${n}`, "dim");
       if (!so.exact) {
-        r.m(`   seçim birebir değil → ${kind} silme İPTAL (yanlış klip silinmesin)`, "err");
-        continue;
+        r.m(`   seçim uygun değil → silme İPTAL (yanlış klip silinmesin); API ölçülmedi`, "err");
+        guardAbort = true;
+        break;
       }
-      const tx2 = await transact(ctx, `PROBE T2 yedek sil ${kind}`, (ops) => {
+      const tx2 = await transact(ctx, `PROBE T2 yedek sil ${pass}`, (ops) => {
         ops.remove(so.sel, kind);
       });
-      txLine(r, `eklenen ${kind === "V" ? "videoyu" : "sesi"} sil (ripple=false)`, tx2);
+      txLine(r, `${pass}. geçiş: eklenen ${remaining.length} klibi sil (ripple=false, mediaType=${kind === "A" ? "AUDIO" : "VIDEO"})`, tx2);
       await settle();
     }
+    if (guardAbort) measured = false;
     const fin = await snapshot(ctx);
     const left = ins.filter((c) => relocate(fin, c));
     r.m(`   sil sonrası track: V ${fin.vCount}, A ${fin.aCount}; eklenenlerden kalan: ${left.length}`);
@@ -361,12 +372,13 @@ const t2: TestFn = async (ctx, r) => {
       fallbackV && fallbackA ? "ok" : "err");
   }
 
-  r.facts = { openedV, openedA, fallbackRan, fallbackV, fallbackA };
+  r.facts = { openedV, openedA, fallbackRan, fallbackV, fallbackA, measured };
   const okV = openedV || fallbackV === true;
   const okA = openedA || fallbackA === true;
   if (openedV && openedA) r.pass("clone ofsetiyle hem video hem ses için yeni track açılıyor.");
   else if (okV && okA) r.pass("clone ile açılmadı ama YEDEK yöntemle (insert + sil) boş track açılabiliyor.");
-  else r.fail("api", "iki yöntemle de gerekli track'ler açılamadı");
+  else if (measured) r.fail("api", "clone ve insert+sil yolları istisnasız denendi, gerekli track'ler açılamadı");
+  else r.fail("belirsiz", "track açılamadı ama denemelerden biri istisna/güvenlik iptaliyle bitti — API ölçülemedi");
 };
 
 // ------------------------------------------------------------------ T3
@@ -390,8 +402,10 @@ const t3: TestFn = async (ctx, r) => {
   // Seçim + taze referanslar: transaction'ın HEMEN öncesinde (setSelection'dan sonra baştan okunan snapshot'tan)
   const so = await selectExactly(ctx, [ps.camV, ps.camA]);
   for (const n of so.notes) r.m(`   ${n}`, "dim");
-  if (!so.exact) return r.fail("api", "Adobe kalıbıyla (getSelection+addItem+setSelection, taze referans) iki asıl birebir seçilemedi → silme yapılmadı");
+  if (!so.exact)
+    return r.fail("belirsiz", "iki asıl Adobe kalıbıyla birebir seçilemedi → güvenlik için taşıma yapılmadı (taşıma API'si ölçülmedi; T5'e bak)");
   const s1 = so.snap;
+  const newTrackNeeded = vT >= s1.vCount || aT >= s1.aCount;
   const [camV, camA] = so.fresh;
   if (!camV || !camA) throw new Error("T3: asıllar transaction öncesi yeniden bulunamadı");
 
@@ -454,10 +468,14 @@ const t3: TestFn = async (ctx, r) => {
     autoLinked,
   };
   if (!copyV || !copyA) return r.fail("api", "tek transaction'da kopya(lar) oluşmadı (taze referans + Adobe kalıbı)");
-  if (!origVGone || !origAGone)
-    return r.fail("api", `asıl ${!origVGone ? "video" : ""}${!origVGone && !origAGone ? " + " : ""}${!origAGone ? "ses" : ""} silinmedi (createRemoveItemsAction, mediaType=VIDEO)`);
+  if (origVGone && !origAGone)
+    return r.fail("kod", "asıl video gitti ama asıl ses kaldı: mediaType=VIDEO filtre gibi davranıyor → V için VIDEO, A için AUDIO ayrı remove gerekir (T7'deki mediaType ölçümüne bak)");
+  if (!origVGone) return r.fail("api", `asıl video silinmedi (createRemoveItemsAction, taze seçim, mediaType=VIDEO)`);
   if (mismatch.length) return r.fail("api", `kopya aslıyla birebir değil: ${mismatch.join(", ")}`);
-  if (collateral.length) return r.fail("api", `${collateral.length} başka klip değişti`);
+  if (collateral.length)
+    return newTrackNeeded
+      ? r.fail("belirsiz", `${collateral.length} başka klip değişti — hedef track henüz yoktu (clone üst track'e yapışmış olabilir; T2'ye bak)`)
+      : r.fail("api", `${collateral.length} başka klip değişti (hedef mevcut boş track'ti)`);
   r.pass("tek transaction'da video+ses kopyalandı, asıllar silindi, kopyalar birebir aynı tick'lerde.");
 };
 
@@ -518,8 +536,9 @@ const t5: TestFn = async (ctx, r) => {
   );
   r.facts = { programmaticOk: so.exact, setOk: so.setOk, addResults: so.addResults, readCount: so.readCount, userSees: ans };
   r.m(`→ Programla okunan seçim birebir mi: ${yesNo(so.exact)}; kullanıcı timeline'da görüyor mu: ${ans}`);
-  if (ans === "Hayır") return r.fail("api", "setSelection timeline'a yansımıyor (Adobe kalıbı, taze referans)");
-  if (!so.setOk || !so.exact) return ans === "Evet" ? r.unclear("kullanıcı 'Evet' dedi ama geri okuma birebir değil") : r.fail("api", "seçim programla kurulamadı (Adobe kalıbı, taze referans)");
+  if (ans === "Hayır") return r.fail("api", "setSelection timeline'a yansımıyor (Adobe kalıbı, taze referans; kullanıcı gözlemi)");
+  if (!so.setOk) return r.fail("api", "setSelection false döndü (Adobe kalıbı, taze referans)");
+  if (!so.exact) return r.unclear(`geri okuma birebir değil (kullanıcı: ${ans})`);
   if (ans === "Evet") return r.pass(`${targets.length} klip programla seçildi ve timeline'da görünüyor.`);
   r.unclear("kullanıcı cevabı yok (Atla)");
 };
@@ -558,15 +577,26 @@ const t7: TestFn = async (ctx, r) => {
   if (!ps.extPair) return r.unclear("Aynı track'te arka arkaya iki harici ses yok (ör. A2'de).");
   const [target, follower] = ps.extPair;
   r.m(`Silinecek: ${fmtClip(target)}; aynı track'te arkasındaki: ${fmtClip(follower)}`);
-  const so = await selectExactly(ctx, [target]); // klibi kendisi baştan okuyup yeniden bulur
-  for (const n of so.notes) r.m(`   ${n}`, "dim");
-  if (!so.exact) return r.fail("api", "hedef klip Adobe kalıbıyla birebir seçilemedi → silme yapılmadı");
-  r.m("createRemoveItemsAction(seçim, ripple=false, mediaType=AUDIO)");
-  const tx = await transact(ctx, "PROBE T7 ripple=false sil", (ops) => {
-    ops.remove(so.sel, "A");
-  });
-  txLine(r, "sil", tx);
-  await settle();
+  // 1. adım (mediaType anlamı ölçümü): SES klibini mediaType=VIDEO ile silmeyi dene (Adobe örneği VIDEO veriyor).
+  //    Silinirse mediaType filtre DEĞİL; silinmezse filtre → 2. adımda kendi türüyle (AUDIO) sil. Ripple ölçümü en sona göre.
+  let mediaTypeFilters: boolean | null = null;
+  for (const [step, kind] of [[1, "V"], [2, "A"]] as [number, Kind][]) {
+    const so = await selectExactly(ctx, [target]); // klibi kendisi baştan okuyup yeniden bulur
+    for (const n of so.notes) r.m(`   ${n}`, "dim");
+    if (!so.exact) return r.fail("belirsiz", "hedef klip Adobe kalıbıyla birebir seçilemedi → güvenlik için silme yapılmadı (API ölçülmedi)");
+    r.m(`${step}. adım: createRemoveItemsAction(seçim, ripple=false, mediaType=${kind === "V" ? "VIDEO" : "AUDIO"})`);
+    const tx = await transact(ctx, `PROBE T7 ripple=false sil (${step})`, (ops) => {
+      ops.remove(so.sel, kind);
+    });
+    txLine(r, "sil", tx);
+    await settle();
+    const gone = relocate(await snapshot(ctx), target) === null;
+    if (step === 1) {
+      mediaTypeFilters = !gone;
+      r.m(`→ mediaType=VIDEO ses klibini sildi mi: ${yesNo(gone)} → mediaType ${gone ? "filtre DEĞİL (hizalama)" : "FİLTRE gibi davranıyor"}`, "ok");
+    }
+    if (gone) break;
+  }
   const post = await snapshot(ctx);
   const targetRemoved = relocate(post, target) === null;
 
@@ -598,8 +628,8 @@ const t7: TestFn = async (ctx, r) => {
   for (const s of shifts) r.m(`   ✗ ${s}`, "err");
   const fNow = post.clips.find((x) => keyNoTime(x) === keyNoTime(follower));
   r.m(`   arkadaki "${follower.name}": önce start=${follower.start}, sonra start=${fNow ? fNow.start : "?"}`);
-  r.facts = { targetRemoved, shifted: moved, missing };
-  if (!targetRemoved) return r.fail("api", "createRemoveItemsAction hedefi silmedi (taze seçim, Adobe kalıbı)");
+  r.facts = { targetRemoved, shifted: moved, missing, mediaTypeFilters };
+  if (!targetRemoved) return r.fail("api", "createRemoveItemsAction hedefi VIDEO ile de AUDIO ile de silmedi (taze seçim, Adobe kalıbı)");
   if (unmatched.length) return r.fail("api", "ripple=false olsa bile başka klipler kaydı/kayboldu");
   r.pass("ripple=false silme başka hiçbir klibin start'ını değiştirmedi.");
 };
@@ -642,30 +672,49 @@ const t8: TestFn = async (ctx, r) => {
   const tgtV = camV;
   const tgtA = camA ?? camV;
 
-  // Eşitleme adımları: her adım öncesi sequence baştan okunur, yeni klipler (tür, track, kaynak) ile yeniden bulunur.
-  const steps: { name: "setIn" | "setOut" | "setStart" | "setEnd"; field: "inPt" | "outPt" | "start" | "end"; api: string }[] = [
-    { name: "setIn", field: "inPt", api: "createSetInPointAction" },
-    { name: "setOut", field: "outPt", api: "createSetOutPointAction" },
-    { name: "setStart", field: "start", api: "createSetStartAction" },
-    { name: "setEnd", field: "end", api: "createSetEndAction" },
+  // Eşitleme: her adım öncesi sequence baştan okunur; yeni klip = (tür, track, kaynak) eşleşen VE T8 öncesinde (s0)
+  // birebir bulunmayan TEK klip (aynı track'te eski bir kamera klibi varsa onu değil). Belirsizse o klibe dokunulmaz.
+  // set*Action'ların anlamı (kırpma mı taşıma mı) belgelenmemiş → iki sıra denenir, ilk tutan kaydedilir.
+  const oldKeys = new Set(s0.clips.map(keyFull));
+  const findNew = (s: Snapshot, kind: Kind, track: number | null) => {
+    if (track === null) return null;
+    const c = s.clips.filter((x) => x.kind === kind && x.track === track && x.projId === camV.projId && !oldKeys.has(keyFull(x)));
+    return c.length === 1 ? c[0] : null;
+  };
+  type StepName = "setIn" | "setOut" | "setStart" | "setEnd";
+  const FIELD: Record<StepName, "inPt" | "outPt" | "start" | "end"> = { setIn: "inPt", setOut: "outPt", setStart: "start", setEnd: "end" };
+  const API: Record<StepName, string> = {
+    setIn: "createSetInPointAction",
+    setOut: "createSetOutPointAction",
+    setStart: "createSetStartAction",
+    setEnd: "createSetEndAction",
+  };
+  const ORDERS: StepName[][] = [
+    ["setIn", "setOut", "setStart", "setEnd"],
+    ["setStart", "setEnd", "setIn", "setOut"],
   ];
-  const findNew = (s: Snapshot, kind: Kind, track: number | null) =>
-    track === null ? null : s.clips.find((c) => c.kind === kind && c.track === track && c.projId === camV.projId) ?? null;
-  for (const st of steps) {
-    const sk = await snapshot(ctx);
-    const curV = findNew(sk, "V", vTrack);
-    const curA = findNew(sk, "A", aTrack);
-    const tx = await transact(ctx, `PROBE T8 ${st.name}`, (ops) => {
-      if (curV) ops[st.name](curV, ticks(tgtV[st.field]));
-      if (curA) ops[st.name](curA, ticks(tgtA[st.field]));
-    });
-    await settle();
-    const after = await snapshot(ctx);
-    const v = findNew(after, "V", vTrack);
-    const a = findNew(after, "A", aTrack);
-    const show = (c: ClipInfo | null) => (c ? `start=${c.start} end=${c.end} in=${c.inPt} out=${c.outPt}` : "YOK");
-    r.m(`   ${st.api}(${st.field}) → tx ${tx.ok}; video: ${show(v)}; ses: ${show(a)}`, "dim");
+  const TIME: (keyof ClipInfo)[] = ["start", "end", "inPt", "outPt"];
+  const timesEqual = (o: ClipInfo, c: ClipInfo | null) => !!c && TIME.every((k) => o[k] === c[k]);
+  const show = (c: ClipInfo | null) => (c ? `start=${c.start} end=${c.end} in=${c.inPt} out=${c.outPt}` : "YOK/belirsiz");
+  let orderUsed: number | null = null;
+  for (let oi = 0; oi < ORDERS.length && orderUsed === null; oi++) {
+    r.m(`   eşitleme sırası ${oi + 1}: ${ORDERS[oi].map((n) => API[n]).join(" → ")}`);
+    for (const name of ORDERS[oi]) {
+      const sk = await snapshot(ctx);
+      const curV = findNew(sk, "V", vTrack);
+      const curA = findNew(sk, "A", aTrack);
+      const tx = await transact(ctx, `PROBE T8 ${name}`, (ops) => {
+        if (curV) ops[name](curV, ticks(tgtV[FIELD[name]]));
+        if (curA) ops[name](curA, ticks(tgtA[FIELD[name]]));
+      });
+      await settle();
+      const after = await snapshot(ctx);
+      r.m(`     ${API[name]}(${FIELD[name]}) → tx ${tx.ok}; video: ${show(findNew(after, "V", vTrack))}; ses: ${show(findNew(after, "A", aTrack))}`, "dim");
+    }
+    const chk = await snapshot(ctx);
+    if (timesEqual(tgtV, findNew(chk, "V", vTrack)) && (aTrack === null || timesEqual(tgtA, findNew(chk, "A", aTrack)))) orderUsed = oi + 1;
   }
+  r.m(`→ Tick eşitleme tuttu mu: ${orderUsed ? `EVET (${orderUsed}. sıra)` : "HAYIR (iki sırada da)"}`, orderUsed ? "ok" : "err");
 
   const fin = await snapshot(ctx);
   const finV = findNew(fin, "V", vTrack);
@@ -675,6 +724,10 @@ const t8: TestFn = async (ctx, r) => {
   else mismatch.push("yeni video:yok");
   if (finA) mismatch.push(...compareFields(r, camA ? "yeni ses" : "yeni ses (video değerleriyle)", tgtA, finA));
   else mismatch.push("yeni ses:yok");
+  // set* adımları T8 öncesinden kalan (overwrite'ın ezmediği) kliplere dokundu mu?
+  const survivors = s0.clips.filter((c) => !lost.some((l) => keyFull(l) === keyFull(c)));
+  const touched = survivors.filter((c) => !fin.clips.some((x) => keyFull(x) === keyFull(c)));
+  if (touched.length) listClips(r, "   ⚠ set* adımlarında değişen ESKİ klipler", touched, "warn");
 
   let linkedAnswer: Answer | null = null;
   let autoLinked: boolean | null = null;
@@ -690,9 +743,23 @@ const t8: TestFn = async (ctx, r) => {
     autoLinked = vSel ? aSel : null;
     r.m(`   panelin okuduğu: getSelection ${rs.count} öğe; yeni video seçili: ${yesNo(vSel)}, yeni ses seçili: ${yesNo(aSel)}`);
   }
-  r.facts = { bornTogether, videoBorn: bornV.length, audioBorn: bornA.length, vTrack, aTrack, mismatchFields: mismatch, linkedAnswer, autoLinked, selectedCount };
-  if (!bornTogether) return r.fail("api", "overwrite video ve sesi birlikte oluşturmadı");
-  if (mismatch.length) return r.fail("api", `set In/Out/Start/End ile aslına eşitlenemedi: ${mismatch.join(", ")}`);
+  r.facts = {
+    bornTogether,
+    videoBorn: bornV.length,
+    audioBorn: bornA.length,
+    vTrack,
+    aTrack,
+    orderUsed,
+    mismatchFields: mismatch,
+    touchedOld: touched.length,
+    linkedAnswer,
+    autoLinked,
+    selectedCount,
+  };
+  if (!bornTogether) return r.fail("api", "overwrite video ve sesi birlikte oluşturmadı (taze ProjectItem, Adobe kalıbı)");
+  if (touched.length) return r.fail("belirsiz", `set* adımları ${touched.length} eski klibi değiştirdi — yeni klip ayırt edilemedi`);
+  if (mismatch.length)
+    return r.fail("belirsiz", `set In/Out/Start/End iki sırada da aslına eşitlenmedi (${mismatch.join(", ")}) — anlamları çözülemedi, adım günlüğüne bak`);
   if (linkedAnswer === "Hayır") return r.fail("api", "overwrite ile doğan video+ses bağlı değil (tıklayınca ses seçilmiyor)");
   if (linkedAnswer === "Evet") return r.pass("overwrite V+A'yı bağlı doğurdu ve set*Action'larla aslına birebir eşitlendi.");
   r.unclear("bağ sorusu cevaplanmadı (Atla)");

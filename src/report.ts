@@ -88,6 +88,8 @@ export function decide(results: Map<string, TestResult>): Decision {
       case "T3":
         if (onlyTimeFields && pass("T8"))
           workarounds.push(`T3: kopya zamanları farklı (${mm.join(", ")}) → T8'de çalışan set In/Out/Start/End action'larıyla düzelt.`);
+        else if (onlyTimeFields)
+          unclear.push(`T3: kopya zamanları farklı (${mm.join(", ")}); set* ile düzeltilebilirliği T8'de kanıtlanmadı`);
         else if (pass("T4") && pass("T7") && mm.length === 0 && Number(f(r, "collateral") ?? 0) === 0)
           workarounds.push(`T3: tek transaction'da taşıma olmadı (${why}) ama clone (T4) ve silme (T7) ayrı ayrı çalışıyor → taşımayı iki adımda yap (tek Ctrl+Z olmaz; önce T1 yedeği).`);
         else blockers.push(`T3: ${why}`);
@@ -95,6 +97,8 @@ export function decide(results: Map<string, TestResult>): Decision {
       case "T4":
         if (onlyTimeFields && pass("T8"))
           workarounds.push(`T4: kopya zamanları farklı (${mm.join(", ")}) → set In/Out/Start/End action'larıyla aslının değerlerine geri yaz (T8'de çalıştı).`);
+        else if (onlyTimeFields)
+          unclear.push(`T4: kopya zamanları farklı (${mm.join(", ")}); set* ile düzeltilebilirliği T8'de kanıtlanmadı`);
         else blockers.push(`T4: ${why}`);
         break;
       case "T7":
@@ -137,6 +141,11 @@ export function decide(results: Map<string, TestResult>): Decision {
   if (pass("T5")) reasons.push("T5: Adobe kalıbıyla (getSelection+addItem+setSelection) çoklu seçim yapılıyor ve timeline'da görünüyor.");
   if (pass("T6")) reasons.push("T6: T3'ün tek transaction'ı tek Ctrl+Z ile tamamen geri alınıyor.");
   if (pass("T7")) reasons.push("T7: ripple=false silme başka hiçbir klibi kaydırmıyor.");
+  const mtf = f(get("T7"), "mediaTypeFilters");
+  if (mtf === true)
+    reasons.push("T7: createRemoveItemsAction'ın mediaType'ı FİLTRE gibi davranıyor (VIDEO ses klibini silmedi) → video+ses silerken V için VIDEO, A için AUDIO ayrı action.");
+  else if (mtf === false)
+    reasons.push("T7: mediaType filtre değil (VIDEO ses klibini de sildi) → video+ses tek seçimle tek action'da silinebilir.");
   if (pass("T8")) reasons.push("T8: createOverwriteItemAction V+A'yı bağlı doğuruyor; set In/Out/Start/End ile aslına birebir eşitleniyor.");
   reasons.push("Genel bulgu: TrackItem referansları transaction sonrası geçersiz → SPREAD/RE-STACK tüm taşımaları TEK transaction'da yapmalı; aradaki her adımda sequence yeniden okunmalı.");
 

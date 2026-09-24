@@ -13,10 +13,15 @@ const TPS = 254016000000n; // tick / saniye
 // "happy": her şey yolunda. "grim": kötümser varsayımlar (API yok / davranış yok → CEP kararı).
 // "throw": olmayan track'e clone/overwrite istisna fırlatır (sınıflanamayan hata → GEÇİCİ karar, CEP DEĞİL).
 // "strict": happy + clearSelection/setSelection de eski referansları geçersiz kılar (en kötü ihtimal) → yine hepsi PASS olmalı.
-const MODE = ["grim", "throw", "strict"].includes(process.argv[2]) ? process.argv[2] : "happy";
+// "linked": Linked Selection seçimi ve silmeyi bağlı partnere genişletir + olmayan track'e clone istisna → T2 yedek yolu yanlış CEP vermemeli.
+// "filter": createRemoveItemsAction'ın mediaType'ı FİLTRE (VIDEO yalnız videoyu siler) → T3 [KOD], T7 bunu ölçer, CEP yok.
+const MODES = ["grim", "throw", "strict", "linked", "filter"];
+const MODE = MODES.includes(process.argv[2]) ? process.argv[2] : "happy";
 const G = MODE === "grim";
 const TH = MODE === "throw";
 const ST = MODE === "strict";
+const LK = MODE === "linked";
+const FI = MODE === "filter";
 const sec = (s) => BigInt(Math.round(s * 1000)) * (TPS / 1000n);
 
 // ------------------------------------------------------------ sahte model
@@ -160,8 +165,13 @@ function wrapSequence(guid) {
     getSelection: async () => wrapSelection([...s().sel]),
     setSelection: (sel) => {
       stale(sel);
-      if (G) return false;
-      s().sel = new Set(sel.__ids);
+      const ids = new Set(sel.__ids);
+      if (LK)
+        for (const id of [...ids]) {
+          const f = findClip(id);
+          if (f && f.c.linkId) for (const grp of [s().v, s().a]) for (const tr of grp) for (const c of tr) if (c.linkId === f.c.linkId) ids.add(c.id);
+        }
+      s().sel = ids;
       if (ST) mockGen++;
       return true;
     },
@@ -187,7 +197,7 @@ const editorFor = (seqW) => {
   const seq = () => seqByGuid(guid);
   const grpOf = (k) => (k === "V" ? seq().v : seq().a);
   const target = (kind, idx) => {
-    if (TH && idx >= grpOf(kind).length) throw new Error(`mock: hedef track ${idx} yok`);
+    if ((TH || LK) && idx >= grpOf(kind).length) throw new Error(`mock: hedef track ${idx} yok`);
     return G ? Math.min(idx, grpOf(kind).length - 1) : idx;
   };
   return {
@@ -218,11 +228,18 @@ const editorFor = (seqW) => {
     createRemoveItemsAction: (sel, ripple, mt) => {
       stale(sel);
       const ids = [...sel.__ids];
+      if (LK)
+        for (const id of [...ids]) {
+          const f = findClip(id);
+          if (f && f.c.linkId)
+            for (const grp of [seq().v, seq().a]) for (const tr of grp) for (const c of tr) if (c.linkId === f.c.linkId && !ids.includes(c.id)) ids.push(c.id);
+        }
       return {
         apply() {
           for (const id of ids) {
             const f = findClip(id);
             if (!f || f.s !== seq()) continue;
+            if (FI && mt !== 0 && (mt === 2 ? f.c.kind !== "V" : f.c.kind !== "A")) continue; // filtre anlamı
             f.grp[f.t] = f.grp[f.t].filter((x) => x.id !== id);
             if (G) {
               const d = f.c.end - f.c.start;
@@ -437,20 +454,47 @@ async function grimScenario() {
     await sleep(30);
   });
   console.log(report);
-  expectSummary(report, {
-    T1: "FAIL [API]",
-    T2: "FAIL [API]",
-    T3: "FAIL [API]",
-    T4: "PASS",
-    T5: "FAIL [API]",
-    T6: "BELİRSİZ",
-    T7: "FAIL [API]",
-    T8: "FAIL [API]",
-  });
-  for (const needle of ["Öneri: CEP'e geç", "Engeller (API — CEP gerekçesi):", "birebir: HAYIR", "YEDEK YÖNTEM"])
+  expectSummary(report, GRIM_EXPECT);
+  // CEP yalnız ÖLÇÜLEN davranıştan (T7: ripple=false başka klipleri kaydırdı) gelmeli; istisnalar (T1 "is not a function") değil
+  for (const needle of ["Öneri: CEP'e geç", "Engeller (API — CEP gerekçesi):", "T7: ripple=false olsa bile", "YEDEK YÖNTEM"])
     if (!report.includes(needle)) fail(`raporda yok: ${needle}`);
+  if (/✗ T1:/.test(report)) fail("T1 istisnası engel sayıldı");
   mainUntouched();
   console.log("\nSMOKE (grim) OK");
+  process.exit(0);
+}
+
+const GRIM_EXPECT = {
+  T1: "FAIL [BELİRSİZ]", // TypeError "is not a function" → istisna, kanıt değil
+  T2: "PASS", // clone track açmadı (ölçüldü) ama insert+sil yedeği çalıştı
+  T3: "FAIL [BELİRSİZ]", // hedef track yoktu, clone üst track'e yapıştı → T2'nin bulgusu tekrar sayılmaz
+  T4: "PASS",
+  T5: "FAIL [API]", // kullanıcı "Hayır" (gözlem)
+  T6: "FAIL [API]", // kullanıcı Ctrl+Z'ye basmadı, "Hayır" dedi → geri gelmedi (gözlem + otomatik karşılaştırma)
+  T7: "FAIL [API]", // ripple=false yine kaydırdı (ölçüldü) → engel
+  T8: "FAIL [API]", // overwrite yalnız video üretti (ölçüldü)
+};
+
+async function linkedScenario() {
+  const report = await runAll(happyAnswer);
+  console.log(report);
+  const got = summary(report);
+  if (got.T2 !== "PASS") fail(`linked: T2 yedek yolu bağlı partnerle çalışmalıydı, gelen ${got.T2}`);
+  if (report.includes("Öneri: CEP")) fail("linked: bağlı seçim yanlış CEP önerisine yol açtı");
+  if (!/YEDEK YÖNTEM/.test(report) || !/eklenenlerden kalan: 0/.test(report)) fail("linked: T2 yedek yolu çalışıp eklenenleri temizlemedi");
+  if (/silme İPTAL/.test(report)) fail("linked: bağlı seçim T2 yedek silmesini iptal ettirdi");
+  console.log("\nSMOKE (linked) OK — Linked Selection varken T2 yedek yolu eklenenleri tek seçimle sildi, CEP yok");
+  process.exit(0);
+}
+
+async function filterScenario() {
+  const report = await runAll(happyAnswer);
+  console.log(report);
+  expectSummary(report, { T1: "PASS", T2: "PASS", T3: "FAIL [KOD]", T4: "PASS", T5: "PASS", T6: "PASS", T7: "PASS", T8: "PASS" });
+  if (report.includes("Öneri: CEP")) fail("filter: mediaType kullanım hatası CEP önerisine yol açtı");
+  for (const needle of ["mediaType FİLTRE gibi davranıyor", "Öneri: GEÇİCİ", "Kod/kullanım hataları"])
+    if (!report.includes(needle)) fail(`filter: raporda yok: ${needle}`);
+  console.log("\nSMOKE (filter) OK — mediaType filtre ise T3 [KOD], T7 ölçtü, CEP yok");
   process.exit(0);
 }
 
@@ -496,6 +540,10 @@ async function throwScenario() {
   if (G || TH) {
     await sleep(1700);
     return G ? grimScenario() : throwScenario();
+  }
+  if (LK || FI) {
+    await sleep(1700);
+    return LK ? linkedScenario() : filterScenario();
   }
   if (ST) {
     await sleep(1700);

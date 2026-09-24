@@ -30,7 +30,7 @@ kullanıcı etkileşimi, Ctrl+Z ya da başka bir transaction olursa her şey ba�
 | Sürüm | **0.1.1** (manifest `version` 0.1.1 → Creative Cloud güncelleme olarak görür; panel başlığında "v0.1.1") |
 | Yapılan | 8 test (T1–T8), "Hepsini çalıştır", rapor + sınıflı karar önerisi, "Raporu kopyala". **SPREAD / RE-STACK YAZILMADI.** |
 | Paket | `release/spread-probe.ccx` (kökte `manifest.json`, dosyalar 644, klasörler 755; açılıp `dist/` ile birebir karşılaştırıldı) |
-| Bulutta doğrulanan | `tsc --strict`, Adobe `@adobe/eslint-plugin-premierepro` kuralları, d.ts satır kontrolü (67 ref), mock Premiere ile 4 senaryo (happy/grim/throw/strict) + kilit aşamaları, `.ccx` yapısı |
+| Bulutta doğrulanan | `tsc --strict`, Adobe `@adobe/eslint-plugin-premierepro` kuralları, d.ts satır kontrolü (67 ref), mock Premiere ile 6 senaryo (happy/strict/grim/throw/linked/filter) + kilit aşamaları, `.ccx` yapısı, bağımsız alt ajan incelemesi |
 | Doğrulanamayan | Gerçek Premiere davranışı — kullanıcının v0.1.1 raporu bekleniyor ([KURULUM_TR.md](KURULUM_TR.md)) |
 | Dal | `claude/sweet-bell-do4j75` |
 
@@ -46,7 +46,7 @@ src/report.ts          rapor metni + sınıflı karar mantığı (decide), Premi
 src/ui.ts              günlük, Evet/Hayır/Atla soruları
 public/                manifest.json (v5, 0.1.1, premierepro ≥ 25.6.0, clipboard izni), index.html, ikonlar
 scripts/               package-ccx.sh, verify-ccx.py, check-api-refs.mjs
-dev/smoke.cjs          sahte premierepro ile dist/'i Node'da uçtan uca çalıştırır (happy/grim/throw/strict)
+dev/smoke.cjs          sahte premierepro ile dist/'i Node'da uçtan uca çalıştırır (happy/strict/grim/throw/linked/filter)
 release/               spread-probe.ccx
 ```
 
@@ -54,7 +54,7 @@ release/               spread-probe.ccx
 
 ```bash
 npm ci
-npm run check        # typecheck + lint + check:api + smoke (happy/grim/throw/strict)
+npm run check        # typecheck + lint + check:api + smoke (6 senaryo)
 npm run package      # build → release/spread-probe.ccx → verify-ccx.py
 npm run api:table    # kullanılan her API'nin d.ts satırı + kullanıldığı yerler
 ```
@@ -70,18 +70,23 @@ npm run api:table    # kullanılan her API'nin d.ts satırı + kullanıldığı 
 - **Adobe düzenleme kalıbı:** `project.lockedAccess(() => project.executeTransaction(compound => {...}, "PROBE …"))`.
   Action'lar lexically executeTransaction callback'i içinde üretilir (`TxOps`); Adobe lint kuralı `require-action-lock-scope` 0 hata.
 - **Adobe seçim kalıbı (`selectExactly`):** `clearSelection` → sequence'ı baştan oku, klipleri `relocate` ile bul → `getSelection` →
-  `addItem(taze, false)` → `setSelection` → **geri oku** (`getSelection().getTrackItems()` sayısı + her klipte `getIsSelected`).
-  Birebir değilse silme **yapılmaz** (yanlış klip silinmesin). Silmeye verilen seçim `setSelection`'dan sonra `getSelection()` ile alınır
+  `addItem(taze, false)` → `setSelection` → **geri oku**: `getSelection()` öğeleri (track, start, end, kaynak adı) ile
+  `getIsSelected` veren klipler birebir aynı olmalı, istenen her klip seçili olmalı, seçili her klip "istenen ∪ izinli" içinde olmalı
+  (izinli = Linked Selection'ın ekleyebileceği, silinmesinde sakınca olmayan klipler; ör. T2'de insert'in kendi partneri).
+  Uygun değilse silme **yapılmaz** (yanlış klip silinmesin) ve bu **ölçüm sayılmaz** (FAIL [BELİRSİZ]). Silmeye verilen seçim `setSelection`'dan sonra `getSelection()` ile alınır
   (Adobe `removeSelectedTrackItems` gibi); ardından gelen transaction referanslarını dönen taze `snap`'ten alır.
-- **Silme `mediaType`:** yalnız video → VIDEO, yalnız ses → AUDIO, video+ses birlikte (T3) → VIDEO (Adobe örneğindeki gibi).
+- **Silme `mediaType`:** yalnız video → VIDEO, yalnız ses → AUDIO, video+ses birlikte (T3, T2 yedek) → VIDEO (Adobe örneğindeki gibi).
+  Anlamı (filtre mi hizalama mı) belgelenmemiş → **T7 ölçer**: ses klibini önce VIDEO ile siler; silinmezse filtre demektir, AUDIO ile
+  siler (`mediaTypeFilters`). T3'te video gidip ses kalırsa FAIL [KOD] ("V için VIDEO, A için AUDIO ayrı remove gerekir").
 - **PROBE_ kilidi (değişmedi):** her test `requireProbe(pin)`; her transaction/seçim öncesi `assertStillProbe()` (tutulan + taze aktif
   sequence adı PROBE_, guid aynı); "Hepsini çalıştır" başladığı sequence'a sabitlenir; T1 yalnız "yeni kopya aktif olduysa" aslına döner,
   kullanıcı başka sequence'a geçtiyse durur.
 - **Kurulum tespiti (v0.1.1, kullanıcının gerçek düzeni geçerli):** kamera video = V1'deki ilk klip; kamera sesi = aynı kaynak + aynı
   start/end'li ses klibi (en alttaki); harici ses = kaynağı hiçbir video klibinin kaynağı olmayan ses klibi, **TÜM ses track'lerinde**
   (ör. `260912_133224_Tr1.WAV` A2'de); T7 çifti = aynı track'te arka arkaya iki harici ses (önce A2).
-- **FAIL sınıfları (`classifyError`, `Rec.fail`):** `api` = taze referans + Adobe kalıbıyla yapılmış çağrının ölçülen sonucu ya da
-  "is not a function" türü eksik metot; `kod` = bayat referans / nullptr (bizim kullanımımız); `belirsiz` = sınıflanamayan istisna.
+- **FAIL sınıfları (`classifyError`, `Rec.fail`):** yakalanan istisna **asla** `api` değildir (`classifyError` yalnız `kod`/`belirsiz` döndürür;
+  "is not a function" bile `belirsiz`). `api` yalnızca test içinde, taze referans + Adobe kalıbıyla yapılmış bir çağrının **ölçülen**
+  sonucuna (ya da kullanıcı gözlemine) verilir. Güvenlik iptalleri (seçim uygun değil → silme yapılmadı) `belirsiz`tir.
   **Yalnız `api` sınıfı engel (CEP gerekçesi) olabilir**; `kod`/`belirsiz` kararı "GEÇİCİ" yapar.
 
 ## Testler — v0.1.1
@@ -91,16 +96,18 @@ npm run api:table    # kullanılan her API'nin d.ts satırı + kullanıldığı 
 | Test | Adımlar | PASS ölçütü | facts |
 |---|---|---|---|
 | **T1 Yedek** | `createCloneAction` → `getSequences` ile yeni sequence aranır; kopya aktif olduysa aslına dönülür | tam 1 yeni sequence | `cloneCreated, cloneName, activeChanged, cloneBecameActive, returnedToOriginal` |
-| **T2 Track açma** | kamera videosu ve harici ses, hedef = track sayısı olacak ofsetle clone; açılmazsa yedek: insert + (her tür için taze seçimle) sil | V ve A için yeni/boş track elde edildi | `openedV, openedA, fallbackRan, fallbackV, fallbackA` |
+| **T2 Track açma** | kamera videosu ve harici ses, hedef = track sayısı olacak ofsetle clone; açılmazsa yedek: insert → eklenenlerin HEPSİ tek seçimle (partner izinli) sil → kalan varsa kendi türüyle 2. geçiş | V ve A için yeni/boş track elde edildi | `openedV, openedA, fallbackRan, fallbackV, fallbackA, measured` |
 | **T3 Taşı (tek transaction)** | TEK `executeTransaction`: kamera videosu → ilk boş V (+kV), kamera sesi → ilk boş A (+kA) clone (ikisi de aynı hedefe; bağlı partner gelirse üst üste yazılır → tek kopya), iki aslı tek seçimle `createRemoveItemsAction(ripple=false)` sil. Sonra: kullanıcı kopya videoya tıklar, panel `getSelection` ile kaç öğe seçili okur | asıllar gitti, 1+1 kopya, tick'ler birebir, başka klip değişmedi | `origVGone, origAGone, copiesV, copiesA, mismatchFields, collateral, linkedAnswer, selectedCount, autoLinked` |
 | **T4 Sadakat** | kamera (+bağlı ses) ve harici ses ilk boş track'lere clone; start/end/in/out (tick), speed, disabled, name — tolerans 0 | tüm alanlar eşit | `pairs, mismatchFields` |
 | **T5 Seçim** | 3 klip (kamera V, kamera A, 1. harici) Adobe kalıbıyla seçilir; "timeline'da seçili görünüyor mu?" | geri okuma birebir + kullanıcı "Evet" | `programmaticOk, setOk, addResults, readCount, userSees` |
 | **T6 Geri alma** | T3'ün hemen ardından: kullanıcı 1 kez Ctrl+Z; panel T3 öncesi anahtar listesiyle birebir karşılaştırır | otomatik karşılaştırma aynı + kullanıcı "Hayır" demedi | `userAnswer, restored, tracksAfterUndo` |
-| **T7 Ripple** | aynı track'te (A2) arka arkaya iki harici sesin ilki taze seçimle `ripple=false, AUDIO` silinir; diğer TÜM kliplerin start'ı karşılaştırılır | hedef gitti, hiçbir klip kaymadı | `targetRemoved, shifted, missing` |
-| **T8 Bağlı doğurma (yeni)** | kamera ProjectItem'ı ile `createOverwriteItemAction(pi, aslın start'ı, boş V, boş A)` → V+A birlikte oluştu mu? Sonra 4 ayrı transaction (her biri öncesi taze okuma): `createSetInPointAction` → `createSetOutPointAction` → `createSetStartAction` → `createSetEndAction` ile aslına eşitle; T4 gibi karşılaştır. Kullanıcı yeni videoya tıklar: ses de seçildi mi | birlikte doğdu + tick'ler birebir + kullanıcı "Evet" | `bornTogether, videoBorn, audioBorn, vTrack, aTrack, mismatchFields, linkedAnswer, autoLinked, selectedCount` |
+| **T7 Ripple** | aynı track'te (A2) arka arkaya iki harici sesin ilki taze seçimle `ripple=false` silinir: önce `mediaType=VIDEO` (anlam ölçümü), silinmezse `AUDIO`; diğer TÜM kliplerin start'ı karşılaştırılır | hedef gitti, hiçbir klip kaymadı | `targetRemoved, shifted, missing, mediaTypeFilters` |
+| **T8 Bağlı doğurma (yeni)** | kamera ProjectItem'ı ile `createOverwriteItemAction(pi, aslın start'ı, boş V, boş A)` → V+A birlikte oluştu mu? Sonra her adım ayrı transaction (öncesi taze okuma; yeni klip = T8 öncesinde olmayan tek klip): sıra 1 `SetIn → SetOut → SetStart → SetEnd`, tutmazsa sıra 2 `SetStart → SetEnd → SetIn → SetOut`; T4 gibi karşılaştır; eski kliplere dokunuldu mu kontrol. Kullanıcı yeni videoya tıklar: ses de seçildi mi | birlikte doğdu + tick'ler birebir + kullanıcı "Evet" | `bornTogether, videoBorn, audioBorn, vTrack, aTrack, orderUsed, mismatchFields, touchedOld, linkedAnswer, autoLinked, selectedCount` |
 
-**Karar (`decide`)**: zorunlu = T2, T3, T4, T7. Engel yalnızca `api` sınıfı FAIL'den doğar (T3/T4 zaman farkı T8 çalışıyorsa workaround;
-T3 tek-transaction başarısız ama T4+T7 çalışıyorsa "iki adımda taşı" workaround'u). T1/T5/T6/T8 FAIL → workaround.
+**Karar (`decide`)**: zorunlu = T2, T3, T4, T7. Engel yalnızca `api` sınıfı FAIL'den doğar. T3/T4'te yalnız zaman alanı farkı: T8 geçtiyse
+workaround, geçmediyse belirsiz (asla engel değil). T3 tek-transaction başarısız ama T4+T7 çalışıyorsa "iki adımda taşı" workaround'u.
+T3 hedef track yokken başka klip değiştiyse belirsiz (T2'nin bulgusu iki kez sayılmaz). T8'de set* iki sırada da tutmazsa belirsiz.
+T1/T5/T6/T8 FAIL → workaround.
 `kod`/`belirsiz`/eksik varsa öneri "GEÇİCİ". Rapor ÖZET'inde her FAIL `[API]` / `[KOD]` / `[BELİRSİZ]` etiketlidir.
 
 ## Kullanılan Premiere API'leri (hepsi `premierepro.d.ts` 26.5.0)
@@ -192,13 +199,34 @@ Premiere dışı (UXP): `navigator.clipboard.setContent / writeText` (`@adobe/cc
     hiçbir bayat referans kullanılmadı; rapor başlığında "Premiere: 26.5.1"; kilit aşamaları (PROBE_ dışı, test ortasında geçiş,
     kopyanın aktif olması, T1 sırasında çıkış, koşu ortasında başka PROBE_*) geçti.
   - **strict:** happy + `clearSelection`/`setSelection` de referansları geçersiz kılar (en kötü ihtimal) → yine T1–T8 PASS.
-  - **grim:** API yok / davranış yok varsayımları (createCloneAction "is not a function", setSelection etkisiz, clone track açmıyor,
-    overwrite yalnız video, silme ripple) → FAIL'ler `[API]`, öneri "CEP'e geç".
+  - **grim:** createCloneAction "is not a function" (→ T1 `[BELİRSİZ]`, engel DEĞİL), clone track açmıyor (üst track'e yapışır →
+    T2 yedek yolla PASS, T3 `[BELİRSİZ]`), overwrite yalnız video (T8 `[API]`), silme ripple yapıyor (T7 `[API]` → **tek engel**),
+    kullanıcı her şeye "Hayır" → öneri "CEP'e geç" yalnız ÖLÇÜLEN T7 davranışından.
   - **throw:** olmayan track'e clone/overwrite sınıflanamayan istisna → FAIL'ler `[BELİRSİZ]`, öneri **"GEÇİCİ: UXP + workaround"**
     (istisna tek başına CEP'e götürmüyor).
+  - **linked:** Linked Selection seçimi ve silmeyi bağlı partnere genişletir + clone olmayan track'e istisna → T2 yedek yolu eklenenleri
+    tek seçimle siliyor, PASS; CEP yok.
+  - **filter:** `mediaType` filtre (VIDEO yalnız videoyu siler) → T3 `[KOD]` ("V/A ayrı remove"), T7 filtreyi ölçüyor, CEP yok.
   - Mock'un diğer davranışları TAHMİNDİR (ör. set In/Out/Start/End'in kırpma anlamı); yalnız panelin akışını ve sınıflamayı test eder.
 - `npm run package` — `.ccx` kökte `manifest.json` (version 0.1.1), 644/755, açılıp `dist/` ile birebir aynı olduğu doğrulandı.
-- **Bağımsız alt ajan incelemesi:** sürüyor — sonuç ve varsa düzeltmeler bir sonraki commit'te bu satıra yazılacak.
+- **Bağımsız alt ajan incelemesi (v0.1.1, salt okuma; tüm dosyalar baştan sona okundu, 67 referans kendi betiğiyle doğrulandı,
+  kendi mock modlarıyla ("linked", "linkdel") hatalar yeniden üretildi):**
+  1. Hiçbir TrackItem referansı transaction sınırını aşmıyor — **HOLDS** (her T1–T8 ve T2 yedek yolu adım adım izlendi; `invalidateRefs`
+     hata durumunda da çalışıyor; `lastT3` yalnız değer tutuyor).
+  2. Seçim kalıbı Adobe örneğiyle aynı — **HOLDS WITH CAVEATS** (`createEmptySelection` yok; clearSelection + geri okuma güvenli ama
+     bağlı partnerlere karşı fazla katıydı) → düzeltildi.
+  3. PROBE_ kilidi aynen duruyor — **HOLDS**.  4. Her API d.ts'te var — **HOLDS** (67/67, `Application.version` yalnız yorumda).
+  - **Sınıflama — kısmen bozuk** bulundu ve düzeltildi: (a) "is not a function / not supported" istisnası `api` sayılıp tek başına CEP
+    üretebiliyordu → `classifyError` artık asla `api` döndürmüyor; (b) güvenlik iptalleri (API hiç çağrılmadan) `api` sayılıyordu →
+    `belirsiz`; (c) T5'te "Atla" + uygun olmayan seçim `api` idi → `belirsiz`.
+  - Diğer bulgular → düzeltmeler: (1) T2 yedek yolunda Linked Selection partneri tür-tür seçimi bozup yanlış CEP veriyordu → eklenenler
+    tek seçimle (partner izinli) siliniyor; (2) video silinince bağlı ses de giderse ses geçişi istisna atıyordu → kalanlar her geçişte
+    yeniden hesaplanıyor; (3) T8 aynı track'teki eski kamera klibini kırpabiliyordu → yeni klip "T8 öncesinde olmayan tek klip";
+    (4) T8'in sabit set* sırası yanlış engel doğurabiliyordu → iki sıra deneniyor, tutmazsa `belirsiz`, T3/T4 zaman farkı asla engel değil;
+    (5) T3 tek VIDEO silme mediaType filtre ise sesi bırakır → T7 mediaType anlamını ölçüyor, T3'te bu durum `[KOD]`;
+    (6) hedef track yokken T3 çakışması T2 bulgusunu iki kez sayıyordu → `belirsiz`. Ayrıca geri okumada `getSelection` öğeleri artık
+    kimlikleriyle (track, start, end, kaynak) karşılaştırılıyor.
+  - Bu düzeltmeler yeni mock modlarıyla (linked, filter, yeniden tanımlanan grim) doğrulandı; ikinci bir alt ajan turu yapılmadı.
 
 ## Önceki tur (v0.1.0) incelemesinden düzeltilenler (özet)
 
