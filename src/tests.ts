@@ -1,7 +1,7 @@
 // T1–T7 yoklama testleri. SPREAD / RE-STACK burada YOK; sadece API davranışı ölçülür.
 // Her test: requireProbe() ile başlar (PROBE_ kilidi), her düzenlemeden önce transact()/assertStillProbe() kilidi yeniden doğrular.
 
-import type { Sequence, TrackItemSelection } from "./ppro";
+import type { Sequence } from "./ppro";
 import {
   assertStillProbe,
   getActive,
@@ -101,11 +101,18 @@ interface CloneOutcome {
   aOffset: number;
 }
 
+/** V1/A1 dışındaki boş track index'leri, ardından henüz olmayan ilk iki index (count, count+1). */
+function emptyTracks(s: Snapshot, kind: Kind): number[] {
+  const count = kind === "V" ? s.vCount : s.aCount;
+  const out: number[] = [];
+  for (let i = 1; i < count; i++) if (!s.clips.some((c) => c.kind === kind && c.track === i)) out.push(i);
+  out.push(count, count + 1);
+  return out;
+}
+
 /** V1/A1 dışındaki ilk boş track'in index'i; yoksa track sayısı (= henüz olmayan ilk track). */
 function firstEmptyTrack(s: Snapshot, kind: Kind): number {
-  const count = kind === "V" ? s.vCount : s.aCount;
-  for (let i = 1; i < count; i++) if (!s.clips.some((c) => c.kind === kind && c.track === i)) return i;
-  return count;
+  return emptyTracks(s, kind)[0];
 }
 
 /**
@@ -184,20 +191,29 @@ const t1: TestFn = async (ctx, r) => {
   for (const n of names) r.m(`   yeni sequence adı: "${n}" (PROBE_ ile başlıyor mu: ${yesNo(isProbeName(n))})`);
 
   const { sequence: activeNow } = await getActive();
-  const activeChanged = !activeNow || sequenceGuid(activeNow) !== ctx.guid;
+  const activeGuid = activeNow ? sequenceGuid(activeNow) : null;
+  const activeChanged = activeGuid !== ctx.guid;
+  const cloneBecameActive = activeGuid !== null && fresh.some((s) => sequenceGuid(s) === activeGuid);
   r.m(
-    `Aktif sequence değişti mi: ${activeChanged ? `EVET → şimdi "${activeNow ? sequenceName(activeNow) : "(yok)"}"` : "HAYIR"}`,
+    `Aktif sequence değişti mi: ${
+      !activeChanged ? "HAYIR" : cloneBecameActive ? "EVET → yeni kopya aktif oldu" : `EVET → "${activeNow ? sequenceName(activeNow) : "(yok)"}" (kopya değil)`
+    }`,
     activeChanged ? "warn" : "info"
   );
 
   let returned: boolean | null = null;
-  if (activeChanged) {
-    // Sonraki testler yedeğe değil ASLINA dokunsun: orijinal PROBE_ sequence'ı tekrar aktif yap.
+  r.facts = { cloneCreated: fresh.length === 1, cloneName: names[0] ?? null, activeChanged, cloneBecameActive, returnedToOriginal: returned };
+  if (activeChanged && !cloneBecameActive) {
+    // Kullanıcı bilerek başka sequence'a geçmiş: zorla geri dönme, dur.
+    throw new ProbeLockError("T1 sırasında kullanıcı başka bir sequence'a geçti. Güvenlik için durduruldu (geri dönülmedi).");
+  }
+  if (cloneBecameActive) {
+    // Sonraki testler yedeğe değil ASLINA dokunsun: yalnız "kopya aktif oldu" durumunda orijinale dön.
+    if (!isProbeName(sequenceName(ctx.sequence))) throw new ProbeLockError("Orijinal sequence'ın adı artık PROBE_ değil.");
     returned = await ctx.project.setActiveSequence(ctx.sequence); // d.ts:L2590 Project.setActiveSequence
     r.m(`   → orijinal "${ctx.name}" tekrar aktif yapıldı (setActiveSequence): ${String(returned)}`, returned ? "info" : "err");
+    r.facts.returnedToOriginal = returned;
   }
-
-  r.facts = { cloneCreated: fresh.length === 1, cloneName: names[0] ?? null, activeChanged, returnedToOriginal: returned };
   r.status = fresh.length === 1 ? "PASS" : fresh.length === 0 ? "FAIL" : "BELİRSİZ";
 };
 
@@ -269,18 +285,17 @@ const t2: TestFn = async (ctx, r) => {
     const shifted = removed(pre, mid);
     if (shifted.length) listClips(r, "   ⚠ insert eski klipleri değiştirdi", shifted, "warn");
 
-    const notes: string[] = [];
-    const groups: { sel: TrackItemSelection; kind: Kind }[] = [];
+    // Her tür için seçim hemen silmeden önce kurulur (yedek seçim yolu canlı/paylaşılan nesne döndürse de karışmasın).
     for (const kind of ["V", "A"] as Kind[]) {
       const list = ins.filter((c) => c.kind === kind);
-      if (list.length) groups.push({ sel: (await buildSelection(ctx, list, notes)).sel, kind });
-    }
-    for (const n of notes) r.m(`   ${n}`, "dim");
-    if (groups.length) {
-      const tx2 = await transact(ctx, "PROBE T2 yedek sil", (ops) => {
-        for (const g of groups) ops.remove(g.sel, g.kind);
+      if (!list.length) continue;
+      const notes: string[] = [];
+      const { sel } = await buildSelection(ctx, list, notes);
+      for (const n of notes) r.m(`   ${n}`, "dim");
+      const tx2 = await transact(ctx, `PROBE T2 yedek sil ${kind}`, (ops) => {
+        ops.remove(sel, kind);
       });
-      txLine(r, "eklenenleri sil (ripple=false)", tx2);
+      txLine(r, `eklenen ${kind === "V" ? "videoyu" : "sesi"} sil (ripple=false)`, tx2);
       await settle();
     }
     const fin = await snapshot(ctx);
@@ -510,16 +525,27 @@ const t6: TestFn = async (ctx, r) => {
     return;
   }
   const camV = ps.camV;
-  const vOffCam = pre.vCount - camV.track;
-  const aOffCam = pre.aCount - (ps.camA ? ps.camA.track : 0);
-  // Bağlı ses kopyası A(aCount+1)'e düşebileceği için harici sesi bir üstüne gönder (tek transaction'da 2 yeni track).
-  const aOffExt = pre.aCount + 1 - ext.track;
-  const vOffExt = pre.vCount + 1; // harici sesin videosu yok; yine de V1'e düşme ihtimali olmasın
+  // Geri alma testi track açmaktan bağımsız olsun: önce mevcut boş track'ler, yoksa yenileri (track açma T2'de ölçülür).
+  const emptyV = emptyTracks(pre, "V");
+  const emptyA = emptyTracks(pre, "A");
+  const vT = emptyV[0];
+  const aT = emptyA[0];
+  // Harici ses, kamera sesi kopyasıyla zamanda çakışmıyorsa aynı boş track'e; çakışıyorsa bir sonrakine.
+  const overlaps = ps.camA ? ext.startSec < ps.camA.endSec && ps.camA.startSec < ext.endSec : false;
+  const extT = overlaps ? emptyA[1] : aT;
+  const vOffCam = vT - camV.track;
+  const aOffCam = aT - (ps.camA ? ps.camA.track : 0);
+  const aOffExt = extT - ext.track;
+  const vOffExt = emptyV[1] - 0; // harici sesin videosu yok; olsaydı kamera kopyasını ezmesin
   const notes: string[] = [];
   const { sel } = await buildSelection(ctx, [camV], notes);
   for (const n of notes) r.m(`   ${n}`, "dim");
   r.m("TEK transaction içinde: (1) kamera videosunu yeni V/A track'e kopyala, (2) harici sesi bir üst yeni A track'e kopyala, (3) asıl videoyu ripple=false sil");
-  r.m(`   clone kamera: vOffset=${vOffCam}, aOffset=${aOffCam}; clone harici: vOffset=${vOffExt}, aOffset=${aOffExt} (hedef A${ext.track + aOffExt + 1})`, "dim");
+  r.m(
+    `   hedefler: kamera → ${trackLabel("V", vT)}/${trackLabel("A", aT)}, harici → ${trackLabel("A", extT)} ` +
+      `(mevcut V${pre.vCount}/A${pre.aCount}; ötesi yeni track). clone kamera: vOffset=${vOffCam}, aOffset=${aOffCam}; clone harici: vOffset=${vOffExt}, aOffset=${aOffExt}`,
+    "dim"
+  );
   const tx = await transact(ctx, "PROBE T6 (T2+T3 tek adim)", (ops) => {
     ops.clone(camV, vOffCam, aOffCam);
     ops.clone(ext, vOffExt, aOffExt);
@@ -534,7 +560,7 @@ const t6: TestFn = async (ctx, r) => {
   listClips(r, "   eklenen", plus);
   listClips(r, "   silinen/değişen", minus);
   const extCopy = plus.find((c) => c.kind === "A" && c.projId === ext.projId) ?? null;
-  r.m(`   harici ses kopyası nereye düştü: ${extCopy ? trackLabel("A", extCopy.track) : "YOK"} (hedef A${ext.track + aOffExt + 1})`);
+  r.m(`   harici ses kopyası nereye düştü: ${extCopy ? trackLabel("A", extCopy.track) : "YOK"} (hedef ${trackLabel("A", extT)})`);
   r.facts = {
     txOk: tx.ok,
     changed: plus.length + minus.length,
@@ -547,12 +573,17 @@ const t6: TestFn = async (ctx, r) => {
     return;
   }
 
+  await assertStillProbe(ctx); // Ctrl+Z istemeden önce: kullanıcı hâlâ PROBE_ sequence'ta mı
   const ans = await ask(
-    "Şimdi Premiere'de Timeline paneline bir kez tıkla, sonra Ctrl+Z'ye (Mac: Cmd+Z) YALNIZCA BİR KEZ bas " +
+    `Şimdi Premiere'de "${ctx.name}" timeline'ına bir kez tıkla, sonra Ctrl+Z'ye (Mac: Cmd+Z) YALNIZCA BİR KEZ bas ` +
       "(ya da Edit menüsünden 'Undo PROBE T6…' seç). Buraya dön: yapılanların HEPSİ geri geldi mi? " +
       "(kopyalar kayboldu, silinen video V1'e geri döndü)"
   );
   await settle();
+  const { sequence: activeAfter } = await getActive();
+  if (!activeAfter || sequenceGuid(activeAfter) !== ctx.guid) {
+    r.m("   ⚠ Cevap anında aktif sequence PROBE_ değildi: Ctrl+Z başka bir sequence'ta basılmış olabilir.", "warn");
+  }
   const post = await snapshot(ctx);
   const restored = sameClips(pre, post);
   r.m(`→ Otomatik karşılaştırma: klipler başlangıçla birebir aynı mı: ${yesNo(restored)}`, restored ? "ok" : "err");
@@ -650,11 +681,11 @@ export const TESTS: TestDef[] = [
 /** "Hepsini çalıştır" sırası: silen testler sona. T6 (geri alınır) T3'ten önce, T7 en son. */
 export const RUN_ALL_ORDER = ["T1", "T2", "T4", "T5", "T6", "T3", "T7"];
 
-export async function runOne(def: TestDef): Promise<TestResult> {
+export async function runOne(def: TestDef, pinGuid?: string): Promise<TestResult> {
   const r = new Rec(def.id, def.title);
   log(`▶ ${def.id} — ${def.title}`, "head");
   try {
-    const ctx = await requireProbe();
+    const ctx = await requireProbe(pinGuid);
     r.m(`sequence: "${ctx.name}"`, "dim");
     await def.fn(ctx, r);
   } catch (e) {

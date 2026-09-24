@@ -143,25 +143,30 @@ export function decide(results: Map<string, TestResult>): Decision {
       );
     else if (came === false)
       reasons.push("T3: Video kopyalanınca bağlı ses gelmiyor → SPREAD video ve sesi ayrı ayrı clone etmeli.");
-    if (orphan === true) reasons.push("T3: Sadece video silinince asıl ses yetim kalıyor → SPREAD asıl sesi ayrıca silmeli.");
-    else if (orphan === false) reasons.push("T3: Video silinince bağlı ses de siliniyor → SPREAD sesi ayrıca silmemeli (çift silme hatası olur).");
+    // Not: ölçüm yalnız "seçimde sadece video + mediaType=VIDEO" çağrısı için geçerli.
+    if (orphan === true)
+      reasons.push("T3: Seçimde yalnız video varken (mediaType=VIDEO) silinince asıl ses yetim kalıyor → SPREAD bu çağrıyla sildiğinde asıl sesi ayrıca silmeli.");
+    else if (orphan === false)
+      reasons.push("T3: Seçimde yalnız video varken (mediaType=VIDEO) silinince bağlı ses de gidiyor → SPREAD sesi ayrıca silmemeli (çift silme).");
   }
   fallback(t3, n, true);
 
   // T6 — geri alma (UX; engel değil)
-  const t6 = get("T6");
+  const t6 = need("T6");
   n = blockers.length + workarounds.length;
-  if (!t6) missing.push("T6 çalıştırılmadı");
-  else if (t6.status === "PASS") reasons.push("T6: Tek transaction tek Ctrl+Z ile tamamen geri alınıyor.");
+  if (!t6) {
+    /* need() eksik olarak yazdı */
+  } else if (t6.status === "PASS") reasons.push("T6: Tek transaction tek Ctrl+Z ile tamamen geri alınıyor.");
   else if (t6.status === "FAIL" && f(t6, "restored") === false)
     workarounds.push("T6: Tek Ctrl+Z hepsini geri almıyor → SPREAD öncesi T1 yöntemiyle otomatik sequence yedeği al.");
   fallback(t6, n, false);
 
   // T1 — yedek (UX; engel değil)
-  const t1 = get("T1");
+  const t1 = need("T1");
   n = blockers.length + workarounds.length;
-  if (!t1) missing.push("T1 çalıştırılmadı");
-  else if (t1.status === "PASS") reasons.push(`T1: createCloneAction yedek sequence oluşturuyor ("${String(f(t1, "cloneName"))}").`);
+  if (!t1) {
+    /* need() eksik olarak yazdı */
+  } else if (t1.status === "PASS") reasons.push(`T1: createCloneAction yedek sequence oluşturuyor ("${String(f(t1, "cloneName"))}").`);
   else if (t1.status === "FAIL") workarounds.push(`T1: Otomatik yedek yok (${firstError(t1)}) → kullanıcı SPREAD öncesi sequence'ı elle Duplicate eder.`);
   fallback(t1, n, false);
 

@@ -43,8 +43,12 @@ export function sequenceName(sequence: Sequence): string {
   return sequence.name; // d.ts:L3279 Sequence.name
 }
 
-/** Aktif sequence PROBE_ değilse ProbeLockError fırlatır. Tek giriş noktası budur. */
-export async function requireProbe(): Promise<ProbeContext> {
+/**
+ * Aktif sequence PROBE_ değilse ProbeLockError fırlatır. Tek giriş noktası budur.
+ * pinGuid verilirse ("Hepsini çalıştır"), aktif sequence tam olarak o olmalı — koşu ortasında
+ * başka bir PROBE_* sequence'a (ör. T1'in yedeği) kayılmaz.
+ */
+export async function requireProbe(pinGuid?: string): Promise<ProbeContext> {
   const { project, sequence } = await getActive();
   if (!project) throw new ProbeLockError("Açık bir proje yok.");
   if (!sequence) throw new ProbeLockError("Aktif (açık) bir sequence yok.");
@@ -54,7 +58,13 @@ export async function requireProbe(): Promise<ProbeContext> {
       `Aktif sequence "${name}" — adı "${PROBE_PREFIX}" ile başlamıyor. Test KİLİTLİ, hiçbir şey yapılmadı.`
     );
   }
-  return { project, sequence, guid: sequenceGuid(sequence), name };
+  const guid = sequenceGuid(sequence);
+  if (pinGuid !== undefined && guid !== pinGuid) {
+    throw new ProbeLockError(
+      `Aktif sequence "${name}", "Hepsini çalıştır"ın başladığı sequence değil. Güvenlik için durduruldu.`
+    );
+  }
+  return { project, sequence, guid, name };
 }
 
 /**
@@ -74,6 +84,13 @@ export async function assertStillProbe(ctx: ProbeContext): Promise<void> {
   if (!project || !sequence || sequenceGuid(sequence) !== ctx.guid) {
     throw new ProbeLockError(
       "Test sırasında aktif sequence değişti. Güvenlik için durduruldu; PROBE_ sequence'ı tekrar aktif yapıp yeniden deneyin."
+    );
+  }
+  // Tutulan nesnenin adı önbellekli olabilir: taze nesnenin adını da kontrol et.
+  const freshName = sequenceName(sequence);
+  if (!isProbeName(freshName)) {
+    throw new ProbeLockError(
+      `Sequence adı test sırasında "${freshName}" oldu (PROBE_ değil). Güvenlik için durduruldu.`
     );
   }
 }

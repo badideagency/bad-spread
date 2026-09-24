@@ -50,8 +50,10 @@ npm run api:table    # kullanılan her API'nin d.ts satırı + kullanıldığı 
 - **PROBE_ kilidi (iki katman):**
   1. Görsel: durum çubuğu + butonlar 1,5 sn'de bir güncellenir; `exclusive()` kilitliyken hiç çalıştırmaz.
   2. Asıl kilit (`src/guard.ts`): her test `requireProbe()` ile başlar (aktif sequence adı `startsWith("PROBE_")`, büyük/küçük harf duyarlı).
-     Her transaction ve `setSelection` öncesi `assertStillProbe()`: elimizdeki sequence'ın adı hâlâ PROBE_ mi **ve** aktif sequence'ın
-     guid'i hâlâ aynı mı. Değilse `ProbeLockError` → test durur; "Hepsini çalıştır" kalan testleri iptal eder.
+     Her transaction, `setSelection` ve seçim kurma öncesi `assertStillProbe()`: elimizdeki **ve** taze okunan aktif sequence'ın adı
+     hâlâ PROBE_ mi, aktif sequence'ın guid'i hâlâ aynı mı. Değilse `ProbeLockError` → test durur; "Hepsini çalıştır" kalan testleri iptal eder.
+     "Hepsini çalıştır" koşuyu başladığı sequence'ın guid'ine **sabitler** (`requireProbe(pin)`): koşu ortasında başka bir PROBE_*
+     sequence (ör. T1'in yedeği) aktif olursa durur. Her koşu eski sonuçları temizler.
      Tüm düzenlemeler `SequenceEditor.getEditor(ctx.sequence)` ile ve yalnız `ctx.sequence` track'lerinden okunan kliplerle yapılır.
 - **Klip seçimi (şartnameden bilinçli sapma):** Şartname "seçili klip" diyor; panel ise PROBE_test yapısını **kendisi buluyor**
   (V1'deki ilk video = kamera, A1'de aynı kaynak+aynı başlangıç = kamera sesi, A1'deki diğer kaynaklar = harici sesler).
@@ -71,12 +73,12 @@ npm run api:table    # kullanılan her API'nin d.ts satırı + kullanıldığı 
 
 | Test | Adımlar | PASS ölçütü | Rapora giden "facts" |
 |---|---|---|---|
-| **T1 Yedek** | `sequence.createCloneAction()` → `getSequences()` 3 sn'ye kadar yoklanır, yeni guid aranır. Aktif sequence değiştiyse `setActiveSequence(asıl)` ile geri dönülür. | tam 1 yeni sequence | `cloneCreated, cloneName, activeChanged, returnedToOriginal` |
+| **T1 Yedek** | `sequence.createCloneAction()` → `getSequences()` 3 sn'ye kadar yoklanır, yeni guid aranır. Aktif olan **yeni kopya** ise `setActiveSequence(asıl)` ile aslına dönülür; kullanıcı **başka** bir sequence'a geçtiyse geri çekilmez, koşu durur. | tam 1 yeni sequence | `cloneCreated, cloneName, activeChanged, cloneBecameActive, returnedToOriginal` |
 | **T2 Track açma** | Kamera videosu: `vOffset = vCount − track` ile clone (hedef = olmayan ilk V). Harici ses: aynısı A için. İkisinden biri açmazsa (ya da **istisna** atarsa) **yedek:** `createInsertProjectItemAction(kameraProjectItem, sequenceSonu, vCount, aCount, limitShift=true)` → eklenenleri `ripple=false` sil → boş track kaldı mı? | clone ile V ve A track açıldı; ya da yedek yolla boş track kaldı | `openedV, openedA, fallbackRan, fallbackV, fallbackA` |
 | **T3 Bağlı çift** | Sadece kamera **videosu** clone (önce mevcut boş track, yoksa yeni). Bağlı ses geldi mi (diff). Geldiyse kullanıcı kopya videoya tıklar → "ses de seçildi mi?" + panel `getIsSelected` ile okur. Sonra **asıl** video `ripple=false` silinir → A1'deki asıl ses duruyor mu (yetim)? | asıl silindi + ölçümler alındı | `cloneOk, linkedAudioCame, copyLinked, camVRemoved, orphanAudio, collateral` |
 | **T4 Sadakat** | Kamera videosu (+bağlı gelen ses) ve harici ses mevcut boş track'lere clone; asıl↔kopya: start, end, inPoint, outPoint (tick string eşitliği), speed, disabled, name. Tolerans 0. | tüm çiftlerde tüm alanlar eşit | `pairs, mismatchFields` |
 | **T5 Seçim** | `createEmptySelection` (+ yedek: `getSelection`+`removeItem`) → 4 klibi `addItem` → `setSelection` → `getSelection().getTrackItems()` ve her klipte `getIsSelected()` okunur → kullanıcıya "timeline'da seçili görünüyor mu?" | programla okunan doğru **ve** kullanıcı "Evet" | `programmaticOk, userSees, method, readCount` |
-| **T6 Geri alma** | TEK transaction: kamera videosu clone (V=vCount, A=aCount) + harici ses clone (A=aCount+1, tek transaction'da 2. yeni track) + asıl video sil. Kullanıcı timeline'a tıklayıp 1 kez Ctrl+Z → panel önceki snapshot ile birebir karşılaştırır. | otomatik karşılaştırma aynı + kullanıcı "Hayır" demedi | `txOk, changed, tracksAddedInOneTx, extCopyTrack, userAnswer, restored, tracksAfterUndo` |
+| **T6 Geri alma** | TEK transaction: kamera videosu clone + harici ses clone + asıl video sil. Hedefler önce **mevcut boş** track'ler (yoksa yeni) — geri alma, track açmaktan bağımsız ölçülsün; harici ses kamera sesi kopyasıyla çakışmıyorsa aynı track'e. Ctrl+Z istemeden önce kilit tekrar kontrol edilir. Kullanıcı timeline'a tıklayıp 1 kez Ctrl+Z → panel önceki snapshot ile birebir karşılaştırır. | otomatik karşılaştırma aynı + kullanıcı "Hayır" demedi | `txOk, changed, tracksAddedInOneTx, extCopyTrack, userAnswer, restored, tracksAfterUndo` |
 | **T7 Ripple** | Arkasında klip olan harici sesi (A1'deki 1. harici ses) `ripple=false` sil; diğer tüm kliplerin start'ı önce/sonra karşılaştırılır. | hedef silindi, hiçbir klip kaymadı/kaybolmadı | `targetRemoved, shifted, missing` |
 
 **Karar mantığı** (`src/report.ts` → `decide`): Zorunlu = T2, T4, T7, T3 (silme). Zorunlu bir testte çözümsüz FAIL → **"CEP'e geç"**.
@@ -160,14 +162,33 @@ Premiere dışı (UXP) çağrılar: `navigator.clipboard.setContent({"text/plain
 - `npm run check:api` — 58 referans, 0 hatalı satır, 0 yorumsuz çağrı. (Yanlış satırı yakaladığı denendi.)
 - `npm run smoke` — `dev/smoke.cjs`, dist/'i sahte bir `premierepro` modülüyle Node'da çalıştırır:
   - **happy:** hepsi PASS → "UXP yeterli"; PROBE_ dışı sequence'ta butonlar kilitli ve timeline değişmiyor;
-    test ortasında kullanıcı başka sequence'a geçerse test ilk düzenlemeden önce duruyor, hiçbir sequence değişmiyor; rapor panoya gidiyor.
+    test ortasında kullanıcı başka sequence'a geçerse test ilk düzenlemeden önce duruyor, hiçbir sequence değişmiyor; rapor panoya gidiyor;
+    Premiere kopyayı aktif yaparsa T1 aslına dönüyor ve T2–T7 aslında koşuyor (yedeğe dokunulmuyor); kullanıcı T1 sırasında
+    Main Edit'e geçerse panel geri çekmiyor, koşu duruyor, eski sonuçlar rapordan siliniyor; T1–T2 arasında başka bir PROBE_*
+    sequence aktif olursa sabitleme (pin) kilidi koşuyu durduruyor ve o sequence değişmiyor.
   - **grim:** createCloneAction istisna, clone track açmıyor (en üste yapışıyor), createEmptySelection istisna, setSelection false,
     silme ripple yapıyor, kullanıcı her şeye "Hayır" → hatalar panelde görünüyor, yedek yollar çalışıyor, öneri "CEP'e geç".
-  - **throw:** olmayan track'e clone istisna atıyor → T2 yedek yola geçiyor, T4/T3 mevcut boş track'e düşüyor, öneri "UXP + workaround".
+  - **throw:** olmayan track'e clone istisna atıyor → T2 yedek yola geçiyor, T4/T3/T6 mevcut boş track'lere düşüyor, öneri "UXP + workaround".
   - **UYARI:** mock'un davranışları TAHMİNDİR; sadece panel kodunun akışını/hata yakalamayı test eder, Premiere'in cevabını değil.
 - `npm run package` — `.ccx`: kökte `manifest.json`, dosyalar 644 / klasörler 755 (Unix öznitelikli), `unzip -Z` ve gerçek açma ile
   kontrol edildi; sabit zaman damgası sayesinde tekrar üretilebilir (aynı sha256).
-- **Bağımsız alt ajan incelemesi:** sürüyor — sonuç ve varsa düzeltmeler bir sonraki commit'te bu satıra yazılacak.
+- **Bağımsız alt ajan incelemesi** (salt okuma; tüm kaynaklar baştan sona okundu, 58 referans kendi betiğiyle ayrıca doğrulandı):
+  - İddia 1 — PROBE_ kilidi atlatılamıyor: **HOLDS WITH CAVEATS** → caveat'ler düzeltildi (aşağıda).
+  - İddia 2 — PROBE_ dışı sequence'a dokunulmuyor: **HOLDS WITH CAVEATS** → caveat'ler düzeltildi.
+  - İddia 3 — her API d.ts'te var, satır yorumları doğru: **HOLDS** (58/58, imzalar ve await kullanımı uyumlu).
+  - Bulunan ve düzeltilenler:
+    1. T1'deki `setActiveSequence` korumasızdı: kullanıcı T1 sırasında bilerek çıkarsa PROBE_test'i geri zorluyordu →
+       artık yalnız **yeni kopya** aktif olduysa geri dönüyor; başka sequence'a geçildiyse `ProbeLockError` ile duruyor.
+    2. "Hepsini çalıştır" sequence'ı sabitlemiyordu (T1 yedeği `PROBE_test Copy` sonraki testlerce düzenlenebilirdi) → `requireProbe(pin)`.
+    3. Ad kontrolü yalnız elde tutulan nesnede yapılıyordu (ad önbellekli olabilir) → taze aktif nesnenin adı da kontrol ediliyor.
+    4. `buildSelection` yedek yolu (getSelection+removeItem) kilit kontrolsüzdü → başına `assertStillProbe`.
+    5. T2 yedek yolunda iki seçim aynı canlı nesneyi paylaşabilirdi → her tür için seçim kur + ayrı transaction'da sil.
+    6. Sonuç tablosu koşular arasında temizlenmiyordu → her "Hepsini çalıştır" temizliyor.
+    7. T6, geri almayı track açmayla karıştırıyordu → önce mevcut boş track'ler; Ctrl+Z sorusundan önce kilit + cevaptan sonra aktif sequence kontrolü.
+    8. `decide()` T1/T6 BELİRSİZ'i eksik saymıyordu → `need()`; T3 "yetim ses" gerekçesi yalnız ölçülen çağrıya daraltıldı.
+    9. "Paket eski" bulgusu: inceleme, paket yeniden üretilmeden önceki dosyaya bakmıştı; paket bu düzeltmelerden sonra yeniden üretildi.
+  - Kalan not: `check-api-refs.mjs`'in "yorumsuz çağrı" taraması yalnız `.ad(` çağrılarını görür; özellik okumaları
+    (`guid`, `name`, `ticks`, `seconds`, `empty`, `TIME_ZERO`) elle kontrol edildi, hepsinin yorumu var.
 
 ## Bilinen belirsizlikler / riskler (rapor gelince bakılacaklar)
 
@@ -195,10 +216,10 @@ Premiere dışı (UXP) çağrılar: `navigator.clipboard.setContent({"text/plain
 
 - **T2** `openedV/openedA=true` → SPREAD her klibi `vCount/aCount` ofsetle clone ederek kendi track'ine taşır.
   `fallbackV/A=true` → önce insert+sil ile yeterli boş track aç, sonra clone. İkisi de false → track'leri kullanıcı açar ya da CEP.
-- **T6** `tracksAddedInOneTx` → tek transaction'da birden çok yeni track açılabiliyor mu (SPREAD'in tek Ctrl+Z ile geri alınabilmesi için önemli).
-  `extCopyTrack` hedefle (A{aCount+2}) aynı mı?
+- **T6** tek Ctrl+Z tüm bileşik işlemi geri alıyor mu → SPREAD tek transaction'da yapılırsa tek adımda geri alınabilir.
+  `tracksAddedInOneTx` → boş track yoksa bu transaction'da kaç yeni track açıldı (bilgi).
 - **T3** `linkedAudioCame=true` → kamera klibi tek clone ile V+A taşınır; `false` → V ve A ayrı clone. `orphanAudio=true` → aslı silerken sesi de ayrıca sil;
-  `false` → sesi ayrıca silme (çift silme).
+  `false` → sesi ayrıca silme (çift silme). **Dikkat:** `orphanAudio` yalnız "seçimde sadece video + `mediaType=VIDEO`" çağrısı için geçerli.
 - **T4** fark varsa hangi alan: zaman alanları → `createSetStart/End/InPoint/OutPointAction` ile düzelt; `speed` → UXP'de düzeltilemez.
 - **T5** `userSees=Evet` → SPREAD sonunda her şeyi seçili bırakır; değilse kullanıcı elle seçer.
 - **T7** kayma yoksa RE-STACK de `ripple=false` silme + clone ile "zamana dokunmadan" taşıma yapabilir.

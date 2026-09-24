@@ -1,7 +1,7 @@
 // Spread Probe — giriş noktası. Butonları testlere bağlar, PROBE_ kilidini arayüze yansıtır.
 // Asıl kilit src/guard.ts'de: her test requireProbe() ile başlar; buton kilidi yalnızca görseldir.
 
-import { getActive, isProbeName, sequenceName } from "./src/guard";
+import { getActive, isProbeName, requireProbe, sequenceName } from "./src/guard";
 import { buildReport, readEnv, type Env } from "./src/report";
 import { RUN_ALL_ORDER, runOne, scanSetup, TESTS, type TestResult } from "./src/tests";
 import { errText } from "./src/timeline";
@@ -99,11 +99,20 @@ async function exclusive(label: string, fn: () => Promise<void>): Promise<void> 
 
 async function runAll(): Promise<void> {
   log(`Hepsini çalıştır — sıra: ${RUN_ALL_ORDER.join(", ")} (silen testler sona)`, "head");
+  results.clear(); // eski koşunun sonuçları bu raporu/kararı etkilemesin
+  setupLines = [];
+  let pin: string;
+  try {
+    pin = (await requireProbe()).guid; // bütün koşu bu sequence'a sabitlenir
+  } catch (e) {
+    log(`KİLİT: ${errText(e)}`, "err");
+    return;
+  }
   setupLines = await scanSetup();
   for (const id of RUN_ALL_ORDER) {
     const def = TESTS.find((t) => t.id === id);
     if (!def) continue;
-    const r = await runOne(def);
+    const r = await runOne(def, pin);
     results.set(id, r);
     updateReport();
     if (r.lockError) {

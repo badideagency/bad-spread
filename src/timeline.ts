@@ -353,6 +353,7 @@ export async function buildSelection(
   clips: ClipInfo[],
   notes: string[]
 ): Promise<{ sel: TrackItemSelection; method: string; addResults: boolean[] }> {
+  await assertStillProbe(ctx); // yedek yol canlı seçimi değiştirebilir → önce kilit
   let sel: TrackItemSelection;
   let method = "createEmptySelection";
   try {

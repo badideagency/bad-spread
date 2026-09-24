@@ -50,7 +50,7 @@ function mkSequence(name, guid) {
 }
 
 const state = { sequences: [], activeGuid: null };
-const hooks = { onVCount: null };
+const hooks = { onVCount: null, onCloneSeq: null, onGetActive: null };
 const undoStack = [];
 
 function deepCopy() {
@@ -157,7 +157,8 @@ function wrapSequence(guid) {
       apply() {
         const src = s();
         const copy = JSON.parse(deepCopyOne(src));
-        restoreSeqInto(copy, src.name + " Copy", "guid-" + nextId++);
+        const g = restoreSeqInto(copy, src.name + " Copy", "guid-" + nextId++);
+        if (hooks.onCloneSeq) hooks.onCloneSeq(g);
       },
     };
     },
@@ -178,6 +179,7 @@ function restoreSeqInto(raw, name, guid) {
   seq.guid = guid;
   for (const grp of [seq.v, seq.a]) for (const tr of grp) for (const c of tr) c.id = nextId++;
   state.sequences.push(seq);
+  return guid;
 }
 
 function cloneClipTo(seq, c, trackIdx, linkId) {
@@ -260,9 +262,16 @@ const ppro = {
   Project: { getActiveProject: async () => projectW },
 };
 projectW = {
-  getActiveSequence: async () => (state.activeGuid ? wrapSequence(state.activeGuid) : null),
+  getActiveSequence: async () => {
+    if (hooks.onGetActive) hooks.onGetActive();
+    return state.activeGuid ? wrapSequence(state.activeGuid) : null;
+  },
   getSequences: async () => state.sequences.map((s) => wrapSequence(s.guid)),
   lockedAccess: (cb) => cb(),
+  setActiveSequence: async (seqW) => {
+    state.activeGuid = seqW.guid.toString();
+    return true;
+  },
   executeTransaction: (cb, name) => {
     const acts = [];
     cb({
@@ -284,7 +293,7 @@ projectW = {
 };
 
 // ------------------------------------------------------------ kurulum
-function setupProbe() {
+function setupProbe(withOtherProbe = false) {
   const s = mkSequence("PROBE_test", "guid-probe");
   const L = "Lcam";
   s.v[0].push(mkClip("V", projItems.cam, 0n, sec(10), L));
@@ -294,7 +303,13 @@ function setupProbe() {
   const other = mkSequence("Main Edit", "guid-main");
   other.v[0].push(mkClip("V", projItems.cam, 0n, sec(10), "Lmain"));
   state.sequences = [s, other];
+  if (withOtherProbe) {
+    const o = mkSequence("PROBE_other", "guid-probe-other");
+    o.a[0].push(mkClip("A", projItems.ext1, 0n, sec(8)));
+    state.sequences.push(o);
+  }
   state.activeGuid = "guid-probe";
+  undoStack.length = 0;
 }
 
 // ------------------------------------------------------------ sahte DOM
@@ -351,6 +366,11 @@ const fail = (m) => {
   process.exit(1);
 };
 
+let logMark = 0;
+const markLog = () => (logMark = (els.log?.children ?? []).length);
+const newLog = () => (els.log?.children ?? []).slice(logMark).map((c) => c.textContent).join("\n");
+
+/** "Hepsini çalıştır" bitene (Bitti. / durduruldu / KİLİT) kadar soruları cevaplar. */
 async function waitIdle(answerer, timeoutMs = 60000) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
@@ -359,15 +379,26 @@ async function waitIdle(answerer, timeoutMs = 60000) {
       const q = els["ask-text"].textContent;
       await answerer(q);
     }
-    if (!els["btn-all"].hasAttribute("disabled") || /Bitti\./.test(logText().split("\n").slice(-1)[0] || "")) {
-      // butonlar tekrar açıldıysa iş bitti
-      if (!els["btn-all"].hasAttribute("disabled")) return;
+    if (/Bitti\.|kalan testler durduruldu/.test(newLog())) {
+      await sleep(100);
+      return;
     }
   }
   fail("zaman aşımı");
 }
+const happyAnswer = async (q) => {
+  if (/Ctrl\+Z/.test(q)) undo();
+  if (/KOPYA videoya/.test(q)) {
+    const s = seqByGuid("guid-probe");
+    const v = s.v.flat().filter((c) => c.pi === projItems.cam).pop();
+    s.sel = new Set(s.v.flat().concat(s.a.flat()).filter((c) => c.linkId && c.linkId === v.linkId).map((c) => c.id));
+  }
+  els["ask-yes"].click();
+  await sleep(30);
+};
 
 async function grimScenario() {
+  markLog();
   els["btn-all"].click();
   await sleep(50);
   await waitIdle(async (q) => {
@@ -398,6 +429,7 @@ async function grimScenario() {
 }
 
 async function throwScenario() {
+  markLog();
   els["btn-all"].click();
   await sleep(50);
   await waitIdle(async (q) => {
@@ -412,13 +444,13 @@ async function throwScenario() {
   });
   const report = els.report.value;
   console.log(report);
-  const expect = { T1: "PASS", T2: "PASS", T3: "PASS", T4: "PASS", T5: "PASS", T6: "FAIL", T7: "PASS" };
+  const expect = { T1: "PASS", T2: "PASS", T3: "PASS", T4: "PASS", T5: "PASS", T6: "PASS", T7: "PASS" };
   for (const [t, want] of Object.entries(expect)) {
     const m = report.match(new RegExp(`^  ${t} .*? (PASS|FAIL|BELİRSİZ|ÇALIŞMADI)$`, "m"));
     if (!m) fail(`${t} özeti yok`);
     if (m[1] !== want) fail(`${t}: beklenen ${want}, gelen ${m[1]}`);
   }
-  for (const needle of ["clone HATA verdi", "YEDEK YÖNTEM", "Öneri: UXP + workaround", "T6: FAIL — HATA (yakalandı)"])
+  for (const needle of ["clone HATA verdi", "YEDEK YÖNTEM", "Öneri: UXP + workaround"])
     if (!report.includes(needle)) fail(`raporda yok: ${needle}`);
   console.log("\nSMOKE (throw) OK");
   process.exit(0);
@@ -449,6 +481,7 @@ async function throwScenario() {
   state.activeGuid = "guid-probe";
   await sleep(1700);
   if (els["btn-all"].hasAttribute("disabled")) fail("PROBE_test aktifken butonlar kilitli");
+  markLog();
   els["btn-all"].click();
   await sleep(50);
   await waitIdle(async (q) => {
@@ -493,6 +526,74 @@ async function throwScenario() {
   if (deepCopyOne(seqByGuid("guid-probe")) !== probeBefore) fail("kilit tetiklendiği hâlde PROBE_test değişti");
   if (!/aktif sequence değişti/i.test(logText())) fail("test sırasında sequence değişimi yakalanmadı");
   console.log("✓ kilit: test sırasında aktif sequence değişince durdu, hiçbir sequence'a dokunulmadı");
+
+  // 5) Premiere yedeği (kopya) aktif yaparsa T1 aslına döner, testler ASIL üzerinde sürer, yedeğe dokunulmaz
+  setupProbe();
+  await sleep(1700);
+  let cloneGuid = null;
+  hooks.onCloneSeq = (g) => {
+    cloneGuid = g;
+    state.activeGuid = g;
+    hooks.onCloneSeq = null;
+  };
+  markLog();
+  els["btn-all"].click();
+  await sleep(50);
+  let cloneSnap = null;
+  await waitIdle(async (q) => {
+    if (!cloneSnap && cloneGuid) cloneSnap = deepCopyOne(seqByGuid(cloneGuid));
+    await happyAnswer(q);
+  });
+  const r5 = els.report.value;
+  if (!/yeni kopya aktif oldu/.test(r5) || !/tekrar aktif yapıldı \(setActiveSequence\): true/.test(r5)) fail("T1 kopyadan aslına dönmedi");
+  if (/sequence: "PROBE_test Copy"/.test(r5)) fail("testler yedek sequence üzerinde koştu");
+  if (!cloneSnap || deepCopyOne(seqByGuid(cloneGuid)) !== cloneSnap) fail("yedek sequence değişti");
+  if (!/Öneri: UXP yeterli\./.test(r5)) fail("5. aşamada karar beklenen gibi değil");
+  console.log("✓ T1: kopya aktif olunca aslına döndü; testler aslında koştu, yedeğe dokunulmadı");
+
+  // 6) Kullanıcı T1 sırasında başka sequence'a (Main Edit) geçerse: geri çekilmez, koşu durur, eski sonuçlar temizlenir
+  setupProbe();
+  await sleep(1700);
+  hooks.onCloneSeq = () => {
+    state.activeGuid = "guid-main";
+    hooks.onCloneSeq = null;
+  };
+  const main6 = deepCopyOne(seqByGuid("guid-main"));
+  markLog();
+  els["btn-all"].click();
+  await sleep(50);
+  await waitIdle(happyAnswer);
+  const r6 = els.report.value;
+  if (state.activeGuid !== "guid-main") fail("kullanıcı Main Edit'e geçtiği hâlde panel geri çekti");
+  if (deepCopyOne(seqByGuid("guid-main")) !== main6) fail("Main Edit değişti");
+  if (!/^  T2 .*ÇALIŞMADI$/m.test(r6)) fail("eski koşunun T2 sonucu raporda kaldı / koşu durmadı");
+  if (!/T1 sırasında kullanıcı başka bir sequence'a geçti/.test(r6)) fail("T1 kilit nedeni raporda yok");
+  console.log("✓ kilit: T1 sırasında kullanıcı çıkınca geri çekilmedi, koşu durdu, eski sonuçlar silindi");
+
+  // 7) Koşu ortasında başka bir PROBE_* sequence aktif olursa (sabitleme) → durur, ona dokunulmaz
+  setupProbe(true);
+  state.activeGuid = "guid-probe";
+  await sleep(1700);
+  // T1 bittikten sonra (T1'in son getActive'i = 1. çağrı), T2'nin requireProbe'undan önce (2. çağrı) geç
+  hooks.onCloneSeq = () => {
+    hooks.onCloneSeq = null;
+    let n = 0;
+    hooks.onGetActive = () => {
+      if (++n === 2) {
+        state.activeGuid = "guid-probe-other";
+        hooks.onGetActive = null;
+      }
+    };
+  };
+  const other7 = deepCopyOne(seqByGuid("guid-probe-other"));
+  markLog();
+  els["btn-all"].click();
+  await sleep(50);
+  await waitIdle(happyAnswer);
+  if (deepCopyOne(seqByGuid("guid-probe-other")) !== other7) fail("PROBE_other değişti");
+  if (!/başladığı sequence değil/.test(newLog())) fail("sabitleme (pin) kilidi devreye girmedi");
+  if (!/^  T1 .*PASS$/m.test(els.report.value)) fail("7. aşamada T1 PASS değil");
+  console.log("✓ kilit: koşu ortasında başka PROBE_* sequence'a geçilince durdu, ona dokunulmadı");
 
   console.log("\nSMOKE OK");
   process.exit(0);
