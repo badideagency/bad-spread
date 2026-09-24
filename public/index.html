@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Spread Probe</title>
+    <script defer src="./index.js"></script>
+  </head>
+  <style>
+    body {
+      color: var(--uxp-host-text-color, #dddddd);
+      background-color: var(--uxp-host-background-color, #232323);
+      font-size: 12px;
+      padding: 0 10px 10px 10px;
+      margin: 0;
+    }
+    h3 {
+      margin: 8px 0 4px 0;
+      font-size: 14px;
+    }
+    .hint {
+      color: #9a9a9a;
+      margin: 0 0 6px 0;
+    }
+    #status {
+      border: 1px solid #ff6b6b;
+      border-radius: 4px;
+      padding: 6px 8px;
+      margin: 4px 0 8px 0;
+      color: #ff6b6b;
+      font-weight: bold;
+    }
+    .row {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+    }
+    .row sp-button {
+      margin: 0 6px 6px 0;
+    }
+    #ask {
+      display: none;
+      border: 2px solid #e8b04a;
+      border-radius: 4px;
+      padding: 8px;
+      margin: 6px 0;
+    }
+    #ask-text {
+      color: #e8b04a;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+    #log {
+      border: 1px solid #555555;
+      border-radius: 4px;
+      padding: 6px;
+      height: 260px;
+      overflow-y: scroll;
+      font-family: monospace;
+      font-size: 11px;
+    }
+    #log div {
+      margin-bottom: 1px;
+    }
+    #report {
+      width: 100%;
+      height: 140px;
+      font-family: monospace;
+      font-size: 10px;
+    }
+    .label {
+      margin: 8px 0 2px 0;
+      color: #9a9a9a;
+    }
+  </style>
+
+  <body>
+    <h3>Spread Probe — API yoklama</h3>
+    <div class="hint">Özellik yok, sadece test. Yalnızca adı PROBE_ ile başlayan aktif sequence'ta çalışır.</div>
+    <div id="status">Durum okunuyor…</div>
+
+    <div class="row">
+      <sp-button id="btn-all" variant="cta" disabled="true">Hepsini çalıştır</sp-button>
+      <sp-button id="btn-scan" variant="secondary" disabled="true">Tara (kurulumu kontrol et)</sp-button>
+    </div>
+    <div class="row">
+      <sp-button id="btn-t1" variant="secondary" disabled="true">T1 Yedek</sp-button>
+      <sp-button id="btn-t2" variant="secondary" disabled="true">T2 Track açma</sp-button>
+      <sp-button id="btn-t3" variant="secondary" disabled="true">T3 Bağlı çift</sp-button>
+      <sp-button id="btn-t4" variant="secondary" disabled="true">T4 Sadakat</sp-button>
+      <sp-button id="btn-t5" variant="secondary" disabled="true">T5 Seçim</sp-button>
+      <sp-button id="btn-t6" variant="secondary" disabled="true">T6 Geri alma</sp-button>
+      <sp-button id="btn-t7" variant="secondary" disabled="true">T7 Ripple</sp-button>
+    </div>
+
+    <div id="ask">
+      <div id="ask-text"></div>
+      <div class="row">
+        <sp-button id="ask-yes" variant="cta">Evet</sp-button>
+        <sp-button id="ask-no" variant="warning">Hayır</sp-button>
+        <sp-button id="ask-skip" variant="secondary">Atla</sp-button>
+      </div>
+    </div>
+
+    <div class="label">Günlük</div>
+    <div id="log"></div>
+
+    <div class="row" style="margin-top: 8px">
+      <sp-button id="btn-copy" variant="primary">Raporu kopyala</sp-button>
+      <sp-button id="btn-clear" variant="secondary">Günlüğü temizle</sp-button>
+    </div>
+    <div class="label">Rapor (kopyalama çalışmazsa buradan Ctrl+A / Ctrl+C)</div>
+    <textarea id="report" readonly></textarea>
+  </body>
+</html>
