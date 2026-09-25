@@ -21,7 +21,8 @@ const sec = (s) => BigInt(Math.round(s * 1000)) * (TPS / 1000n);
 const frames = (n) => BigInt(n) * FRAME25;
 
 // ------------------------------------------------------------ mock ayarları (senaryo başına)
-const M = { broken: false, nonseq: false, nobackup: false, backupActive: false };
+const M = { broken: false, nonseq: false, nobackup: false, backupActive: false, falseTx: null, badBackup: false, noType: false, undoAfterTx: null };
+let pendingUndo = 0;
 const hooks = { onCloneSeq: null, onGetActive: null, beforeRemoveApply: null };
 const counters = { setActions: new Map(), overwrites: 0, clones: 0, txNames: [] };
 
@@ -153,7 +154,10 @@ function wrapSequence(guid) {
       return s().name;
     },
     guid: mkGuid(guid),
-    getVideoTrackCount: async () => s().v.length,
+    getVideoTrackCount: async () => {
+      if (pendingUndo > 0 && --pendingUndo === 0) undo(); // kullanıcı adımlar arasında Ctrl+Z basıyor
+      return s().v.length;
+    },
     getAudioTrackCount: async () => s().a.length,
     getVideoTrack: async (i) => wrapTrack(guid, "V", i),
     getAudioTrack: async (i) => wrapTrack(guid, "A", i),
@@ -173,6 +177,7 @@ function wrapSequence(guid) {
         seq.guid = "guid-" + nextId++;
         seq.sel = new Set();
         for (const grp of [seq.v, seq.a]) for (const tr of grp) for (const c of tr) c.id = nextId++;
+        if (M.badBackup) seq.a[1] = []; // bozuk yedek: bir track eksik kopyalanmış
         state.sequences.push(seq);
         if (M.backupActive) state.activeGuid = seq.guid;
         if (hooks.onCloneSeq) hooks.onCloneSeq(seq.guid);
@@ -235,8 +240,13 @@ const editorFor = (seqW) => {
 let projectW;
 const ppro = {
   Constants: { TrackItemType: { EMPTY: 0, CLIP: 1, TRANSITION: 2, PREVIEW: 3, FEEDBACK: 4 }, MediaType: { ANY: 0, DATA: 1, VIDEO: 2, AUDIO: 3 } },
-  ProjectItem: { TYPE_CLIP: 1 },
-  ClipProjectItem: { cast: (p) => ({ getMedia: async () => ({ getDuration: () => mkTT(p.dur) }) }) },
+  ProjectItem: { get TYPE_CLIP() { return M.noType ? undefined : 1; } },
+  ClipProjectItem: {
+    cast: (p) => {
+      if (M.noType) throw new Error("mock: ClipProjectItem.cast yok");
+      return { getMedia: async () => ({ getDuration: () => mkTT(p.dur) }) };
+    },
+  },
   TickTime: { TIME_ZERO: mkTT(0n), createWithTicks: (t) => mkTT(BigInt(t)) },
   TrackItemSelection: {
     createEmptySelection: () => {
@@ -257,6 +267,7 @@ projectW = {
   executeTransaction: (cb, name) => {
     const acts = [];
     cb({ addAction: (a) => (acts.push(a), true), get empty() { return acts.length === 0; } });
+    if (M.falseTx === name) return false; // uygulanmadı, undo kaydı yok
     const snap = deepCopy();
     const S = seqByGuid(state.activeGuid);
     frozen = S ? { V: S.v.length, A: S.a.length } : null;
@@ -272,6 +283,7 @@ projectW = {
     undoStack.push(snap);
     counters.txNames.push(name);
     mockGen++; // KESİN: işlenen transaction eski referansları geçersiz kılar
+    if (M.undoAfterTx === name) pendingUndo = 2; // doğrulama okumasından sonraki okumada kullanıcı Ctrl+Z basar
     return true;
   },
 };
@@ -311,7 +323,7 @@ Module._load = ((orig) =>
  * kendi sesiyle bağlı), harici sesler A2/A3'te arka arkaya (260912_HHMMSS_Tr1/Tr2/TrLR.WAV). 22 kamera + 12 WAV.
  * NOT: Probe raporunun tam tick değerleri bu oturumda yok; adlar, sayılar ve düzen gerçek, süreler 25 fps kare-hizalı üretildi.
  */
-function setupReal({ trimmed = [], channelsOf = {}, nCams = 22, nWavSessions = 4 } = {}) {
+function setupReal({ trimmed = [], channelsOf = {}, nCams = 22, nWavSessions = 4, extraChannelOf = [], audioOffByTick = [] } = {}) {
   for (const k of Object.keys(projItems)) delete projItems[k];
   const s = mkSequence("Ana Kurgu", "guid-main-edit");
   let t = 0n;
@@ -324,10 +336,15 @@ function setupReal({ trimmed = [], channelsOf = {}, nCams = 22, nWavSessions = 4
     const trim = trimmed.includes(i);
     const media = trim ? d + frames(125) : d; // kırpılmış: medya 5 sn daha uzun
     const inPt = trim ? frames(50) : 0n; // 2 sn baştan kırpık
-    const p = pi(name, media, { channels: channelsOf[i] ?? 1 });
+    const p = pi(name, media, { channels: (channelsOf[i] ?? 1) + (extraChannelOf.includes(i) ? 1 : 0) });
     const L = "Lcam" + i;
     s.v[0].push(mkClip("V", p, t, t + d, L, inPt));
-    for (let c = 0; c < p.channels; c++) s.a[c].push(mkClip("A", p, t, t + d, L, inPt));
+    const onTimeline = channelsOf[i] ?? 1; // extraChannelOf: proje öğesinde 1 kanal fazla, timeline'da yok
+    for (let c = 0; c < onTimeline; c++) {
+      const a = mkClip("A", p, t, t + d, L, inPt);
+      if (audioOffByTick.includes(i)) (a.end -= 1n), (a.outPt -= 1n); // ses videodan 1 tick kısa
+      s.a[c].push(a);
+    }
     t += d;
   }
   const sessions = ["101512", "104233", "111845", "120510", "133224"].slice(0, nWavSessions);
@@ -354,7 +371,8 @@ function setupReal({ trimmed = [], channelsOf = {}, nCams = 22, nWavSessions = 4
   counters.overwrites = 0;
   counters.clones = 0;
   counters.txNames = [];
-  Object.assign(M, { broken: false, nonseq: false, nobackup: false, backupActive: false });
+  Object.assign(M, { broken: false, nonseq: false, nobackup: false, backupActive: false, falseTx: null, badBackup: false, noType: false, undoAfterTx: null });
+  pendingUndo = 0;
   hooks.onCloneSeq = hooks.onGetActive = hooks.beforeRemoveApply = null;
   mockGen++;
   return s;
@@ -615,6 +633,65 @@ scenarios.status = async () => {
   else ok("rapor panoya kopyalandı");
 };
 
+scenarios.falsetx = async () => {
+  setupReal({ nCams: 6, nWavSessions: 2 });
+  M.falseTx = "Spread: dağıt";
+  const out = await clickAndWait("btn-spread", yes);
+  if (!/✗ SPREAD DURDU: "dağıt" adımı başarısız \(executeTransaction → false\) — timeline değişmedi/.test(out)) fail("false dönen transaction doğru raporlanmadı:\n" + out);
+  else ok("executeTransaction false → DURDU, timeline değişmedi olarak ölçüldü");
+  if (!/Ctrl\+Z'ye 1 kez bas/.test(out) || undoStack.length !== 2) fail(`Ctrl+Z sayısı yanlış (undo kayıtları: ${undoStack.length})`);
+  else ok("Ctrl+Z sayısı gerçek undo kayıtlarıyla aynı (1: yalnız track hazırlığı; yedeğe dokunulmaz)");
+};
+
+scenarios.subframe = async () => {
+  const s = setupReal({ nCams: 6, nWavSessions: 2, audioOffByTick: [2] });
+  const before = JSON.stringify(state.sequences, repl);
+  const out = await clickAndWait("btn-spread", yes);
+  if (!/Plan kurulamadı/.test(out) || !/birebir değil \(bağı korunamaz\).*end fark -1 tick/.test(out)) fail("1 tick'lik kamera sesi farkı plan hatası olmadı:\n" + out);
+  else ok("kamera sesi videodan 1 tick kısa → plan hatası (bağ korunamazdı), Spread BAŞLAMADI");
+  if (JSON.stringify(state.sequences, repl) !== before) fail("plan hatasında bir şey değişti");
+};
+
+scenarios.badbackup = async () => {
+  const s = setupReal({ nCams: 6, nWavSessions: 2 });
+  const before = JSON.stringify(seqByGuid("guid-main-edit"), repl);
+  M.badBackup = true;
+  const out = await clickAndWait("btn-spread", yes);
+  if (!/içeriği aslıyla aynı değil.*Spread BAŞLAMADI/.test(out)) fail("eksik yedek yakalanmadı:\n" + out);
+  else ok("yedek eksik kopyalanmış → Spread BAŞLAMADI");
+  if (JSON.stringify(seqByGuid("guid-main-edit"), repl) !== before || counters.txNames.length !== 1) fail("eksik yedekle timeline'a dokunuldu");
+  else ok("asıl sequence'a dokunulmadı");
+};
+
+scenarios.undobetween = async () => {
+  const s = setupReal({ nCams: 6, nWavSessions: 2 });
+  const before = JSON.stringify(seqByGuid("guid-main-edit"), repl);
+  M.undoAfterTx = "Spread: track hazırlığı";
+  const out = await clickAndWait("btn-spread", yes);
+  if (!/"track hazırlığı" adımı geri alınmış görünüyor/.test(out)) fail("adımlar arası Ctrl+Z yakalanmadı:\n" + out);
+  else ok("kullanıcı TX-A'dan sonra Ctrl+Z bastı → DURDU, adım 'yapılanlar'dan düşüldü");
+  if (!/Timeline'da değişiklik yapılmadı/.test(out)) fail("Ctrl+Z sayısı düzeltilmedi");
+  if (JSON.stringify(seqByGuid("guid-main-edit"), repl) !== before) fail("asıl sequence değişmiş kaldı");
+  else ok("asıl sequence aslında; ek Ctrl+Z istenmedi");
+};
+
+scenarios.notype = async () => {
+  const s = setupReal({ nCams: 6, nWavSessions: 2 });
+  const exp = expectedLayout(s);
+  M.noType = true; // TYPE_CLIP undefined, ClipProjectItem.cast hata (Probe'da sınanmamış API'ler)
+  const out = await clickAndWait("btn-spread", yes);
+  if (!/✓ SPREAD tamam/.test(out)) fail("sınanmamış isteğe bağlı API'ler yokken SPREAD engellendi:\n" + out);
+  else ok("TYPE_CLIP / ClipProjectItem.cast yokken de (kırpılmamış klipler) SPREAD tamamlandı");
+  checkLayout(seqByGuid("guid-main-edit"), exp, "isteğe bağlı API'ler yok");
+};
+
+scenarios.extrach = async () => {
+  setupReal({ nCams: 6, nWavSessions: 2, extraChannelOf: [3] });
+  const out = await clickAndWait("btn-spread", yes);
+  if (!/✗ SPREAD DURDU: Taşıma doğrulaması tutmadı/.test(out) || !/2 klip var/.test(out)) fail("proje öğesinin fazla kanalı yakalanmadı:\n" + out);
+  else ok("overwrite fazladan ses kanalı üretti → doğrulama '2 klip var' ile DURDU");
+};
+
 // --- plan birim testleri (saf fonksiyonlar)
 scenarios.plan = async () => {
   const { makePlan } = require(path.join(__dirname, "..", "dist", "src", "plan.js"));
@@ -629,26 +706,31 @@ scenarios.plan = async () => {
   // X(start0,track1) Y(start0,track0) → sıralama: Y (track0) → A1, X → A2: ikisi de yerinde → hareket yok
   if (p.clone.length !== 0) fail("yerinde olan sesler taşındı");
   p = makePlan(snap([C("A", 0, sec(1), sec(10), "X.WAV"), C("A", 1, 0n, sec(10), "Y.WAV")]), 1);
-  if (!p.errors.some((e) => /döngü/.test(e))) fail(`döngü yakalanmadı: ${JSON.stringify(p.errors)}`);
-  else ok("plan: birbirinin hedefinde çakışan iki ses → 'güvenli sıra yok (döngü)' hatası, Spread başlamaz");
+  if (!p.errors.some((e) => /güvenli sıra yok/.test(e) && /çakışan asıl/.test(e))) fail(`çakışma yakalanmadı: ${JSON.stringify(p.errors)}`);
+  else ok("plan: birbirinin hedefinde çakışan iki ses → 'güvenli sıra yok' hatası, Spread başlamaz");
   // hız≠1 kamera → hata
   const v = C("V", 0, 0n, sec(5), "CAM.MP4", { speed: 2 });
   const a = C("A", 0, 0n, sec(5), "CAM.MP4", { speed: 2, projId: v.projId });
   p = makePlan(snap([v, a]), 1);
   if (!p.errors.some((e) => /hızı 2/.test(e))) fail("hız≠1 kamera yakalanmadı");
   else ok("plan: hızı değiştirilmiş kamera → hata (overwrite hızı korumaz)");
-  // eşleşmeyen kamera kaynaklı ses → uyarı + ayrı ses birimi
+  // videoyla çakışan ama birebir olmayan kamera sesi → SERT hata (bağ korunamaz)
   const v2 = C("V", 0, 0n, sec(5), "CAM2.MP4");
   const a2 = C("A", 0, sec(1), sec(5), "CAM2.MP4", { projId: v2.projId });
   p = makePlan(snap([v2, a2]), 1);
-  if (!p.warnings.some((w) => /eşleşmeyen ses/.test(w)) || p.counts.audio !== 1 || p.counts.videoOnly !== 1) fail("eşleşmeyen kamera sesi yanlış sınıflandı");
-  else ok("plan: kamera kaynaklı ama eşleşmeyen ses → uyarı + ayrı ses birimi");
+  if (!p.errors.some((e) => /birebir değil \(bağı korunamaz\)/.test(e))) fail("birebir olmayan kamera sesi hata vermedi");
+  else ok("plan: videoyla çakışan ama birebir olmayan kamera sesi → hata (bağ korunamaz), Spread başlamaz");
+  // kamera kaynaklı ama hiçbir videoyla çakışmayan ses → uyarı + ayrı ses birimi
+  const a3 = C("A", 1, sec(20), sec(25), "CAM2.MP4", { projId: v2.projId });
+  p = makePlan(snap([v2, C("A", 0, 0n, sec(5), "CAM2.MP4", { projId: v2.projId }), a3]), 1);
+  if (!p.warnings.some((w) => /çakışmayan ses/.test(w)) || p.counts.audio !== 1) fail("çakışmayan kamera kaynaklı ses yanlış sınıflandı");
+  else ok("plan: kamera kaynaklı ama çakışmayan ses → uyarı + ayrı ses birimi");
   // WAV'ın hedef track'inde (A2) henüz silinmemiş bir KAMERA sesi var → güvenli sıra yok → hata
   const vX = C("V", 0, 0n, sec(10), "X.MP4");
   const aX = C("A", 1, 0n, sec(10), "X.MP4", { projId: vX.projId }); // kamera sesi A2'de
   const wW = C("A", 0, 0n, sec(10), "W.WAV"); // WAV A1'de → hedefi A2
   p = makePlan(snap([vX, aX, wW]), 1);
-  if (!p.errors.some((e) => /güvenli sıra yok/.test(e) && /kamera klibi/.test(e))) fail(`kamera çakışması yakalanmadı: ${JSON.stringify(p.errors)}`);
+  if (!p.errors.some((e) => /güvenli sıra yok/.test(e) && /X\.MP4/.test(e))) fail(`kamera çakışması yakalanmadı: ${JSON.stringify(p.errors)}`);
   else ok("plan: WAV'ın hedefinde henüz silinmemiş kamera sesi → 'güvenli sıra yok' hatası, Spread başlamaz");
   // hiçbir şey taşınmayacak düzen → clone/overwrite yok
   const vA = C("V", 0, 0n, sec(10), "A.MP4");

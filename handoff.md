@@ -7,7 +7,7 @@
 | Sürüm | **Spread v0.2.0** — yeni eklenti: id `com.badideagency.spread`, panel "Spread", paket `release/spread.ccx` |
 | Yapılan | **SPREAD** (her klip kendi track'ine, zaman değişmeden) + **DURUM RAPORU** (+ kopyala). RE-STACK **yazılmadı** (bilinçli). |
 | Probe | `Spread Probe` v0.1.1 repoda **aynen** duruyor (kök `index.ts`, `src/`, `public/`, `dev/smoke.cjs`); kaynak dosyaları ve `release/spread-probe.ccx` **bayt bayt aynı** (sha256 doğrulandı). |
-| Bulutta doğrulanan | `tsc --strict`, Adobe eslint kuralları, d.ts satır kontrolü (iki eklenti, 74 ref), Spread mock'uyla 12 senaryo (kullanıcının gerçek 22 kamera + 12 WAV düzeni, bozuk overwrite dahil), Probe smoke 6 senaryo, `.ccx` yapısı |
+| Bulutta doğrulanan | `tsc --strict`, Adobe eslint kuralları, d.ts satır kontrolü (iki eklenti, 74 ref), Spread mock'uyla 18 senaryo (kullanıcının gerçek 22 kamera + 12 WAV düzeni, bozuk overwrite dahil), Probe smoke 6 senaryo, `.ccx` yapısı, bağımsız alt ajan incelemesi |
 | Doğrulanamayan | Gerçek Premiere davranışı — kullanıcının koşusu bekleniyor ([KURULUM_TR.md](KURULUM_TR.md)) |
 | Dal | `claude/sweet-bell-do4j75` |
 
@@ -35,23 +35,30 @@ Her track'te ≤1 klip. Tüm klipleri zaten hedefindeyse birim **yerinde kalır*
 (kanıtlı, zaman ofseti 0); asıllar → tek seçimle `createRemoveItemsAction(ripple=false)`.
 
 **Transaction'lar (ve seçilen yol + neden):**
-1. `Spread: yedek sequence` — `createCloneAction`; `getSequences` ile tam 1 yeni sequence görülmezse Spread **başlamaz**; yedek aktif
-   olursa `setActiveSequence(asıl)` + doğrulama. (Undo sayısına katılmaz; kullanıcıya "yedeği geri alma" denmez.)
+1. `Spread: yedek sequence` — `createCloneAction`; `getSequences` ile tam 1 yeni sequence görülmezse Spread **başlamaz**; yedeğin
+   **içeriği** de okunup aslıyla karşılaştırılır (eksikse başlamaz); yedek aktif olursa `setActiveSequence(asıl)` + doğrulama.
+   (Undo sayısına katılmaz; kullanıcıya "yedeği geri alma" denmez.)
 2. `Spread: track hazırlığı` (**TX-A**, yalnız yeni track gerekiyorsa) — **SEÇİLEN YOL: gereken track'ler önce KANITLI yöntemle
    (clone ofseti) açılır**, overwrite'ın track açmasına güvenilmez. Her yeni track için bir geçici yardımcı kopya, hedef index = o anki
    track sayısı olacak şekilde sırayla (V için ilk video klibi, A için ilk ses klibi), **sequence sonunun 10 sn ötesine park edilerek**.
+   Park yeri = max(`getEndTime`, en büyük klip sonu) + 10 sn.
    Neden: (a) overwrite'ın olmayan track'i açtığı ölçülmedi; (b) tek transaction'da ardışık birden çok track açılması da ölçülmedi —
    bu belirsiz adımı **asıllara dokunmadan önce** ayrı bir transaction'da ölçmek, başarısızlıkta zararı "birkaç yardımcı klip" ile sınırlar
    (park edildikleri için hiçbir asılla zamanda çakışamazlar; tek Ctrl+Z). Sonra `verifyTracks`: track sayıları ≥ gereken, her yeni
    track'te tam 1 yardımcı, yardımcılar park yerinde, **asıllar birebir duruyor**. Tutmazsa DUR.
 3. `Spread: dağıt` (**TX-B**, tek transaction) — hemen öncesinde: taşınan asıllar + yardımcılar Adobe seçim kalıbıyla birebir seçilir
    (`clearSelection → getSelection → addItem → setSelection → geri okuma`); uygun değilse DUR. Transaction içinde sıra:
-   (1) clone'lar (ses / sadece-video; `plan.ts` bağımlılık sırası: bir kopya, hedef track'inde zamanda çakıştığı henüz kopyalanmamış bir
-   asılın üstüne yazılmaz; döngü ya da silinmemiş kamera asılıyla çakışma → plan hatası, Spread başlamaz),
+   (1) clone'lar (ses / sadece-video; bir kopyanın hedef track'inde zamanda çakıştığı HERHANGİ bir asıl varsa → plan hatası, Spread
+   başlamaz — kopyası alınmış bir asılın üstüne aynı transaction'da yazmak kanıtlanmadığı için sıralama yerine yasak; kullanıcının
+   düzeninde ses hedefleri A23.. hep yeni track olduğundan oluşmaz),
    (2) remove (asıllar + yardımcılar, tek seçim), (3) kamera overwrite'ları (hedefler artık boş).
 4. `Spread: kırpma eşitlemesi` (**TX-C**, yalnız gerekirse) — yalnız "kırpılmış asıl, overwrite ile beklenen biçimde kırpılmamış yerleşmiş"
-   kamera klipleri (aynı track + kaynak + **aynı start** + in=0 + out=medya süresi + aynı hız) için set In → Out → Start → End.
-   **Kırpılmamış kliplere set action hiç çalışmaz.** Başka her fark (ör. kaymış start) eşitleme adayı DEĞİL → DUR.
+   kamera klipleri (aynı track + kaynak + **aynı start** + in=0 + out=**bilinen** medya süresi + aynı hız) için set In → Out → Start → End.
+   **Kırpılmamış kliplere set action hiç çalışmaz**; medya süresi okunamazsa eşitleme adayı yoktur. Başka her fark (ör. kaymış start,
+   yanlış uzunluk) eşitleme adayı DEĞİL → DUR.
+   Adımlar arasında (TX-A→TX-B, TX-B→TX-C) timeline beklenen hâlde mi kontrol edilir; kullanıcı arada Ctrl+Z bastıysa adım
+   "yapılanlar"dan düşülür ve DUR (Ctrl+Z sayısı doğru kalır). `executeTransaction` false dönerse ya da hata verirse önce/sonra
+   karşılaştırılır; yalnız timeline gerçekten değiştiyse adım sayılır.
 
 **Doğrulama** (`spread/src/verify.ts`, saf; her transaction'dan sonra): klip sayısı aynı; her klibin start/end/in/out(+hız) aslıyla tick
 düzeyinde aynı; her track'te ≤1 klip; kamera birimlerinde video ve ses(ler) aynı start/end'de; her klip planladığı track'te ve doğru
@@ -59,8 +66,12 @@ kaynaktan. Tutmazsa **DUR**: panel farkları (tick) yazar, "Ctrl+Z'ye N kez bas 
 düzeltmez**. Hata veren transaction'da önce/sonra karşılaştırılıp kısmen uygulanıp uygulanmadığı ölçülür (N doğru söylensin).
 
 **Ön kontroller (plan hatası → hiçbir şey değişmez):** kamera klibinde hız≠1, devre dışı, ayar katmanı, proje öğesi okunamıyor / medya
-klibi değil (overwrite bunları koruyamaz); okuma hataları; güvenli clone sırası yok. **Uyarılar:** kamera kaynaklı ama eşleşmeyen ses
-(ayrı ses birimi olur, bağı kopar); kırpılmış kameralar (TX-C gerekebilir); kamera klip efektleri taşınmaz (onay metninde).
+klibi değil (overwrite bunları koruyamaz); **aynı kaynaklı bir videoyla zamanda çakışan ama tick düzeyinde birebir olmayan ses** (1 tick
+bile — ayrı taşınırsa bağı kopar ve link API'si yok); okuma hataları; clone hedefinde çakışan asıl. **Uyarılar:** kamera kaynaklı ama
+hiçbir videoyla çakışmayan ses (ayrı ses birimi); yeniden adlandırılmış kamera klibi (ad taşınmaz); kırpılmış kameralar (TX-C gerekebilir).
+Onay metni açıkça söyler: kamera klibindeki efektler, ses kazancı/keyframe'ler ve klip adı taşınmaz.
+**Probe'da sınanmamış okumalar** (ayar katmanı, ProjectItem.type, TYPE_CLIP, ClipProjectItem.cast/getMedia/getDuration) isteğe bağlıdır:
+hata verirlerse "bilinmiyor" sayılır, plan hatası üretmez (Application.version'daki gibi bir sürprizde ilk koşu engellenmesin).
 
 **Referans kuralı:** Probe'daki kuşak koruması aynen (`spread/src/model.ts`): transaction / soru / clearSelection / setSelection sonrası kuşak
 artar; `useRef/useProj/FreshSelection` eski kuşak referansını Premiere'e göndermeden `StaleRefError` verir. TX-A yardımcıları `s1`'den, TX-B
@@ -116,7 +127,13 @@ bayat referans. Böylece Spread'in bunlara dayanmadığı da sınanır. set In/O
 | `multichannel` | 2 kanallı kamera → kanallar ardışık A track'lerine, bağlı |
 | `already` | dağıtılmış sequence'ta ikinci SPREAD → "Zaten dağıtılmış", işlem yok |
 | `status` | Synchronize taklidinden sonra durum raporu: çakışma tick değeri doğru, CLIP satırları tam, panoya kopyalanıyor |
-| `plan` | saf plan testleri: döngü → hata; hız≠1 kamera → hata; eşleşmeyen kamera sesi → uyarı; WAV hedefinde silinmemiş kamera sesi → hata; dağıtılmış düzen → iş yok |
+| `falsetx` | `executeTransaction` false döner → DUR; timeline değişmedi olarak ölçülür; Ctrl+Z sayısı gerçek undo kayıtlarıyla aynı (yedeğe dokundurmaz) |
+| `subframe` | kamera sesi videodan 1 tick kısa → plan hatası (bağ korunamazdı), Spread başlamaz |
+| `badbackup` | yedek eksik kopyalanmış → Spread başlamaz |
+| `undobetween` | kullanıcı TX-A'dan sonra Ctrl+Z basar → DUR, adım düşülür, ek Ctrl+Z istenmez |
+| `notype` | TYPE_CLIP / ClipProjectItem.cast yok (sınanmamış API'ler) → kırpılmamış kliplerle SPREAD yine tamamlanır |
+| `extrach` | proje öğesinde timeline'dakinden fazla ses kanalı → overwrite fazla kanal üretir → doğrulama "2 klip var" ile DUR |
+| `plan` | saf plan testleri: hedefte çakışan asıl → hata; hız≠1 kamera → hata; birebir olmayan kamera sesi → hata; çakışmayan kamera kaynaklı ses → uyarı; WAV hedefinde silinmemiş kamera sesi → hata; dağıtılmış düzen → iş yok |
 
 ### Kullanılan Premiere API'leri (iki eklenti; `premierepro.d.ts` 26.5.0; `npm run api:table`)
 
@@ -208,6 +225,26 @@ bayat referans. Böylece Spread'in bunlara dayanmadığı da sınanır. set In/O
    tam uzunluk) → TX-C hiç çalışmaz. Çalışır ve tutmazsa DUR; rapordaki farklar bir sonraki sürümde sırayı belirler.
 4. **Kamera klip efektleri** overwrite'la taşınmaz (onay metninde yazıyor); ham klipler varsayıldı.
 5. **Seçim görünmüyor** (kanıtlı) → talimat Ctrl+A ile.
+
+### Bağımsız alt ajan incelemesi (v0.2.0, salt okuma; tüm spread/ kaynakları okundu, kendi mock senaryolarıyla sınandı)
+
+| İddia | Sonuç |
+|---|---|
+| Probe değişmedi | **HOLDS** (kaynak farkı yok; `release/spread-probe.ccx` sha256 aynı) |
+| 1. Hiçbir klibin zamanı değişmez | **HOLDS WITH CAVEATS** — yanlış "başarı" yolu bulunmadı; hedef düzen doğru; TX-A asıllara dokunamaz |
+| 2. Doğrulama atlatılamaz | **HOLDS WITH CAVEATS** — her transaction'dan sonra doğrulama; TX-C sonrası katı |
+| 3. Yedek yoksa Spread yok | **HOLDS WITH CAVEATS** — yedekten önce hiçbir düzenleme yok |
+| 4. Referans transaction'ı aşmaz | **HOLDS** (katı mock'ta da) |
+| 5. Her API d.ts'te | **HOLDS** (74/74) |
+
+Bulgular → düzeltmeler: (1) `executeTransaction` false dönünce Ctrl+Z sayısı fazlaydı (fazla basış yedeği silerdi) → false da ölçülüyor,
+yalnız değişiklik varsa sayılıyor; (2) **1 tick'lik kamera sesi farkı kamerayı sessizce bağsız bırakıp "başarı" diyordu** → sert plan hatası;
+(3) Probe'da sınanmamış API'ler (ayar katmanı, tür, medya süresi, TYPE_CLIP) ilk koşuyu engelleyebilirdi → isteğe bağlı; (4) yedeğin yalnız
+varlığı kontrol ediliyordu → içeriği de; (5) medya süresi bilinmezken kırpılmamış kliplere set action çalışabilirdi → eşitleme adayı yok, DUR;
+(6) park yeri yalnız `getEndTime`'dı → en büyük klip sonuyla birlikte; (7) overwrite'ın taşımadıkları (kazanç, keyframe, ad) onayda yazılı +
+yeniden adlandırma uyarısı; (8) okuma uyarıları doğrulamada yok sayılıyordu → sorun; (9) adımlar arası kullanıcı Ctrl+Z'si sayıyı bozuyordu →
+`expectState`; (10) kullanılmayan `timeKey` silindi; ayrıca kopyası alınmış asılın üstüne aynı transaction'da clone (kanıtsız) → plan hatası.
+Düzeltmeler yeni mock senaryolarıyla (falsetx, subframe, badbackup, undobetween, notype, extrach) doğrulandı; ikinci inceleme turu yapılmadı.
 
 ### Graphify
 

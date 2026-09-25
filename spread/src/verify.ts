@@ -50,6 +50,8 @@ const trackKey = (k: Kind, t: number) => `${k}|${t}`;
 export function verifySpread(plan: Plan, fin: Snapshot, allowTrimFix: boolean): VerifyResult {
   const problems: string[] = [];
   const trimFix: TrimFix[] = [];
+  // okuma bütünlüğü: boş dönen track, okuma sırasında değişen kuşak, klip okuma hatası → güvenilir değil → DUR
+  for (const w of fin.warnings) problems.push(`okuma uyarısı: ${w}`);
 
   // 3) her track'te ≤ 1 klip
   const byTrack = new Map<string, ClipInfo[]>();
@@ -79,8 +81,9 @@ export function verifySpread(plan: Plan, fin: Snapshot, allowTrimFix: boolean): 
     matched.add(now);
     const d = diffTimes(p.clip, now);
     if (!d.length) continue;
+    // medya süresi BİLİNMİYORSA eşitleme adayı yok (kırpılmamış bir klibe set action çalışmasın) → DUR
     const fullPlacement =
-      now.start === p.clip.start && now.inPt === "0" && (p.clip.mediaDur === null || now.outPt === p.clip.mediaDur) && p.clip.speed === now.speed;
+      p.clip.mediaDur !== null && now.start === p.clip.start && now.inPt === "0" && now.outPt === p.clip.mediaDur && p.clip.speed === now.speed;
     const origTrimmed = p.clip.inPt !== now.inPt || p.clip.outPt !== now.outPt;
     if (allowTrimFix && p.unit.kind === "camera" && !p.unit.stays && fullPlacement && origTrimmed) trimFix.push({ orig: p.clip, now });
     else problems.push(`"${p.clip.name}" (${trackLabel(p.clip.kind, p.target)}) zamanı aslıyla aynı değil: ${d.join("; ")}`);

@@ -29,6 +29,8 @@ export interface ClipInfo {
   /** Kaynağın (medyanın) toplam süresi, tick — okunamazsa null. */
   mediaDur: string | null;
   selected: boolean;
+  /** Probe'da sınanmamış, isteğe bağlı okumaların hataları (ayar katmanı, proje öğesi türü, medya süresi) — engel değil. */
+  optErrors: string[];
   ref: TrackItem; // YALNIZCA useRef() ile
   projRef: ProjectItem | null; // YALNIZCA useProj() ile
   gen: number;
@@ -132,6 +134,7 @@ export function secOf(t: string | bigint): string {
 
 async function readClip(item: TrackItem, kind: Kind, loopTrack: number, gen: number, media: boolean): Promise<ClipInfo> {
   const errs: string[] = [];
+  const opt: string[] = []; // isteğe bağlı okumalar: hata verirse "bilinmiyor" sayılır
   // VideoClipTrackItem ve AudioClipTrackItem aynı okuma metotlarına sahip:
   const start = tt(await safe("getStartTime", () => item.getStartTime(), null, errs)); // d.ts:L4236 VideoClipTrackItem.getStartTime / d.ts:L517 AudioClipTrackItem.getStartTime
   const end = tt(await safe("getEndTime", () => item.getEndTime(), null, errs)); // d.ts:L4191 VideoClipTrackItem.getEndTime / d.ts:L472 AudioClipTrackItem.getEndTime
@@ -139,20 +142,22 @@ async function readClip(item: TrackItem, kind: Kind, loopTrack: number, gen: num
   const outPt = tt(await safe("getOutPoint", () => item.getOutPoint(), null, errs)); // d.ts:L4221 VideoClipTrackItem.getOutPoint / d.ts:L502 AudioClipTrackItem.getOutPoint
   const speed = await safe("getSpeed", () => item.getSpeed(), NaN, errs); // d.ts:L4231 VideoClipTrackItem.getSpeed / d.ts:L512 AudioClipTrackItem.getSpeed
   const disabled = await safe("isDisabled", () => item.isDisabled(), false, errs); // d.ts:L4256 VideoClipTrackItem.isDisabled / d.ts:L537 AudioClipTrackItem.isDisabled
-  const adjustment = await safe("isAdjustmentLayer", () => item.isAdjustmentLayer(), false, errs); // d.ts:L4251 VideoClipTrackItem.isAdjustmentLayer / d.ts:L532 AudioClipTrackItem.isAdjustmentLayer
+  const adjustment = (await safe("isAdjustmentLayer", () => item.isAdjustmentLayer(), false, opt)) === true; // d.ts:L4251 VideoClipTrackItem.isAdjustmentLayer / d.ts:L532 AudioClipTrackItem.isAdjustmentLayer
   const name = await safe("getName", () => item.getName(), "?", errs); // d.ts:L4216 VideoClipTrackItem.getName / d.ts:L497 AudioClipTrackItem.getName
   const track = await safe("getTrackIndex", () => item.getTrackIndex(), loopTrack, errs); // d.ts:L4241 VideoClipTrackItem.getTrackIndex / d.ts:L522 AudioClipTrackItem.getTrackIndex
   const selected = await safe("getIsSelected", () => item.getIsSelected(), false, errs); // d.ts:L4201 VideoClipTrackItem.getIsSelected / d.ts:L482 AudioClipTrackItem.getIsSelected
   const proj = await safe("getProjectItem", () => item.getProjectItem(), null, errs); // d.ts:L4226 VideoClipTrackItem.getProjectItem / d.ts:L507 AudioClipTrackItem.getProjectItem
   const projId = proj ? await safe("ProjectItem.getId", () => proj.getId(), "?", errs) : "?"; // d.ts:L2843 ProjectItem.getId
   const projName = proj ? proj.name : "?"; // d.ts:L2854 ProjectItem.name
-  const projType = proj ? proj.type : null; // d.ts:L2860 ProjectItem.type
+  const rawType = proj ? await safe("ProjectItem.type", () => proj.type, null, opt) : null; // d.ts:L2860 ProjectItem.type
+  const projType = typeof rawType === "number" ? rawType : null;
   let mediaDur: string | null = null;
   if (media && proj) {
-    const clipItem = await safe("ClipProjectItem.cast", () => ppro.ClipProjectItem.cast(proj), null, errs); // d.ts:L788 ClipProjectItemStatic.cast
-    const m = clipItem ? await safe("getMedia", () => clipItem.getMedia(), null, errs) : null; // d.ts:L1029 ClipProjectItem.getMedia
-    const d = m ? await safe("Media.getDuration", () => m.getDuration(), null, errs) : null; // d.ts:L2087 Media.getDuration
-    mediaDur = d ? tt(d).ticks : null;
+    const clipItem = await safe("ClipProjectItem.cast", () => ppro.ClipProjectItem.cast(proj), null, opt); // d.ts:L788 ClipProjectItemStatic.cast
+    const m = clipItem ? await safe("getMedia", () => clipItem.getMedia(), null, opt) : null; // d.ts:L1029 ClipProjectItem.getMedia
+    const d = m ? await safe("Media.getDuration", () => m.getDuration(), null, opt) : null; // d.ts:L2087 Media.getDuration
+    const dt = d ? tt(d).ticks : "?";
+    mediaDur = /^\d+$/.test(dt) ? dt : null;
   }
   return {
     kind,
@@ -173,6 +178,7 @@ async function readClip(item: TrackItem, kind: Kind, loopTrack: number, gen: num
     projType,
     mediaDur,
     selected,
+    optErrors: opt,
     ref: item,
     projRef: proj,
     gen,
@@ -221,9 +227,6 @@ export const keyFull = (c: ClipInfo) => [c.kind, c.track, c.start, c.end, c.inPt
 
 /** Yeniden bulma anahtarı: (track tipi, track index, start tick, end tick, kaynak adı). */
 export const locKey = (c: ClipInfo) => [c.kind, c.track, c.start, c.end, c.projName].join("|");
-
-/** Track'ten bağımsız zaman kimliği: Spread'de DEĞİŞMEMESİ gereken her şey. */
-export const timeKey = (c: ClipInfo) => [c.kind, c.projId, c.start, c.end, c.inPt, c.outPt, c.speed].join("|");
 
 export function relocate(s: Snapshot, c: ClipInfo): ClipInfo | null {
   const k = locKey(c);

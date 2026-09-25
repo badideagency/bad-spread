@@ -101,8 +101,19 @@ export function makePlan(s: Snapshot, clipType: number | null): Plan {
   const videoSources = new Set(videos.map((v) => v.projId));
   for (const a of audios) {
     if (used.has(a)) continue;
-    if (videoSources.has(a.projId))
-      warnings.push(`kamera kaynaklı ama hiçbir kamera klibiyle birebir eşleşmeyen ses: ${fmt(a)} → ayrı ses birimi olarak taşınacak (bağı kopar)`);
+    // Aynı kaynaklı bir videoyla zamanda çakışan ama tick düzeyinde birebir olmayan ses: büyük ihtimalle o kameranın BAĞLI sesi.
+    // Ayrı ses birimi olarak taşınırsa bağı kopar ve link API'si olmadığı için geri bağlanamaz → SERT hata, Spread başlamaz.
+    const near = videos.find((v) => v.projId === a.projId && overlaps(v, a));
+    if (near)
+      errors.push(
+        `kamera sesi videosuyla tick düzeyinde birebir değil (bağı korunamaz): ${fmt(a)} ↔ ${fmt(near)} — ` +
+          ["start", "end", "inPt", "outPt"]
+            .filter((k) => a[k as keyof ClipInfo] !== near[k as keyof ClipInfo])
+            .map((k) => `${k} fark ${big(String(a[k as keyof ClipInfo])) - big(String(near[k as keyof ClipInfo]))} tick`)
+            .join(", ")
+      );
+    else if (videoSources.has(a.projId))
+      warnings.push(`kamera kaynaklı ama hiçbir kamera klibiyle çakışmayan ses: ${fmt(a)} → ayrı ses birimi olarak taşınacak`);
     units.push(mk("audio", null, [a]));
   }
 
@@ -141,6 +152,8 @@ export function makePlan(s: Snapshot, clipType: number | null): Plan {
     for (const c of [v, ...u.audio]) {
       if (c.speed !== 1) errors.push(`hızı ${c.speed} olan kamera klibi (overwrite hızı korumaz): ${fmt(c)}`);
       if (c.disabled) errors.push(`devre dışı kamera klibi (overwrite etkin olarak yerleştirir): ${fmt(c)}`);
+      if (c.name !== c.projName && c.projName !== "?")
+        warnings.push(`yeniden adlandırılmış kamera klibi "${c.name}" (kaynak "${c.projName}") — overwrite kaynak adını kullanır, klip adı taşınmaz`);
     }
     u.trimmed = v.mediaDur === null ? null : !(v.inPt === "0" && v.outPt === v.mediaDur);
   }
@@ -150,37 +163,15 @@ export function makePlan(s: Snapshot, clipType: number | null): Plan {
   const cloneMoves = placements.filter((p) => p.unit.kind !== "camera" && !p.unit.stays);
   const removeClips = placements.filter((p) => !p.unit.stays).map((p) => p.clip);
 
-  // --- clone sırası: bir kopya, hedef track'te zaman olarak çakıştığı bir ASIL henüz kopyalanmadan yazılamaz
-  const isSource = new Map(cloneMoves.map((p) => [p.clip, p] as const));
-  const deps = new Map<Placement, Set<Placement>>(cloneMoves.map((p) => [p, new Set<Placement>()]));
+  // --- clone güvenliği: bir kopya, hedef track'inde zamanda çakıştığı HERHANGİ bir asılın üstüne yazılmaz.
+  // (Kopyası alınmış olsa bile aynı transaction'da silme seçimindeki bir asılın üstüne yazmak kanıtlanmadı → plan hatası.)
+  // Kullanıcının düzeninde ses hedefleri (A23..) hep yeni track'ler olduğundan bu durum oluşmaz.
   for (const m of cloneMoves) {
     const occupants = s.clips.filter((o) => o !== m.clip && o.kind === m.clip.kind && o.track === m.target && overlaps(o, m.clip));
-    for (const o of occupants) {
-      const src = isSource.get(o);
-      const owner = placements.find((p) => p.clip === o);
-      if (src) deps.get(m)!.add(src);
-      else if (owner && owner.unit.stays) errors.push(`plan hatası: ${fmt(m.clip)} → ${trackLabel(m.clip.kind, m.target)} yerinde kalan ${fmt(o)} ile çakışıyor`);
-      else
-        errors.push(
-          `güvenli sıra yok: ${fmt(m.clip)} → ${trackLabel(m.clip.kind, m.target)} hedefinde henüz silinmemiş ${fmt(o)} var (kamera klibi; silme kopyalardan sonra)`
-        );
-    }
+    for (const o of occupants)
+      errors.push(`güvenli sıra yok: ${fmt(m.clip)} → ${trackLabel(m.clip.kind, m.target)} hedefinde zamanda çakışan asıl ${fmt(o)} var`);
   }
-  const ordered: Placement[] = [];
-  const done = new Set<Placement>();
-  let progress = true;
-  while (ordered.length < cloneMoves.length && progress) {
-    progress = false;
-    for (const m of cloneMoves) {
-      if (done.has(m)) continue;
-      if ([...deps.get(m)!].every((d) => done.has(d))) {
-        ordered.push(m);
-        done.add(m);
-        progress = true;
-      }
-    }
-  }
-  if (ordered.length < cloneMoves.length) errors.push("güvenli sıra yok: kopyalama bağımlılıklarında döngü var (iki klip birbirinin hedefinde)");
+  const ordered = cloneMoves;
 
   return {
     units,

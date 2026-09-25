@@ -72,17 +72,42 @@ async function runTx(
   build: Parameters<typeof transact>[2]
 ): Promise<Awaited<ReturnType<typeof transact>>> {
   const pre = await snapshot(ctx); // yalnız karşılaştırma için değerler (kuşak değişmez)
-  try {
-    const r = await transact(ctx, undoName, build);
-    executed.push(label);
-    return r;
-  } catch (e) {
+  const measure = async () => {
     await settle();
     const now = await snapshot(ctx);
-    const changed = !multisetEqual(pre, now) || now.vCount !== pre.vCount || now.aCount !== pre.aCount;
+    return !multisetEqual(pre, now) || now.vCount !== pre.vCount || now.aCount !== pre.aCount;
+  };
+  let r: Awaited<ReturnType<typeof transact>>;
+  try {
+    r = await transact(ctx, undoName, build);
+  } catch (e) {
+    const changed = await measure();
     if (changed) executed.push(`${label} (hata verdi, kısmen uygulanmış)`);
     throw new SpreadStop(`"${label}" adımı hata verdi: ${errText(e)}${changed ? "" : " (timeline değişmedi)"}`);
   }
+  if (!r.ok) {
+    // executeTransaction false: undo kaydı oluşmamış olabilir → ancak timeline değiştiyse say (Ctrl+Z sayısı doğru kalsın)
+    const changed = await measure();
+    if (changed) executed.push(`${label} (false döndü, kısmen uygulanmış)`);
+    throw new SpreadStop(`"${label}" adımı başarısız (executeTransaction → false)${changed ? "" : " — timeline değişmedi"}.`);
+  }
+  executed.push(label);
+  return r;
+}
+
+/**
+ * İki adım arasında timeline'ın beklenen hâlde olduğunu doğrular (kullanıcı arada Ctrl+Z / düzenleme yaptıysa DUR).
+ * Son adım geri alınmışsa (timeline adım öncesine dönmüş) o adım "yapılanlar"dan düşülür → Ctrl+Z sayısı doğru kalır.
+ */
+async function expectState(ctx: SeqContext, expected: Snapshot, beforeLast: Snapshot | null, executed: string[]): Promise<void> {
+  const now = await snapshot(ctx);
+  const same = (a: Snapshot, b: Snapshot) => multisetEqual(a, b) && a.vCount === b.vCount && a.aCount === b.aCount;
+  if (same(expected, now)) return;
+  if (beforeLast && same(beforeLast, now)) {
+    const undone = executed.pop();
+    throw new SpreadStop(`Adımlar arasında timeline değişti: "${undone}" adımı geri alınmış görünüyor. Güvenlik için durduruldu.`);
+  }
+  throw new SpreadStop("Adımlar arasında timeline değişti (kullanıcı düzenlemesi?). Güvenlik için durduruldu.");
 }
 
 function printPlan(plan: Plan, s: Snapshot): void {
@@ -125,7 +150,14 @@ async function makeBackup(ctx: SeqContext): Promise<{ name: string; guid: string
   if (fresh.length !== 1)
     throw new SpreadStop(`Yedek sequence oluşmadı (executeTransaction → ${tx.ok}, yeni sequence: ${fresh.length}). Spread BAŞLAMADI, timeline'a dokunulmadı.`);
   const backup = { name: sequenceName(fresh[0]), guid: sequenceGuid(fresh[0]) };
-  log(`✓ Yedek oluştu: "${backup.name}"`, "ok");
+  // Yedeğin İÇERİĞİ aslıyla aynı mı (salt okuma) — her DUR mesajı kullanıcıyı buna yönlendiriyor
+  const orig = await snapshot(ctx);
+  const copy = await snapshot({ ...ctx, sequence: fresh[0], guid: backup.guid, name: backup.name });
+  if (!multisetEqual(orig, copy))
+    throw new SpreadStop(
+      `Yedek "${backup.name}" oluştu ama içeriği aslıyla aynı değil (asıl ${orig.clips.length} klip, yedek ${copy.clips.length}). Spread BAŞLAMADI, timeline'a dokunulmadı.`
+    );
+  log(`✓ Yedek oluştu ve içeriği aslıyla aynı: "${backup.name}" (${copy.clips.length} klip)`, "ok");
 
   const { sequence: active } = await getActive();
   const activeGuid = active ? sequenceGuid(active) : null;
@@ -151,7 +183,10 @@ export async function runSpread(): Promise<void> {
     const ctx = await requireActive();
     log(`sequence: "${ctx.name}"`, "dim");
     const s0 = await snapshot(ctx, { media: true });
-    const plan = makePlan(s0, ppro.ProjectItem.TYPE_CLIP); // d.ts:L2788 ProjectItemStatic.TYPE_CLIP
+    const tc: unknown = ppro.ProjectItem.TYPE_CLIP; // d.ts:L2788 ProjectItemStatic.TYPE_CLIP (Probe'da sınanmadı → yoksa kontrol atlanır)
+    const plan = makePlan(s0, typeof tc === "number" ? tc : null);
+    const opt = s0.clips.filter((c) => c.optErrors.length);
+    if (opt.length) log(`not: ${opt.length} klipte isteğe bağlı bilgi okunamadı (ör. medya süresi) — engel değil. İlki: ${opt[0].optErrors[0]}`, "dim");
     printPlan(plan, s0);
     if (plan.errors.length) throw new SpreadStop(`Plan kurulamadı (${plan.errors.length} hata). Spread BAŞLAMADI, hiçbir şey değişmedi.`);
     if (!s0.clips.length) throw new SpreadStop("Sequence'ta klip yok.");
@@ -167,7 +202,8 @@ export async function runSpread(): Promise<void> {
     const ans = await askUser(
       `${plan.counts.camera} kamera${plan.counts.videoOnly ? ` + ${plan.counts.videoOnly} sadece-video` : ""}, ${plan.counts.audio} ses bulundu, ` +
         `${newV + newA} track açılacak (V ${newV}, A ${newA}). Önce yedek sequence oluşturulacak. ` +
-        `Taşınacak: ${plan.overwrite.length} kamera (proje öğesinden, bağlı; klip efektleri taşınmaz), ${plan.clone.length} ses/video (kopya); ` +
+        `Taşınacak: ${plan.overwrite.length} kamera (proje öğesinden yeniden, bağlı — kamera klibindeki efektler, ses kazancı/keyframe'ler ve klip adı taşınmaz), ` +
+        `${plan.clone.length} ses/video (birebir kopya); ` +
         `yerinde kalan: ${plan.stay.length}.${trimmed ? ` ${trimmed} kamera kırpılmış/bilinmiyor → gerekirse kırpma eşitlemesi adımı.` : ""}` +
         `${plan.warnings.length ? ` ${plan.warnings.length} uyarı (günlükte).` : ""} Devam?`
     );
@@ -184,12 +220,15 @@ export async function runSpread(): Promise<void> {
 
     // 2) TX-A: track hazırlığı (kanıtlı yöntem: clone ofseti, hedef = mevcut track sayısı, sırayla)
     let helpers: ClipInfo[] = [];
+    let expected: Snapshot = s1; // bir sonraki adımdan önce timeline'ın bu hâlde olması beklenir
+    let beforeLast: Snapshot | null = null;
     if (newV || newA) {
       const hv = s1.clips.find((c) => c.kind === "V") ?? null;
       const ha = s1.clips.find((c) => c.kind === "A") ?? null;
       if ((newV && !hv) || (newA && !ha)) throw new SpreadStop("Track açmak için kopyalanacak klip yok.");
       const seqEnd = big(tt(await ctx.sequence.getEndTime()).ticks); // d.ts:L3181 Sequence.getEndTime
-      const park = seqEnd + PARK_GAP;
+      const lastClip = s1.clips.reduce((m, c) => (big(c.end) > m ? big(c.end) : m), 0n);
+      const park = (seqEnd > lastClip ? seqEnd : lastClip) + PARK_GAP;
       log(`TX-A: ${newV} video + ${newA} ses track'i clone ofsetiyle açılıyor (yardımcılar ${secOf(park)}s'ye park edilir).`);
       const tx = await runTx(ctx, executed, "track hazırlığı", "Spread: track hazırlığı", (ops) => {
         for (let t = s1.vCount; t < plan.neededV; t++) ops.clone(hv!, ticks(park - big(hv!.start)), t - hv!.track, 0);
@@ -199,14 +238,18 @@ export async function runSpread(): Promise<void> {
       await settle();
       const s2 = await snapshot(ctx);
       const probs = verifyTracks(s1, s2, plan.neededV, plan.neededA, { V: newV, A: newA });
+      for (const w of s2.warnings) probs.push(`okuma uyarısı: ${w}`);
       const extra = s2.clips.filter((c) => !s1.clips.some((o) => keyFull(o) === keyFull(c)));
       for (const c of extra) if (big(c.start) < park) probs.push(`yardımcı park yerinde değil: ${fmtClip(c)}`);
       if (probs.length) throw new SpreadStop("Track hazırlığı beklendiği gibi olmadı.", probs);
       helpers = extra;
+      expected = s2;
+      beforeLast = s1;
       log(`✓ TX-A doğrulandı: V ${s1.vCount}→${s2.vCount}, A ${s1.aCount}→${s2.aCount}; asıllar birebir duruyor.`, "ok");
     }
 
-    // 3) TX-B: taşı (tek transaction). Seçim + referanslar HEMEN öncesinde taze.
+    // 3) TX-B: taşı (tek transaction). Önce timeline beklenen hâlde mi; seçim + referanslar HEMEN öncesinde taze.
+    await expectState(ctx, expected, beforeLast, executed);
     const so = await selectExactly(ctx, [...plan.removeClips, ...helpers]);
     for (const n of so.notes) log(`   ${n}`, "dim");
     if (!so.exact) throw new SpreadStop("Silinecek asıllar birebir seçilemedi — güvenlik için taşıma yapılmadı.");
@@ -234,6 +277,7 @@ export async function runSpread(): Promise<void> {
 
     // 4) TX-C: kırpma eşitlemesi (yalnız farklı yerleşen kamera klipleri)
     if (vB.trimFix.length) {
+      await expectState(ctx, sB, null, executed);
       log(`TX-C: ${vB.trimFix.length} kamera klibi aslına eşitlenecek (set In → Out → Start → End).`);
       for (const t of vB.trimFix) log(`   ${fmtClip(t.now)} → asıl in=${t.orig.inPt} out=${t.orig.outPt} start=${t.orig.start} end=${t.orig.end}`, "dim");
       const sC0 = await snapshot(ctx);
