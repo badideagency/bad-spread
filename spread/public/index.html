@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Spread</title>
+    <script defer src="./index.js"></script>
+  </head>
+  <style>
+    body {
+      color: var(--uxp-host-text-color, #dddddd);
+      background-color: var(--uxp-host-background-color, #232323);
+      font-size: 12px;
+      padding: 0 10px 10px 10px;
+      margin: 0;
+    }
+    h3 {
+      margin: 8px 0 4px 0;
+      font-size: 14px;
+    }
+    .hint {
+      color: #9a9a9a;
+      margin: 0 0 6px 0;
+    }
+    #status {
+      border: 1px solid #555555;
+      border-radius: 4px;
+      padding: 6px 8px;
+      margin: 4px 0 8px 0;
+      color: #e8b04a;
+      font-weight: bold;
+    }
+    .row {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+    }
+    .row sp-button {
+      margin: 0 6px 6px 0;
+    }
+    #ask {
+      display: none;
+      border: 2px solid #e8b04a;
+      border-radius: 4px;
+      padding: 8px;
+      margin: 6px 0;
+    }
+    #ask-text {
+      color: #e8b04a;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+    #log {
+      border: 1px solid #555555;
+      border-radius: 4px;
+      padding: 6px;
+      height: 260px;
+      overflow-y: scroll;
+      font-family: monospace;
+      font-size: 11px;
+    }
+    #log div {
+      margin-bottom: 1px;
+    }
+    #report {
+      width: 100%;
+      height: 140px;
+      font-family: monospace;
+      font-size: 10px;
+    }
+    .label {
+      margin: 8px 0 2px 0;
+      color: #9a9a9a;
+    }
+  </style>
+
+  <body>
+    <h3>Spread v0.2.0</h3>
+    <div class="hint">SPREAD: aktif sequence'taki her klibi kendi track'ine dağıtır; hiçbir klibin zamanı değişmez. Önce onay ister ve yedek sequence alır.</div>
+    <div id="status">Durum okunuyor…</div>
+
+    <div class="row">
+      <sp-button id="btn-spread" variant="cta" disabled="true">SPREAD</sp-button>
+      <sp-button id="btn-status" variant="secondary" disabled="true">Durum raporu</sp-button>
+    </div>
+
+    <div id="ask">
+      <div id="ask-text"></div>
+      <div class="row">
+        <sp-button id="ask-yes" variant="cta">Evet</sp-button>
+        <sp-button id="ask-no" variant="warning">Hayır</sp-button>
+      </div>
+    </div>
+
+    <div class="label">Günlük</div>
+    <div id="log"></div>
+
+    <div class="row" style="margin-top: 8px">
+      <sp-button id="btn-copy" variant="primary">Raporu kopyala</sp-button>
+      <sp-button id="btn-clear" variant="secondary">Günlüğü temizle</sp-button>
+    </div>
+    <div class="label">Durum raporu (kopyalama çalışmazsa buradan Ctrl+A / Ctrl+C)</div>
+    <textarea id="report" readonly></textarea>
+  </body>
+</html>

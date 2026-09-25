@@ -1,21 +1,29 @@
 #!/usr/bin/env bash
-# dist/ → release/spread-probe.ccx
+# Kullanım: scripts/package-ccx.sh [probe|spread]   (varsayılan: probe)
+#   probe : dist/        → release/spread-probe.ccx
+#   spread: spread/dist/ → release/spread.ccx
 #  - manifest.json ZIP'in KÖKÜNDE (alt klasör yok)
 #  - dosyalar 644, klasörler 755 (000 izin / kökte manifest yok → kurulumda "UPI status -160")
 #  - sabit zaman damgası + sıralı dosya listesi (tekrar üretilebilir paket)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-npm run build
+TARGET="${1:-probe}"
+case "$TARGET" in
+  probe)  BUILD="npm run build";        DIST="dist";        OUT="$PWD/release/spread-probe.ccx" ;;
+  spread) BUILD="npm run build:spread"; DIST="spread/dist"; OUT="$PWD/release/spread.ccx" ;;
+  *) echo "bilinmeyen hedef: $TARGET (probe|spread)"; exit 2 ;;
+esac
 
-OUT="$PWD/release/spread-probe.ccx"
+$BUILD
+
 mkdir -p release
 rm -f "$OUT"
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-cp -R dist/. "$STAGE/"
-[ -f "$STAGE/manifest.json" ] || { echo "HATA: dist/manifest.json yok"; exit 1; }
+cp -R "$DIST"/. "$STAGE/"
+[ -f "$STAGE/manifest.json" ] || { echo "HATA: $DIST/manifest.json yok"; exit 1; }
 
 find "$STAGE" -type d -exec chmod 755 {} +
 find "$STAGE" -type f -exec chmod 644 {} +

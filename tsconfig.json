@@ -11,9 +11,24 @@
     "strict": true,
     "noImplicitAny": true,
     "noUnusedLocals": true,
-    "types": ["@adobe/cc-ext-uxp-types", "@types/node", "@adobe/premierepro"],
+    "types": [
+      "@adobe/cc-ext-uxp-types",
+      "@types/node",
+      "@adobe/premierepro"
+    ],
     "esModuleInterop": true
   },
-  "include": ["index.ts", "src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "scripts"]
+  "include": [
+    "index.ts",
+    "src/**/*.ts",
+    "spread/index.ts",
+    "spread/src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "scripts",
+    "spread/dist",
+    "spread/dev"
+  ]
 }

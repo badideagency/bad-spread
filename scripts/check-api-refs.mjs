@@ -33,7 +33,13 @@ function files(dir) {
   }
   return out;
 }
-const sources = [join(ROOT, "index.ts"), ...files(join(ROOT, "src"))];
+// Probe (kök) + Spread (spread/) kaynakları
+const sources = [
+  join(ROOT, "index.ts"),
+  ...files(join(ROOT, "src")),
+  join(ROOT, "spread", "index.ts"),
+  ...files(join(ROOT, "spread", "src")),
+];
 
 const REF = /d\.ts:L(\d+)\s+([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)?)/g;
 let bad = 0;

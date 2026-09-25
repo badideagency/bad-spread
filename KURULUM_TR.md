@@ -1,93 +1,71 @@
-# Spread Probe — Kurulum ve Test (Türkçe, adım adım)
+# Spread — Kurulum ve Kullanım (Türkçe, adım adım)
 
-Bu eklenti **sadece bir test paneli** (sürüm **0.1.1**). SPREAD / RE-STACK düğmeleri henüz yok.
-Görevi: Premiere'in bize gereken özelliklerinin çalışıp çalışmadığını ölçmek ve bir **rapor** üretmek.
-O raporu bana (sohbete) geri getireceksin.
+**Spread v0.2.0** gerçek özelliğin ilk sürümü. Tek bir işi var:
 
-> **Güvenlik:** Panel yalnızca adı `PROBE_` ile başlayan, o an açık (aktif) sequence üzerinde çalışır.
-> Başka bir sequence açıkken tüm test düğmeleri kilitlidir. Diske, medyaya ya da proje dosyasına kayıt yapmaz.
-> Yine de denemeyi **deneme projesinde** yap (gerçek işin projesinde değil).
+> **SPREAD** — aktif sequence'taki **her klibi kendi track'ine** dağıtır. **Hiçbir klibin zamanı değişmez**, sadece track'i değişir.
+> Kameralar kendi sesleriyle **bağlı** kalır. Senkronu sonra **Premiere'in kendi Synchronize'ı** yapar.
+
+Güvenlik: başlamadan onay sorar, **önce yedek sequence** oluşturur (yedek oluşmazsa hiç başlamaz), her adımdan sonra
+her klibin zamanını aslıyla karşılaştırır; bir şey tutmazsa **durur** ve ne olduğunu yazar. Kendi başına düzeltme yapmaz.
 
 ---
 
-## 0) Eski sürüm (0.1.0) kuruluysa — önce kaldır
+## 1) Eski test panelini (Spread Probe) kaldır
 
 - **Creative Cloud** uygulamasını aç → eklentiler bölümü (**Plugins / Eklentiler**) → **Manage plugins** (Eklentileri yönet).
-- Listede **Spread Probe**'u bul → **⋯** ya da **Uninstall / Kaldır**.
+- **Spread Probe**'u bul → **⋯** ya da **Uninstall / Kaldır**.
 - **Premiere Pro'yu kapat.**
 
-## 1) Yeni dosyayı indir
+## 2) Spread'i indir ve kur
 
-- GitHub'da bu dosyayı aç: `release/spread-probe.ccx` (dal: `claude/sweet-bell-do4j75`)
-  Doğrudan bağlantı: <https://github.com/badideagency/bad-spread/raw/claude/sweet-bell-do4j75/release/spread-probe.ccx>
-- **Download** (indir) düğmesine bas. Dosya `spread-probe.ccx` adıyla iner.
-  Eski indirdiğin dosya duruyorsa onu sil ya da üzerine yaz — **yenisini** kullan.
-- Dosyanın adını ya da uzantısını **değiştirme** (`.zip` yapma, açma).
+- İndir: <https://github.com/badideagency/bad-spread/raw/claude/sweet-bell-do4j75/release/spread.ccx>
+  (GitHub'da `release/spread.ccx` → **Download**). Adını/uzantısını değiştirme.
+- `spread.ccx`'e **çift tıkla** → Creative Cloud "üçüncü taraf eklenti" uyarısı → **Install / Yükle**.
+- **Premiere Pro'yu kapatıp yeniden aç.**
+- Paneli aç: **Window → UXP Plugins → Spread** (yoksa **Window → Extensions**). Başlıkta **"Spread v0.2.0"** yazmalı.
 
-## 2) Kur
+## 3) Testi GÜVENLİ yerde yap
 
-- İnen `spread-probe.ccx` dosyasına **çift tıkla**.
-- Creative Cloud "üçüncü taraf eklenti" (third-party plugin) uyarısı gösterir → **Install / Yükle**.
-- "Kuruldu" mesajını bekle.
-- **Premiere Pro'yu tamamen kapatıp yeniden aç.**
-
-## 3) Paneli bul ve sürümü kontrol et
-
-- Premiere'de üst menüden: **Window → UXP Plugins → Spread Probe** (orada yoksa **Window → Extensions**).
-- Panelin en üstünde **"Spread Probe v0.1.1"** yazmalı. **0.1.0** görüyorsan eski sürüm açık: 0. adımı tekrarla.
-
-## 4) Deneme sequence'ı (`PROBE_test`) — senin gerçek düzenin geçerli
-
-Adı **tam olarak** `PROBE_` ile başlayan bir sequence (ör. `PROBE_test`). Düzen:
-
-```
-V1: [ kamera 1 ][ kamera 2 ] …        ← kameralar arka arkaya
-A1: [ kamera 1 sesi ][ kamera 2 sesi ] ← kameraların kendi sesleri (bağlı)
-A2: [ harici ses 1 ][ harici ses 2 ] … ← harici ses kayıtları (ör. 260912_133224_Tr1.WAV) arka arkaya
-A3: [ harici ses … ]                   ← varsa diğer harici sesler
-V2 ve üstü, A4 ve üstü: BOŞ
-```
-
-- **Kamera** = V1'deki **ilk** klip ve onun kendi sesi (aynı dosya, aynı başlangıç/bitiş).
-- **Harici ses** = hiçbir kamera videosuyla aynı dosyadan gelmeyen ses klibi (hangi ses track'inde olursa olsun).
-- T7 için **aynı track'te arka arkaya en az iki harici ses** gerekli (ör. A2'de iki tane).
+- Gerçek projeni aç → **File → Save As…** → yeni bir adla kaydet (ör. `..._spread_test`). **Bu YENİ kopyada çalış.**
+- O kopyada **orijinal sequence**'ı aç (22 kamera + 12 WAV olan). **`PROBE_test`'te DEĞİL** — orada eski test kopyaları var.
 - Timeline'ın sol üstündeki **Linked Selection** (zincir) simgesi **açık** olsun.
+- Sequence'a bir kez tıkla. Panelde `Aktif sequence: "…"` yeşil görünmeli.
 
-### Testten önce TEMİZLİK (önemli)
+## 4) SPREAD
 
-- Önceki test turundan kalan kopyaları sil: **V2 ve üstündeki**, **A4 ve üstündeki** bütün klipler.
-  (Klibe tıkla → Delete. Boş kalan track'ler sorun değil.)
-- İstersen önceki turdan kalan `PROBE_test Copy` sequence'larını da Project panelinden silebilirsin.
-- `PROBE_test` timeline'ına bir kez tıkla. Paneldeki durum kutusu **yeşil** olmalı:
-  `✓ Aktif sequence "PROBE_test" — testler açık.`
+- **SPREAD**'e bas. Panel önce planı günlüğe yazar (hangi klip hangi track'e gidecek), sonra sorar:
+  `22 kamera, 12 ses bulundu, N track açılacak (V …, A …). Önce yedek sequence oluşturulacak. … Devam?`
+  - Sayılar yanlışsa **Hayır** → hiçbir şey değişmez.
+  - Doğruysa **Evet**.
+- Panel sırasıyla: yedek sequence oluşturur (`… Copy`) → gerekli track'leri açar → klipleri dağıtır → (gerekirse) kırpma eşitlemesi →
+  her adımdan sonra doğrular.
+- Sonunda yeşil `✓ SPREAD tamam …` yazar. Beklenen görüntü: V1, V2, V3 … her birinde **tek** kamera klibi; A1 … A22 kamera sesleri;
+  altında A23 … her birinde **tek** WAV. Hiçbir klip sağa/sola kaymamış olmalı.
+- **Kırmızı `✗ SPREAD DURDU`** görürsen: panel ne olduğunu ve **kaç kez Ctrl+Z** basman gerektiğini yazar
+  (ya da yedek sequence'ı kullan). O satırları kopyalayıp bana getir.
 
-## 5) Testi çalıştır
+## 5) Synchronize
 
-- Önce **Tara**'ya bas. Günlükte `Kurulum uygun görünüyor.` yazmalı. (V2+/A4+ uyarısı çıkarsa temizliği yap.)
-- Sonra **Hepsini çalıştır**'a bas. Sıra: T1, T2, T4, T3, T6, T8, T5, T7. Timeline'da üst track'lerde kopyalar belirecek, bu normal.
-- Arada panel sana **soru** soracak (sarı kutu). Sorudaki şeyi yap, sonra **Evet / Hayır** ile cevapla. Emin değilsen **Atla**.
-  - **T3 (Taşı):** Söylenen üst track'teki **kopya videoya** bir kez tıkla → altındaki kopya ses de seçildi mi?
-  - **T6 (Geri alma):** Önce **timeline'a bir kez tıkla**, sonra **Ctrl+Z**'ye (Mac: **Cmd+Z**) **yalnızca BİR kez** bas
-    (ya da **Edit → Undo**). Soru: T3'ün yaptığı her şey geri geldi mi (kopyalar gitti, kamera klibi ve sesi yerine döndü)?
-  - **T8 (Bağlı doğurma):** Söylenen üst track'teki **yeni videoya** bir kez tıkla → sesi de seçildi mi?
-  - **T5 (Seçim):** Timeline'a bak: sayılan klipler seçili (vurgulu) görünüyor mu?
-- Günlükte `Bitti.` yazınca test tamam.
+- Panelin dediği gibi: **Clip → Synchronize**'ı dene.
+- Menü gri ise: **timeline'a bir kez tıkla**, **Ctrl+A** (Mac: **Cmd+A**) ile hepsini seç, **sağ tık → Synchronize** → **Audio**.
+- Synchronize bitince timeline'a bak: WAV'lar kameralarla hizalandı mı?
 
-## 6) Raporu bana getir
+## 6) DURUM RAPORU — bana getir (Synchronize'dan SONRA)
 
-- **Raporu kopyala**'ya bas. Günlükte `✓ Rapor panoya kopyalandı` yazar.
-- Sohbete dön ve **yapıştır** (Ctrl+V / Cmd+V).
-- Kopyalama çalışmazsa: en alttaki **Rapor** kutusuna tıkla, **Ctrl+A** (Mac: **Cmd+A**) → **Ctrl+C** (Mac: **Cmd+C**) → yapıştır.
+- Panelde **Durum raporu**'na bas → **Raporu kopyala** → sohbete **yapıştır**.
+  (Kopyalama çalışmazsa: alttaki kutuya tıkla, Ctrl+A / Ctrl+C.)
+- Rapor: her track'teki klipler (zamanlar tick + saniye, kaynak adı) ve **hangi WAV hangi kamerayla çakışıyor** (süre).
+  **RE-STACK** bu veriyle tasarlanacak (bu sürümde RE-STACK yok).
 
 ---
 
 ## Sorun çıkarsa
 
-- **Çift tıklayınca kurulmuyor / "UPI status -160" gibi bir hata → 2. yol:**
-  aescripts'in ücretsiz **ZXP/UXP Installer**'ını indir (<https://aescripts.com/learn/zxp-installer/>), aç,
-  `spread-probe.ccx`'i pencereye **sürükle-bırak**, Premiere'i yeniden başlat.
-- **"Zaten kurulu" / eski sürüm açılıyor:** 0. adımla eskisini kaldır, Premiere'i kapat, sonra yeniden kur.
-- **Düğmeler gri / kilitli:** Açık timeline'ın adı `PROBE_` ile başlamıyor ya da timeline seçili değil → `PROBE_test`'e tıkla, 2 sn bekle.
-- **Bir test "BELİRSİZ":** Genelde önceki bir test klibi silmiştir (ör. T6'da Ctrl+Z yapılmadıysa T3 kamerayı taşımış kalır).
-  **Edit → Undo** ile geri al, temizliği yap, tekrar çalıştır.
-- **Testi baştan tekrarlamak için:** temizlik adımını yap (V2+, A4+ sil), gerekirse kamera klibi ve sesini V1/A1'e geri koy.
+- **Kurulmuyor / "UPI status -160":** aescripts'in ücretsiz **ZXP/UXP Installer**'ı (<https://aescripts.com/learn/zxp-installer/>),
+  `spread.ccx`'i pencereye sürükle-bırak, Premiere'i yeniden başlat.
+- **Düğmeler gri:** aktif sequence yok → timeline'a bir kez tıkla, 2 sn bekle.
+- **"Plan kurulamadı":** panel başlamadan önce bir sorun gördü (ör. hızı değiştirilmiş ya da devre dışı kamera klibi); hiçbir şey
+  değişmedi. Günlükteki `HATA:` satırlarını getir.
+- **Geri dönmek:** `✓ SPREAD tamam` satırının altında kaç kez Ctrl+Z basacağın yazar; ya da `… Copy` adlı yedek sequence'ı kullan.
+- **Not:** Kameralar proje öğesinden yeniden yerleştirilir → kamera klibinin üzerindeki **efektler / ses seviyesi ayarları taşınmaz**
+  (bu aşamada ham klipler varsayıldı). Harici WAV'lar birebir kopyalanır.

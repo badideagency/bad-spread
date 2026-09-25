@@ -5,7 +5,17 @@ import typescript from "typescript-eslint";
 import premierepro from "@adobe/eslint-plugin-premierepro";
 
 export default defineConfig(
-  globalIgnores(["dist/**", "scripts/**", "dev/**", "release/**", "eslint.config.mjs", "vite.config.mjs"]),
+  globalIgnores([
+    "dist/**",
+    "scripts/**",
+    "dev/**",
+    "release/**",
+    "spread/dist/**",
+    "spread/dev/**",
+    "eslint.config.mjs",
+    "vite.config.mjs",
+    "spread/vite.config.mjs",
+  ]),
   {
     files: ["**/*.ts"],
     extends: [
