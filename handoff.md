@@ -7,7 +7,7 @@
 | Sürüm | **Spread v0.3.4** (`release/spread.ccx`) + **Spread Helper v0.3.4** (`release/spread-helper-klasor.zip`, imzasız klasör; `.zxp` yok — ADIM 3.2) |
 | Gerçek Premiere bulgusu (v0.3.3) | TOPLA doğru (4 oturum sırayla, V1 A, V2 Sony, Zoom altında, kılavuzlar en altta). BAĞLA ilk parçada durdu (koruma doğru çalıştı). Bkz. **KANITLANMIŞ** |
 | Düzeltmeler | (1) kırpma **kalibrasyonu** (ölçüm, tahmin değil; baş + kuyruk BİRLİKTE de ölçülür) + kenar başına TEK action; (2) tutarlı kural yoksa YEDEK PLAN mesajı (yedek plan bu sürümde çalıştırılmaz — aşağıda neden; **kullanıcı kararı bekliyor**); (3) mock gerçek set anlamında + **regresyon** (eski kod gerçek raporun satırıyla birebir düşer, yeni geçer); (4) HARİCİ ses çifti TOPLA'nın ilk adımında silinir (kamera çifti: elle — aşağıda neden); (5) çerçeve: eşlenen → korunan → "sil" → **kılavuz (en alt)** → park; (6) ≤ 1 kare korunan kamera sesi parçası yok; (7) SPREAD'in eski "kırpma eşitlemesi" (aynı hata) kaldırıldı |
-| Bulutta doğrulanan | `npm run check` (+ `scripts/regress-trim.sh`), mutasyon sınaması (11/11 yakalandı), bağımsız alt ajan incelemesi #6 (2 major + 6 minor + nit'ler, hepsi ele alındı) |
+| Bulutta doğrulanan | `npm run check` (… **Spread smoke 79 senaryo** + `scripts/regress-trim.sh`: eski kod düşer / yeni geçer), mutasyon sınaması (11/11 yakalandı), bağımsız alt ajan incelemesi #6 (2 major + 6 minor + nit'ler, hepsi ele alındı) |
 
 ### KANITLANMIŞ (gerçek Premiere, kullanıcının v0.3.3 BAĞLA raporu)
 
