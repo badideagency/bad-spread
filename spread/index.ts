@@ -1,20 +1,41 @@
-// Spread — giriş noktası. SPREAD / TOPLA / BAĞLA / DURUM RAPORU butonları, aktif sequence göstergesi, yardımcı göstergesi,
-// "tutulacak harici kanallar" ayarı, meşgul kilidi, rapor kopyalama.
+// Spread v1.0.0 — giriş noktası (yalnız arayüz bağlantıları). Üstte sequence + yardımcı göstergesi; numaralı üç adım (SPREAD → Clip ›
+// Synchronize → TOPLA → BAĞLA); işlem sırasında ilerleme; sonuçta tek cümle + "Ayrıntı ▸"; "Sorun bildir"; "Gelişmiş ▸" altında
+// kaynak eşleme, eşik, boşluk, Durum raporu, yardımcı ayrıntısı ve günlük. İşlemlerin mantığı src/ altındaki modüllerde (değişmedi).
 
 import { getActive, requireActive, sequenceGuid, sequenceName } from "./src/session";
 import { runSpread } from "./src/spread";
 import { runCollect } from "./src/topla";
 import { runBind } from "./src/bagla";
 import { buildStatusReport } from "./src/status";
+import { buildIssueReport, saveIssueReport } from "./src/report";
 import { classify, sourcesOf } from "./src/classify";
 import { getLinker } from "./src/linker";
 import { bindSettingInputs, renderMapping } from "./src/settings";
 import { errText, snapshot } from "./src/model";
-import { answer, byId, clearLog, isAsking, log, setHelperStatus, setReportText } from "./src/ui";
+import { rememberStep, stepViews } from "./src/steps";
+import { SPREAD_VERSION } from "./src/version";
+import {
+  answer,
+  bindToggle,
+  byId,
+  clearLog,
+  isAsking,
+  log,
+  opEnd,
+  opFinish,
+  opStart,
+  renderSteps,
+  setDoneHandler,
+  setHelperStatus,
+  setReportText,
+  setSequenceLine,
+} from "./src/ui";
 
 let busy = false;
 const ACTIONS = ["btn-spread", "btn-collect", "btn-bind", "btn-status", "btn-channels"];
-let lastSeqGuid: string | null = null;
+let lastSeqGuid: string | null = null; // kaynak eşlemesi en son bu sequence için tarandı
+let activeGuid: string | null = null; // adım göstergesi (şu an aktif sequence; yoksa null)
+let opGuid: string | null = null; // işlemin başladığı sequence (adım sonucu ona yazılır)
 
 function setDisabled(id: string, disabled: boolean): void {
   try {
@@ -26,31 +47,38 @@ function setDisabled(id: string, disabled: boolean): void {
   }
 }
 
+function paintSteps(): void {
+  try {
+    const v = stepViews(activeGuid);
+    renderSteps(v.steps, activeGuid ? v.next : null);
+  } catch {
+    /* gösterge yoksa geç */
+  }
+}
+
 async function refresh(): Promise<void> {
   let ok = false;
   try {
     const { project, sequence } = await getActive();
-    const s = byId("status");
-    if (!project) s.textContent = "Açık proje yok.";
-    else if (!sequence) s.textContent = "Aktif sequence yok — timeline'a bir kez tıkla.";
+    if (!project) setSequenceLine("Açık proje yok.", false);
+    else if (!sequence) setSequenceLine("Aktif sequence yok — timeline'a bir kez tıkla.", false);
     else {
-      s.textContent = `Aktif sequence: "${sequenceName(sequence)}"`;
+      setSequenceLine(sequenceName(sequence), true);
       ok = true;
       const g = sequenceGuid(sequence);
+      activeGuid = g;
       if (g !== lastSeqGuid && !busy) {
         lastSeqGuid = g;
         void scanChannels(false);
       }
     }
-    s.style.color = ok ? "#4cc27a" : "#e8b04a";
+    if (!ok) activeGuid = null;
   } catch (e) {
-    try {
-      byId("status").textContent = `Durum okunamadı: ${errText(e)}`;
-    } catch {
-      /* yoksa geç */
-    }
+    setSequenceLine(`Durum okunamadı: ${errText(e)}`, false);
   }
   for (const id of ACTIONS) setDisabled(id, busy || !ok);
+  setDisabled("btn-issue", busy && !isAsking());
+  paintSteps();
 }
 
 /** Aktif sequence'taki harici kaynakları bulur ve kaynak eşleme panelini çizer (salt okuma). */
@@ -91,23 +119,23 @@ async function exclusive(label: string, fn: () => Promise<void>): Promise<void> 
   }
   busy = true;
   await refresh();
+  opGuid = activeGuid;
+  opStart(label);
   try {
     await fn();
   } catch (e) {
     log(`Beklenmeyen hata: ${errText(e)}`, "err");
+    opEnd("err", `${label}: beklenmeyen hata.`, "Sorun bildir'e bas ve raporu gönder.", [errText(e)]);
   } finally {
+    opFinish();
     busy = false;
     await refresh();
   }
 }
 
-async function copyReport(): Promise<void> {
-  const text = (byId("report") as HTMLTextAreaElement).value;
-  if (!text) {
-    log("Önce 'Durum raporu'na bas.", "warn");
-    return;
-  }
-  // UXP panosu (Premiere API değil). Tip: @adobe/cc-ext-uxp-types Clipboard (setContent / writeText).
+/** Panoya kopyalar (UXP panosu; Premiere API değil). @returns hangi yolla kopyalandı ya da null */
+async function copyText(text: string): Promise<{ ok: boolean; how: string }> {
+  // Tip: @adobe/cc-ext-uxp-types Clipboard (setContent / writeText).
   const cb = (navigator as unknown as {
     clipboard?: { setContent?: (d: Record<string, string>) => Promise<unknown>; writeText?: (t: unknown) => Promise<unknown> };
   }).clipboard;
@@ -121,13 +149,53 @@ async function copyReport(): Promise<void> {
   for (const [name, fn] of tries) {
     try {
       await fn();
-      log(`✓ Rapor panoya kopyalandı (${name}, ${text.length} karakter).`, "ok");
-      return;
+      return { ok: true, how: name };
     } catch (e) {
       errs.push(`${name}: ${errText(e)}`);
     }
   }
-  log(`✗ Panoya kopyalanamadı (${errs.join(" | ") || "clipboard API yok"}). Rapor kutusuna tıkla, Ctrl+A / Ctrl+C.`, "err");
+  return { ok: false, how: errs.join(" | ") || "clipboard API yok" };
+}
+
+async function copyReport(): Promise<void> {
+  const text = (byId("report") as HTMLTextAreaElement).value;
+  if (!text) {
+    log("Önce 'Durum raporu'na bas.", "warn");
+    return;
+  }
+  const r = await copyText(text);
+  if (r.ok) log(`✓ Rapor panoya kopyalandı (${r.how}, ${text.length} karakter).`, "ok");
+  else log(`✗ Panoya kopyalanamadı (${r.how}). Rapor kutusuna tıkla, Ctrl+A / Ctrl+C.`, "err");
+}
+
+/** "Sorun bildir": tek metin paketi → panoya + masaüstüne. İşlem sürerken de çalışır (o zaman sequence okunmaz). */
+async function reportIssue(): Promise<void> {
+  const note = (t: string) => {
+    try {
+      byId("issue-note").textContent = t;
+    } catch {
+      /* yoksa geç */
+    }
+  };
+  note("Rapor hazırlanıyor…");
+  const reading = !busy;
+  if (reading) busy = true;
+  try {
+    const text = await buildIssueReport(reading);
+    setReportText(text);
+    const saved = await saveIssueReport(text);
+    const copied = await copyText(text);
+    log(`Sorun raporu: ${text.split("\n").length} satır; ${saved.ok ? `kaydedildi: ${saved.path}` : `kaydedilemedi (${saved.detail})`}; ${copied.ok ? "panoya kopyalandı" : `panoya kopyalanamadı (${copied.how})`}.`, "head");
+    note(
+      saved.ok || copied.ok
+        ? `✓ Rapor hazır${copied.ok ? ", panoya kopyalandı" : ""}${saved.ok ? ` ve kaydedildi: ${saved.path}` : ""}. Bana gönder (yapıştır ya da dosyayı ekle).`
+        : "✗ Rapor kopyalanamadı ve kaydedilemedi — Gelişmiş ▸ Durum raporu kutusundan Ctrl+A / Ctrl+C."
+    );
+  } catch (e) {
+    note(`✗ Rapor hazırlanamadı: ${errText(e)}`);
+  } finally {
+    if (reading) busy = false;
+  }
 }
 
 function on(id: string, fn: () => void): void {
@@ -139,6 +207,18 @@ function on(id: string, fn: () => void): void {
 }
 
 function init(): void {
+  try {
+    byId("ver").textContent = SPREAD_VERSION;
+  } catch {
+    /* başlık yoksa geç */
+  }
+  bindToggle("adv-toggle", "adv", "Gelişmiş");
+  bindToggle("ask-more-toggle", "ask-more", "Ayrıntı");
+  bindToggle("result-more-toggle", "result-more", "Ayrıntı");
+  setDoneHandler((step, kind, text) => {
+    rememberStep(opGuid, step, kind, text);
+    paintSteps();
+  });
   on("btn-spread", () => void exclusive("SPREAD", runSpread));
   on("btn-collect", () =>
     void exclusive("TOPLA", async () => {
@@ -155,8 +235,10 @@ function init(): void {
       const text = await buildStatusReport();
       setReportText(text);
       log(`✓ Durum raporu hazır (${text.split("\n").length} satır). 'Raporu kopyala' ile al.`, "ok");
+      opEnd("info", "Durum raporu hazır (Gelişmiş ▸ Durum raporu).");
     })
   );
+  on("btn-issue", () => void reportIssue());
   on("ask-yes", () => answer("Evet"));
   on("ask-no", () => answer("Hayır"));
   on("btn-copy", () => void copyReport());
@@ -164,7 +246,7 @@ function init(): void {
     if (!isAsking()) clearLog();
   });
   bindSettingInputs();
-  log("Spread hazır. Sıra: SPREAD → Clip > Synchronize → TOPLA → kontrol → BAĞLA. Her işlem önce onay ister ve yedek sequence alır.", "head");
+  log(`Spread ${SPREAD_VERSION} hazır. Sıra: SPREAD → Clip > Synchronize → TOPLA → kontrol → BAĞLA. Her işlem önce onay ister ve yedek sequence alır.`, "head");
   void refresh();
   void checkHelper(false);
   setInterval(() => {

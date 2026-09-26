@@ -23,7 +23,7 @@ import {
   type Snapshot,
 } from "./model";
 import { getActive, sequenceGuid, sequenceName, SessionError, type SeqContext } from "./session";
-import { ask, log, type Answer } from "./ui";
+import { ask, humanize, log, opEnd, type Answer } from "./ui";
 import { verifyTracks } from "./verify";
 import type { Sequence } from "./ppro";
 
@@ -38,8 +38,12 @@ export class SpreadStop extends Error {
   }
 }
 
-export async function askUser(q: string): Promise<Answer> {
-  const a = await ask(q);
+/**
+ * @param q tam soru (onay penceresinde "Ayrıntı ▸" altında; günlüğe de yazılır)
+ * @param summary v1.0.0: 3–5 satırlık özet (dikkat gerektiren satırlar dahil) — yalnız görünüm
+ */
+export async function askUser(q: string, summary?: string[]): Promise<Answer> {
+  const a = await ask(q, summary);
   invalidateRefs(); // kullanıcı timeline'da bir şey yapmış olabilir
   return a;
 }
@@ -242,6 +246,16 @@ export function reportStop(op: string, e: unknown, executed: string[], backupNam
     log("Timeline'da değişiklik yapılmadı.", "warn");
   }
   for (const x of extra) log(x, "warn");
+  // v1.0.0 arayüz: tek cümle + ne yapılacağı (+ tam mesaj ve günlük "Ayrıntı ▸" altında) — yalnız görünüm
+  const hint =
+    executed.length && stop?.restored
+      ? "Düzen değişmedi; geri alman gerekmez."
+      : executed.length && stop?.unreliableCount
+        ? `Ctrl+Z sayısı güvenilir değil — yedek sequence "${backupName ?? "?"}"i kullan.`
+        : executed.length
+          ? `Geri almak için Ctrl+Z × ${executed.length} ya da yedek sequence "${backupName ?? "?"}". Sonra "Sorun bildir".`
+          : "Timeline'da değişiklik yapılmadı.";
+  opEnd("err", `${op} durdu: ${humanize(msg)}`, hint, [msg, ...(stop?.details ?? []).map((d) => `• ${d}`), ...extra]);
 }
 
 // ------------------------------------------------------------------ yarım kalmış iş koruması

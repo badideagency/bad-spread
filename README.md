@@ -1,25 +1,26 @@
-# Spread — Premiere Pro UXP eklentisi
+# Spread — Premiere Pro çok kameralı çekim düzenleyici (v1.0.0)
 
-| Bileşen | Durum | Paket |
-|---|---|---|
-| **Spread** v0.3.4 (`spread/`) | **SPREAD** (her klip kendi track'ine; kırpılmış kamerada başlamaz) → Premiere *Clip > Synchronize* → **TOPLA** (oturumları senkron sonucundan bulur: güçlü bağ + cihaz vetosu; çekim sırasıyla sequence başından dizer; cihaz → V, kaynak → A) → gözle kontrol → **BAĞLA** = **KES** (oturum içinde harici sesi çapaya göre kes, kılavuz sesleri sil) + bağla (köprüyle tek tık ya da yardımcı paneldeki BAĞLA); harici sesin olmadığı aralıkta kamera sesi korunur; kırpma komutlarının etkisi sequence başına bir kez **ölçülür** (kalibrasyon) ve kenar başına tek komut gider; çift kopyaları TOPLA ilk adımında siler. **Durum raporu** (oturumlar dahil) + kaynak eşleme + eşik/boşluk ayarı; yardımcı bağlantısında gerçek hata. | [`release/spread.ccx`](release/spread.ccx) |
-| **Spread Helper** v0.3.4 (`cep-helper/`) | GÖRÜNÜR CEP paneli (Window → Extensions (Legacy) → Spread Helper): sunucu durumu, son istek, Premiere sürümü; köprü (localhost:47731, token'lı) ve köprüsüz **BAĞLA** düğmesi (KES planı + aktif sequence → Spread'in AYNI modülüyle grupla → ExtendScript `linkSelection`). | [`release/spread-helper-klasor.zip`](release/spread-helper-klasor.zip) (imzasız klasör + `KUR.cmd` + PlayerDebugMode `.reg`) |
-| Spread Probe v0.1.1 (kök `index.ts`, `src/`, `public/`) | API yoklama paneli (T1–T8). Bitti; arşiv. | [`release/spread-probe.ccx`](release/spread-probe.ccx) |
+**Kurulum:** [`release/Spread_Kurulum_v1.0.0.zip`](release/Spread_Kurulum_v1.0.0.zip) → çıkart → **KUR.cmd** (yönetici izni gerekmez).
+Ayrıntı: **[KURULUM_TR.md](KURULUM_TR.md)** · Ekran görüntüleri: [docs/ekran](docs/ekran) · Sürüm notu: [docs/SURUM_NOTU_v1.0.0.md](docs/SURUM_NOTU_v1.0.0.md)
 
-- Kurulum ve kullanım: **[KURULUM_TR.md](KURULUM_TR.md)**
+| Bileşen | Ne yapar |
+|---|---|
+| **Spread** 1.0.0 (`spread/`, UXP paneli) | **SPREAD** (her klip kendi track'ine) → Premiere *Clip › Synchronize* → **TOPLA** (oturumları senkron sonucundan bulur, çekim sırasıyla dizer; cihaz → V, kaynak → A; çift kopyaları siler) → gözle kontrol → **BAĞLA** (harici sesi her oturumun kendi kamerasına göre keser, harici sesin olmadığı yerde kamera sesini korur, her grubu tek bağ yapar). Kırpma komutlarının etkisi sequence başına bir kez **ölçülür** (kalibrasyon). Sade arayüz: üç numaralı adım, ilerleme, tek cümlelik sonuç + "Ayrıntı ▸", özetli onay, **Sorun bildir**. |
+| **Spread Helper** 1.0.0 (`cep-helper/`, CEP paneli) | Küçük panel: "● Spread Helper çalışıyor". Bağlama köprüsü (localhost:47731, token'lı) — Premiere'in UXP'sinde bağlama komutu yok. Köprü yoksa Spread'in planıyla **BAĞLA** (bölüm yalnız gerektiğinde görünür). |
+| Spread Probe 0.1.1 (kök `index.ts`, `src/`) | API yoklama paneli (arşiv; yayımlanmaz). |
+
 - Geliştirici devir notu (kanıtlanmış davranışlar, tasarım, kararlar, riskler): **[handoff.md](handoff.md)**
 
 ## Geliştirme
 
 ```bash
 npm ci
-npm run check            # typecheck + eslint (Adobe premierepro kuralları) + d.ts / uxp.d.ts satır kontrolü
-                         # + host.jsx ES3/belge kontrolü + check:core (yardımcıdaki derlenmiş modül = kaynak)
-                         # + Probe smoke + Spread smoke (mock Premiere + gerçek yardımcı sunucusu + yardımcı paneldeki BAĞLA)
-                         # + regresyon: v0.3.3 kırpması gerçek set anlamında düşer, güncel kod geçer (scripts/regress-trim.sh)
-npm run package:spread   # build → release/spread.ccx (+ zip kontrolü)
-npm run build:core       # spread/src/helper-core.ts → cep-helper/js/spread-core.js (TEK modül, yardımcı panele)
-npm run package:helper   # release/spread-helper-klasor.zip (imzasız); ZXPSIGNCMD=… verilirse ve zaman damgası alınırsa .zxp
+npm run check            # typecheck + eslint (Adobe premierepro kuralları) + d.ts / uxp.d.ts satır kontrolü + host.jsx ES3/belge
+                         # kontrolü + check:xml + check:core + Probe smoke + Spread smoke (mock Premiere + gerçek yardımcı sunucusu)
+                         # + regresyon (v0.3.3 kırpması gerçek set anlamında düşer, güncel kod geçer)
+npm run package:kurulum  # release/spread.ccx + release/Spread_Kurulum_v<sürüm>.zip (spread.ccx + SpreadHelper/ + KUR/KALDIR + OKU_BENI)
+bash scripts/test-kurulum-wine.sh   # KUR.cmd / KALDIR.cmd sınaması (Wine): HKCU değerleri, kopyalama, geri yükleme
+npm run build:spread && node spread/dev/screens.mjs   # ekran görüntüleri (mock + jsdom + Chromium) → docs/ekran
 ```
 
 Kurallar: Premiere UXP API'si yalnız `node_modules/@adobe/premierepro/src/premierepro.d.ts` (26.5.0) dosyasından kullanılır

@@ -13,10 +13,12 @@
 // "X-Spread-Token" başlığıyla gönderir. Tarayıcıdaki bir sayfa bu dosyayı okuyamaz ve özel başlıklı istek gönderemez.
 // UXP API'leri: @adobe/cc-ext-uxp-types (uxp.d.ts) — satırlar `npm run check:api` ile doğrulanır.
 
+import { SPREAD_VERSION } from "./version";
+
 export const HELPER_PORT = 47731;
 /** manifest.json requiredPermissions.network.domains ile AYNI ad (IP değil). */
 export const HELPER_URL = `http://localhost:${HELPER_PORT}`;
-export const HELPER_VERSION = "0.3.4";
+export const HELPER_VERSION = SPREAD_VERSION; // yardımcı ve panel aynı sürümle yayımlanır (v1.0.0)
 const PING_TIMEOUT_MS = 3000;
 /** Bağlama grupları yardımcıya parti parti gönderilir (uzun çekimlerde tek istek zaman aşımına uğramasın). */
 const LINK_BATCH = 8;

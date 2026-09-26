@@ -49,7 +49,7 @@ import { fmtClip, relocate, secOf, settle, snapshot, ticks, trackLabel, TICKS_PE
 import { analyze, describeLinks, duplicateSets, partlyParked, suspiciousMembers, type Analysis, type DuplicateSet, type Recording } from "./sessions";
 import { requireActive, type SeqContext } from "./session";
 import { getGapSec, getThreshold, loadRecord, mappingFor, saveMapping, saveRecord, type CollectRecord } from "./settings";
-import { log } from "./ui";
+import { done, log, progress } from "./ui";
 
 export const CHECK_MSG = "Kontrol et, sonra BAĞLA'ya bas.";
 
@@ -272,6 +272,7 @@ export async function runCollect(): Promise<void> {
       saveMapping(mapping);
       log("✓ Zaten toplanmış: oturumlar sırayla, klipler cihaz / kaynak track'lerinde. Yapılacak bir şey yok.", "ok");
       log(CHECK_MSG, "head");
+      done("topla", "ok", "Zaten toplanmış; yapılacak bir şey yok.", "Timeline'ı gözle kontrol et, sonra BAĞLA.");
       return;
     }
     const newV = Math.max(0, plan.neededV - s0.vCount);
@@ -282,17 +283,32 @@ export async function runCollect(): Promise<void> {
     if (keep.size) extra.push(`Önceki TOPLA'dan park'ta: ${keep.size} klip (oturumlara karışmaz; zamanı değişmez, çerçeve büyüdüyse park track'i değişir).`);
     if (userParked.length) extra.push(`Senin kararınla park'a: ${userParked.length} klip (şüpheli üye).`);
     if (bs === "applied") extra.push("DİKKAT: bu sequence BAĞLA'dan geçti (kesimsiz) — taşınan kliplerin bağları çözülür (clone); TOPLA'dan sonra BAĞLA'ya tekrar bas.");
+    // onay penceresinin özeti (yalnız görünüm; tam metin "Ayrıntı ▸" altında)
+    const nS = plan.layouts.length;
+    const summary: string[] = plan.moves.length
+      ? [
+          `${nS} oturum çekim sırasıyla sequence başından dizilecek; ${plan.moves.length} klip taşınacak (oturum içi konumlar korunur).`,
+          ...(dups.length ? [`ÇİFT KOPYA: ${drop.length} fazla kopya ilk adımda silinecek (${dups.map((d) => d.drop.map((c) => trackLabel(c.kind, c.track)).join("+")).join(", ")}).`] : []),
+          ...(plan.parkedRecs.length ? [`Park track'ine (zamanı değişmez): ${plan.parkedRecs.length} kayıt.`] : []),
+          ...a.vetoDecisions.slice(0, 2),
+          ...(userParked.length ? [`ŞÜPHELİ üye, senin kararınla park'a: ${userParked.length} klip.`] : []),
+          ...(bs === "applied" ? ["DİKKAT: bu sequence BAĞLA'dan geçti — TOPLA'dan sonra BAĞLA'ya tekrar bas."] : []),
+          `Önce yedek sequence alınır ("${ctx.name}" kopyası)${newV + newA ? `; ${newV + newA} track açılır` : ""}. Devam?`,
+        ]
+      : [`Düzen zaten toplanmış; yalnız ${drop.length} çift kopya silinecek.`, dupText(dups), `Önce yedek sequence alınır ("${ctx.name}" kopyası). Devam?`];
     const ans = await askUser(
       plan.moves.length
         ? confirmText(plan, a, newV, newA, extra)
         : `TOPLA — düzen zaten toplanmış (oturumlar sırayla, klipler cihaz / kaynak track'lerinde); yalnız çift kopyalar silinecek.\n${dupText(dups)}\n` +
-            "Önce yedek sequence oluşturulacak. Devam?"
+            "Önce yedek sequence oluşturulacak. Devam?",
+      summary
     );
     if (ans !== "Evet") {
       log("İptal edildi — hiçbir şey değişmedi.", "warn");
       return;
     }
 
+    progress(0.08, "Yedek sequence alınıyor…");
     const backup = await makeBackup(ctx, "TOPLA");
     backupName = backup.name;
     const s1 = await snapshot(ctx);
@@ -305,6 +321,7 @@ export async function runCollect(): Promise<void> {
     if (drop.length) {
       const so = await select(ctx, drop, "Çift kopyalar");
       log(`TX-0 (çift kopyaları sil): ${so.readCount} klip siliniyor (ripple=false) — her çiftin en küçük numaralı track'teki kopyası kalır.`);
+      progress(0.15, `${drop.length} çift kopya siliniyor…`);
       await runTx(ctx, executed, "çift kopyaları sil", "TOPLA: çift kopyaları sil", (ops) => {
         ops.remove(so.sel);
       });
@@ -323,10 +340,12 @@ export async function runCollect(): Promise<void> {
       log(`✓ TOPLA tamam: ${drop.length} çift kopya silindi; düzen zaten toplanmıştı. (${executed.length} adım: ${executed.join(", ")})`, "ok");
       log(CHECK_MSG, "head");
       log(`Beğenmezsen: timeline'a tıkla, Ctrl+Z'ye ${executed.length} kez bas — ya da yedek sequence "${backupName}"i kullan.`, "dim");
+      done("topla", "ok", `${drop.length} çift kopya silindi; düzen zaten toplanmıştı.`, `Beğenmezsen Ctrl+Z × ${executed.length} ya da yedek sequence "${backupName}".`);
       return;
     }
     if (newV || newA) {
       if (drop.length) await expectState(ctx, prev, beforeLast, executed);
+      progress(0.2, `${newV + newA} track açılıyor…`);
       const r = await prepareTracks(ctx, prev, plan.neededV, plan.neededA, executed, "TOPLA: track hazırlığı");
       helpers = r.helpers;
       beforeLast = prev;
@@ -410,10 +429,16 @@ export async function runCollect(): Promise<void> {
       prev = s;
     };
 
+    const others = nS > 1 ? `Oturum 2–${nS}/${nS}` : "Kalan klipler";
+    progress(0.3, `Oturum 1/${nS} park alanına alınıyor (ölçüm)…`);
     await parkStep(measure, "ilk park (ölçüm)", helpers, true);
+    if (rest.length) progress(0.45, `${others} park alanına alınıyor…`);
     if (rest.length) await parkStep(rest, "park", [], false);
+    progress(0.6, `Oturum 1/${nS} yerine taşınıyor (ölçüm)…`);
     await placeStep(measure, "ilk yerleştirme (ölçüm)", true);
+    if (rest.length) progress(0.78, `${others} yerine taşınıyor…`);
     if (rest.length) await placeStep(rest, "yerleştir", false);
+    progress(0.95, "Sonuç doğrulanıyor…");
 
     const fProbs = [...compareLayout(expectCollect(s0, plan, P, parked, placed), prev), ...verifyRelative(plan, prev), ...snapshotOverlaps(prev)];
     if (fProbs.length) throw new SpreadStop("TOPLA doğrulaması tutmadı.", fProbs);
@@ -430,6 +455,12 @@ export async function runCollect(): Promise<void> {
     saveMapping(mapping);
     log(CHECK_MSG, "head");
     log(`Beğenmezsen: timeline'a tıkla, Ctrl+Z'ye ${executed.length} kez bas — ya da yedek sequence "${backupName}"i kullan.`, "dim");
+    done(
+      "topla",
+      "ok",
+      `${nS} oturum toplandı${drop.length ? `, ${drop.length} çift kopya silindi` : ""}.`,
+      `Şimdi timeline'ı gözle kontrol et, sonra BAĞLA. Beğenmezsen Ctrl+Z × ${executed.length} ya da yedek sequence "${backupName}".`
+    );
   } catch (e) {
     if (executed.length && ctx) await rememberStopped(ctx, "TOPLA");
     reportStop("TOPLA", e, executed, backupName);

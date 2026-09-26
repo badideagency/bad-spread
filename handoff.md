@@ -1,4 +1,81 @@
-# handoff — Spread (ADIM 3.4: BAĞLA kırpması kalibre edilir, çift kopya silinir, v0.3.4) + geçmiş (ADIM 3.3, 3.2, 3.1, 3, 2, 1)
+# handoff — Spread v1.0.0 (ürünleştirme) + geçmiş (ADIM 3.4, 3.3, 3.2, 3.1, 3, 2, 1)
+
+## v1.0.0 ürünleştirme — mantık değişmedi
+
+**Açık risk:** kırpma kalibrasyonu gerçek Premiere'de ilk BAĞLA'da ölçülecek. Ölçüm "KALİBRASYON SONUCU" bloğu olarak ayrıntılı
+günlüğe ve Sorun bildir raporuna yazılır; ADIM 3.4'teki tabloya işlenecek. Tutarlı kural çıkmazsa BAĞLA hiçbir şey kesmeden durur.
+
+| | |
+|---|---|
+| Sürüm | **Spread 1.0.0** + **Spread Helper 1.0.0**; kurulum: `release/Spread_Kurulum_v1.0.0.zip` (+ ayrıca `release/spread.ccx`). Probe yayından çıktı (repoda). |
+| Kullanıcı isteği | Günlük kullanılacak tam eklenti. Yeni özellik YOK; bütün kilitler, doğrulamalar, kalibrasyon ve yedek aynen. Yalnız arayüz, kurulum, paketleme. |
+| Doğrulama | Bütün mock senaryoları DEĞİŞMEDEN geçer; regresyon (v0.3.3 kırpması düşer / yeni geçer); `scripts/test-kurulum-wine.sh` (KUR / KALDIR, Wine); ekran görüntüleri `docs/ekran` (mock + jsdom + Chromium); bağımsız alt ajan incelemesi #7 |
+
+### Ne değişti (yalnız görünüm)
+
+- **Spread paneli** (`spread/public/index.html`, `spread/index.ts`, `spread/src/ui.ts`):
+  - Üst satır: sequence adı + yardımcı ● (hazır / kapalı: "Window → Extensions (Legacy) → Spread Helper'ı aç").
+  - Numaralı üç adım (1 SPREAD → Synchronize hatırlatması → 2 TOPLA → 3 BAĞLA). Biten adımda ✓ + kısa sonuç; sıradaki vurgulu.
+    Kaynağı `spread/src/steps.ts`: panelin sequence başına hatırladığı sonuçlar + TOPLA/BAĞLA kaydı. Timeline okunmaz; elle geri
+    alınan işlemin ✓'ü kalabilir, işlemler yine kendi denetimlerini yapar.
+  - İlerleme çubuğu + tek satır. Sonuç: tek cümle + ne yapılacağı + "Ayrıntı ▸" (bu işlemin günlüğü).
+  - Onay: 3–5 satırlık özet + dikkat satırları (sarı) + "Ayrıntı ▸" (tam, eski metin — değişmedi).
+  - "Gelişmiş ▸": kaynak eşleme, eşik, boşluk, yardımcı ayrıntısı, Durum raporu, günlük.
+  - UXP sınırları gözetildi (inceleme: flex `gap`, `font` kısaltması, animasyon, `<details>` yok) → margin + JS katlama.
+- **Runner'lara eklenenler** (`spread.ts`, `topla.ts`, `bagla.ts`, `calibrate.ts`) — karar mantığına dokunulmadı:
+  - `progress(…)` / `done(…)` çağrıları;
+  - `askUser(q, özet)`: `q` aynı, özet ek;
+  - `reportStop` sonuç kutusuna tek cümle yazar (`ui.humanize`).
+  - KES planına `handoff: "panel" | "bridge"` alanı: yardımcı panel bölümünü göstermek için; yardımcının plan doğrulaması bu alanı
+    okumaz.
+- **Arka plan günlüğü** (`spread/src/journal.ts`): bellek (son 4000 satır) + dosya
+  `%APPDATA%/BadIdeaAgency/Spread/spread-gunluk.txt`.
+- **Sorun bildir** (`spread/src/report.ts`): sürümler, yardımcı durumu, son hata + ayrıntısı, kalibrasyon sonucu, son SPREAD /
+  TOPLA / BAĞLA günlükleri, Durum raporu, ayrıntılı günlüğün sonu.
+  - Rapor panoya kopyalanır ve `Desktop/SpreadRapor_<tarih>.txt` olarak kaydedilir.
+  - Masaüstüne yazılamazsa OneDrive masaüstü, o da olmazsa veri klasörü denenir.
+  - Yollarda "/" kullanılır (Adobe UXP dosya örneği gibi).
+- **Spread Helper** (`cep-helper/index.html`, `js/panel.js`):
+  - Tek durum satırı.
+  - BAĞLA bölümü yalnız `planStatus().waiting` iken görünür: plan `handoff:"panel"` ve henüz bağlanmamış.
+  - Geri kalan her şey "Ayrıntı ▸" altında.
+  - Varsayılan boyut 300×140. `helper.js`'e yalnız okuma yapan `planStatus()` eklendi.
+- **Sürüm**: `spread/src/version.ts` (SPREAD_VERSION = yardımcıdan beklenen sürüm); manifest'ler, host.jsx, çekirdek 1.0.0.
+
+### Kurulum paketi (`scripts/package-kurulum.sh`, `scripts/kurulum/`)
+
+- **KUR.cmd** (ASCII, CRLF):
+  - Yönetici olarak çalıştırılırsa DURUR (`net session` başarılıysa). Nedeni: HKCU başka kullanıcınınki olabilir; Adobe'nin
+    UPIA'sı yönetici modunda çalışmaz.
+  - İlk kurulumda önceki PlayerDebugMode değerlerini (tür + değer ya da YOK) `%APPDATA%\BadIdeaAgency\SpreadKurulum\onceki.txt`'ye
+    saklar.
+  - `HKCU\Software\Adobe\CSXS.12` / `CSXS.11` altında PlayerDebugMode = "1" yapar.
+  - Yardımcıyı `%APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper`'a kopyalar.
+  - UPIA `/install spread.ccx` çalıştırır. Yol ve sözdizimi: developer.adobe.com/premiere-pro/uxp/plugins/distribution/install/;
+    exe `C:\Program Files\Common Files\Adobe\Adobe Desktop Common\RemoteComponents\UPI\UnifiedPluginInstallerAgent\`.
+  - Sonuç, çıkış kodlarına değil okunan değerlere ve dosyalara göre raporlanır.
+- **KALDIR.cmd**:
+  - UPIA `/remove "Spread"` (belgede ad alır).
+  - Yardımcı klasörünü siler.
+  - PlayerDebugMode'u `onceki.txt`'ye göre geri yükler: YOK idiyse değeri siler, varsa türü ve değeriyle yazar.
+  - Veri klasörlerini (`BadIdeaAgency\Spread`, `\SpreadHelper`, `\SpreadKurulum`) ve `%TEMP%\spread-helper.log`'u siler.
+  - Masaüstündeki raporlara dokunmaz.
+- **Sınama** (`scripts/test-kurulum-wine.sh`, Wine):
+  - ilk kurulum, ikinci kurulum (saklanan değer bozulmaz), kaldırma (CSXS.11 "0"a, CSXS.12 YOK'a döner; klasörler silinir);
+  - zip açılmadan çalıştırma; yönetici reddi.
+  - Wine'ın `net session`'ı 0 döndürdüğü için sınamada o satır değiştirilir.
+- **Sınanamayan:**
+  - UPIA'nın gerçek davranışı: Market dışı .ccx'te onay istiyor mu, çıkış kodları. Başarısızsa özet "spread.ccx'e çift tıkla" der.
+  - Gerçek Windows cmd'si. Wine'da `reg` / `xcopy` başarılıyken de sıfır dışı döndü; bu yüzden sonuç okunarak doğrulanıyor.
+
+### Belirsizlikler (v1.0.0)
+
+1. Kalibrasyonun gerçek ölçümü (yukarıda, açık risk).
+2. UPIA'nın komut satırından Market dışı .ccx kurarken ne yaptığı belgesiz. Kurulamazsa kullanıcı .ccx'e çift tıklar.
+3. UXP'de `sp-button`'ın `variant` özniteliğini çalışırken değiştirmek (vurgulu adım) ölçülmedi. Değişmezse yalnız vurgu kaybolur.
+4. Masaüstü yolu: OneDrive yönlendirmesi ve Türkçe klasör adı denenir; olmazsa veri klasörüne yazılır ve yol gösterilir.
+
+---
 
 ## Durum (tek bakışta) — ADIM 3.4
 

@@ -4,4 +4,4 @@
 
 export { classify } from "./classify";
 export { compareLinkGroups, groupsFromLayout, layoutGroupItems, linkItemKey } from "./sessions";
-export const CORE_VERSION = "0.3.4";
+export const CORE_VERSION = "1.0.0";

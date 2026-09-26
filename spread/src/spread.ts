@@ -21,7 +21,7 @@ import { errText, fmtClip, relocate, secOf, settle, snapshot, ticks, trackLabel,
 import { where } from "./classify";
 import { makePlan, type Plan } from "./plan";
 import { requireActive } from "./session";
-import { log } from "./ui";
+import { done, log, progress } from "./ui";
 import { verifySpread } from "./verify";
 
 export { SpreadStop };
@@ -77,6 +77,7 @@ export async function runSpread(): Promise<void> {
     const moving = plan.overwrite.length + plan.clone.length;
     if (!moving) {
       log("✓ Zaten dağıtılmış: her klip kendi hedef track'inde. Yapılacak bir şey yok.", "ok");
+      done("spread", "ok", "Zaten dağıtılmış; yapılacak bir şey yok.", "Sonra: Premiere'de Clip › Synchronize, ardından TOPLA.");
       return;
     }
     const newV = Math.max(0, plan.neededV - s0.vCount);
@@ -90,7 +91,14 @@ export async function runSpread(): Promise<void> {
         `${plan.clone.length} ses/video (birebir kopya); ` +
         `yerinde kalan: ${plan.stay.length}.` +
         `${unknown ? ` ${unknown} kamerada medya süresi okunamadı → kırpılmışsa taşımadan sonra doğrulama DURDURUR (Ctrl+Z ile geri alınır).` : ""}` +
-        `${plan.warnings.length ? ` ${plan.warnings.length} uyarı (günlükte).` : ""} Devam?`
+        `${plan.warnings.length ? ` ${plan.warnings.length} uyarı (günlükte).` : ""} Devam?`,
+      [
+        `${plan.counts.camera} kamera${plan.counts.videoOnly ? ` + ${plan.counts.videoOnly} sadece-video` : ""} ve ${plan.counts.audio} ses kendi track'ine dağıtılacak.`,
+        `${newV + newA} yeni track açılacak (V ${newV}, A ${newA}); klip zamanları değişmez.`,
+        ...(unknown ? [`DİKKAT: ${unknown} kamerada medya süresi okunamadı — kırpılmışsa işlem taşımadan sonra durur.`] : []),
+        ...(plan.warnings.length ? [`${plan.warnings.length} uyarı (Ayrıntı'da).`] : []),
+        `Önce yedek sequence alınır ("${ctx.name}" kopyası). Devam?`,
+      ]
     );
     if (ans !== "Evet") {
       log("İptal edildi — hiçbir şey değişmedi.", "warn");
@@ -98,6 +106,7 @@ export async function runSpread(): Promise<void> {
     }
 
     // 1) yedek
+    progress(0.1, "Yedek sequence alınıyor…");
     const backup = await makeBackup(ctx, "Spread");
     backupName = backup.name;
     const s1 = await snapshot(ctx);
@@ -108,6 +117,7 @@ export async function runSpread(): Promise<void> {
     let expected: Snapshot = s1; // bir sonraki adımdan önce timeline'ın bu hâlde olması beklenir
     let beforeLast: Snapshot | null = null;
     if (newV || newA) {
+      progress(0.3, `${newV + newA} track açılıyor…`);
       const r = await prepareTracks(ctx, s1, plan.neededV, plan.neededA, executed, "Spread: track hazırlığı");
       helpers = r.helpers;
       expected = r.after;
@@ -127,6 +137,7 @@ export async function runSpread(): Promise<void> {
     const cloneSrc = plan.clone.map((p) => ({ p, src: fresh(p.clip) }));
     const owSrc = plan.overwrite.map((u) => ({ u, src: fresh(u.video!) }));
     log(`TX-B: ${cloneSrc.length} clone → ${so.readCount} klip sil (ripple=false) → ${owSrc.length} kamera overwrite.`);
+    progress(0.6, `${plan.placements.length} klip kendi track'ine taşınıyor…`);
     await runTx(ctx, executed, "dağıt", "Spread: dağıt", (ops) => {
       for (const { p, src } of cloneSrc) {
         const off = p.target - src.track;
@@ -154,6 +165,12 @@ export async function runSpread(): Promise<void> {
       log(`Seçim yapılamadı: ${errText(e)} (önemli değil)`, "warn");
     }
     log("Şimdi Clip > Synchronize'ı dene. Menü gri ise timeline'a tıkla, Ctrl+A, sağ tık > Synchronize (Audio).", "head");
+    done(
+      "spread",
+      "ok",
+      `${plan.placements.length} klip kendi track'ine dağıtıldı.`,
+      "Sonra: Premiere'de Clip › Synchronize (menü gri ise timeline'a tıkla, Ctrl+A), ardından TOPLA."
+    );
     log(`Beğenmezsen: timeline'a tıkla, Ctrl+Z'ye ${executed.length} kez bas — ya da yedek sequence "${backupName}"i kullan.`, "dim");
   } catch (e) {
     reportStop("SPREAD", e, executed, backupName);

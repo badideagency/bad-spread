@@ -17,7 +17,7 @@ import { big, fmtClip, relocate, secOf, settle, snapshot, ticks, trackLabel, TIC
 import type { SeqContext } from "./session";
 import { ACT_NAME, calDelta, chooseRule, FIELD, fmtVec, inward, measureVec, planTrim, SET_ACTS, type Edges, type SetAct, type TrimCal, type Vec } from "./trimcal";
 import type { TxOps } from "./edit";
-import { log } from "./ui";
+import { log, progress } from "./ui";
 
 export const edgesOf = (c: ClipInfo): Edges => ({ start: big(c.start), end: big(c.end), inPt: big(c.inPt), outPt: big(c.outPt) });
 
@@ -88,6 +88,7 @@ export async function calibrateTrim(ctx: SeqContext, executed: string[], s1: Sna
   );
 
   // C-1 kopyalar
+  progress(0.1, "Kırpma komutları ölçülüyor (1/7): geçici kopyalar…");
   await runTx(ctx, executed, "kalibrasyon kopyaları", "BAĞLA: kalibrasyon kopyaları", (ops) => {
     for (const q of qs) ops.clone(src, ticks(q - big(src.start)), 0, 0);
   });
@@ -106,6 +107,7 @@ export async function calibrateTrim(ctx: SeqContext, executed: string[], s1: Sna
 
   /** k. kopyada tek transaction; yalnız o kopya değişmiş olmalı → önceki ve sonraki kenarlar */
   const step = async (k: number, label: string, build: (ops: TxOps, c: ClipInfo) => void): Promise<{ f0: Edges; f1: Edges }> => {
+    progress(0.1 + 0.04 * (k + 1), `Kırpma komutları ölçülüyor (${k + 2}/7)…`);
     await expectState(ctx, s, prev, executed);
     const c = findExp(s, now[k]);
     if (!c) throw new SpreadStop(`kalibrasyon kopyası bulunamadı (${label} öncesi): ${trackLabel("A", src.track)} "${src.name}" ${secOf(qs[k])} sn`);
@@ -169,6 +171,7 @@ export async function calibrateTrim(ctx: SeqContext, executed: string[], s1: Sna
   }
 
   // C-7 kopyaları sil
+  progress(0.36, "Kırpma komutları ölçülüyor (7/7): geçici kopyalar siliniyor…");
   await expectState(ctx, s, prev, executed);
   const copies = now.map((e) => findExp(s, e));
   if (copies.some((c) => !c)) throw new SpreadStop("kalibrasyon kopyaları silinmeden önce yeniden bulunamadı.");
