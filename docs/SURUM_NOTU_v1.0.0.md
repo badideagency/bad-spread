@@ -18,11 +18,11 @@ Kaldırmak: **KALDIR.cmd** (PlayerDebugMode dahil her şeyi kurulum öncesine d�
   - Üstte sequence adı ve yardımcı göstergesi (● hazır / ● kapalı).
   - Numaralı üç adım, büyük düğmeler. Biten adımda ✓ ve kısa sonuç; sıradaki adım vurgulu.
   - İşlem sırasında ilerleme çubuğu. Sonuç tek cümle; teknik ayrıntı "Ayrıntı ▸" altında.
-  - Onay penceresi 3–5 satırlık özet; dikkat gerektiren satırlar sarı.
+  - Onay penceresi en çok 5 satırlık özet; dikkat gerektiren satırlar sarı ve önce gelir.
   - "Gelişmiş ▸" altında kaynak eşleme, eşik, boşluk, Durum raporu ve günlük.
 - **Sorun bildir:** tek bir metin paketi hazırlar (sürümler, Durum raporu, son TOPLA/BAĞLA günlükleri, kalibrasyon sonucu, yardımcı
   durumu, son hata). Panoya kopyalar ve masaüstüne `SpreadRapor_<tarih>.txt` olarak kaydeder. Düğme işlem sürerken de çalışır.
-  Ayrıntılı günlük her zaman arka planda tutulur (bellek + dosya); Premiere çöktüyse rapor önceki oturumun günlüğünü de içerir.
+  Ayrıntılı günlük her zaman arka planda tutulur (bellek + dosya); Premiere çöktüyse (birkaç kez yeniden açılsa da) rapor önceki oturumların günlüğünü de içerir.
 - **Spread Helper:** tek durum satırı. Köprüsüz BAĞLA bölümü yalnız Spread "yardımcı panelinden bağla" dediğinde görünür; sonucu
   (başarılı ya da değil) bir sonraki plana kadar orada kalır. Planı elle yapıştırmak: Ayrıntı ▸ → Planı yapıştır → BAĞLA.
 - **Tek tık kurulum:** `KUR.cmd` / `KALDIR.cmd` / `OKU_BENI.txt`. Probe yayından çıkarıldı (repoda duruyor).

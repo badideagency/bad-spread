@@ -228,17 +228,23 @@ async function handToPanel(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame, w
     return;
   }
   setReportText(text);
-  log(`${cutNow ? "✓ KES tamam: kesme/silme tick düzeyinde doğrulandı" : "✓ KES tamam (daha önce yapılmış, bütün öğeler yerinde)"} — ${bind.groups.length} grup bağlanmayı bekliyor.`, "ok");
+  // bu plan (aynı createdAt) Spread Helper panelinde zaten bağlandıysa (yardımcının doğrulayıp yazdığı sonuç dosyası) — yalnız görünüm
+  const pr = readPanelLinkResult();
+  const linkedInPanel = !!(pr && pr.ok && pr.planCreatedAt === bind.at);
+  log(
+    `${cutNow ? "✓ KES tamam: kesme/silme tick düzeyinde doğrulandı" : "✓ KES tamam (daha önce yapılmış, bütün öğeler yerinde)"} — ` +
+      (linkedInPanel ? `${bind.groups.length} grup Spread Helper panelinde zaten bağlanmış (${pr?.at ?? "?"}).` : `${bind.groups.length} grup bağlanmayı bekliyor.`),
+    "ok"
+  );
   log(`Yardımcıya köprü yok: ${why}`, "warn");
   if (w.ok) {
     log(`KES planı yazıldı: ${w.path}`, "dim");
-    log("→ Premiere'de Window → Extensions (Legacy) → Spread Helper panelini aç ve oradaki BAĞLA'ya bas.", "head");
+    if (!linkedInPanel) log("→ Premiere'de Window → Extensions (Legacy) → Spread Helper panelini aç ve oradaki BAĞLA'ya bas.", "head");
   } else {
     log(`KES planı dosyaya YAZILAMADI (${w.path}): ${w.detail}`, "warn");
-    log("→ Plan aşağıdaki rapor kutusunda: 'Raporu kopyala' → Spread Helper panelinde 'Planı yapıştır' → BAĞLA.", "head");
+    if (!linkedInPanel) log("→ Plan aşağıdaki rapor kutusunda: 'Raporu kopyala' → Spread Helper panelinde 'Planı yapıştır' → BAĞLA.", "head");
   }
-  const pr = readPanelLinkResult();
-  if (pr && pr.ok && pr.planCreatedAt === bind.at) {
+  if (linkedInPanel) {
     done("bagla", "ok", "Gruplar Spread Helper panelinde zaten bağlandı.", "Yapılacak bir şey yok.");
     return;
   }
@@ -266,7 +272,9 @@ async function linkGroups(ctx: SeqContext, groups: LinkSpec[], sF: Snapshot, edi
   try {
     out = await linker.link(ctx.name, groups.map((t) => ({ id: t.id, items: t.items })));
   } catch (e) {
-    throw new SpreadStop(`${edits ? "Kesme/silme doğrulandı ve yerinde; " : ""}bağlama isteği başarısız: ${e instanceof Error ? e.message : String(e)}. ${again}`);
+    const stop = new SpreadStop(`${edits ? "Kesme/silme doğrulandı ve yerinde; " : ""}bağlama isteği başarısız: ${e instanceof Error ? e.message : String(e)}. ${again}`);
+    stop.retryLink = true; // yalnız arayüz ipucu
+    throw stop;
   }
   await settle();
   const sAfter = await snapshot(ctx);
@@ -283,7 +291,11 @@ async function linkGroups(ctx: SeqContext, groups: LinkSpec[], sF: Snapshot, edi
     else if (r.verified === null) unverified.push(`${t.label}: ${r.detail}`);
     else log(`   ✓ ${t.label}: bulundu ${r.found}/${r.total}, bağlandı, doğrulandı`, "dim");
   }
-  if (bad.length) throw new SpreadStop(`${bad.length}/${groups.length} grup bağlanamadı${edits ? " (kesme/silme doğru ve yerinde)" : ""}. ${again}`, bad);
+  if (bad.length) {
+    const stop = new SpreadStop(`${bad.length}/${groups.length} grup bağlanamadı${edits ? " (kesme/silme doğru ve yerinde)" : ""}. ${again}`, bad);
+    stop.retryLink = true; // yalnız arayüz ipucu
+    throw stop;
+  }
   return unverified;
 }
 
@@ -701,6 +713,6 @@ export async function runBind(): Promise<void> {
     // kalibrasyon kural vermedi ama düzen doğrulanarak eski hâlinde → "yarım iş" kaydı tutulmaz (başka bir kayda da dokunulmaz)
     if (executed.length && ctx && !cutsDone && !calRestored) await rememberStopped(ctx, "BAĞLA");
     else if (cutsDone) forgetStopped();
-    reportStop("BAĞLA", e, executed, backupName, !calRestored && executed.length ? [LINK_UNDO_NOTE] : [], { cutsDone });
+    reportStop("BAĞLA", e, executed, backupName, !calRestored && executed.length ? [LINK_UNDO_NOTE] : []);
   }
 }

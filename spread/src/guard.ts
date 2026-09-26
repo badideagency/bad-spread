@@ -32,6 +32,11 @@ export class SpreadStop extends Error {
   public unreliableCount = false;
   /** true → yapılan adımlar düzeni DEĞİŞTİRMEDİ (doğrulandı; ör. kalibrasyon): "geri al" denmez, adımlar yalnız bildirilir */
   public restored = false;
+  /**
+   * yalnız arayüz: bağlama isteğinin kendisi düştü (kesme/silme doğrulanmış ve kayıtta) → sonuç kutusu "geri al" yerine "tekrar bas
+   * (yalnız bağlar)" der
+   */
+  public retryLink = false;
   constructor(message: string, public details: string[] = []) {
     super(message);
     this.name = "SpreadStop";
@@ -214,8 +219,7 @@ export async function prepareTracks(
 
 // ------------------------------------------------------------------ DUR raporu
 /** @param op "SPREAD" / "TOPLA" / "BAĞLA" */
-/** @param ui yalnız sonuç kutusu için: cutsDone → kesim yerinde ve doğru, "geri al" yerine "tekrar bas" denir */
-export function reportStop(op: string, e: unknown, executed: string[], backupName: string | null, extra: string[] = [], ui: { cutsDone?: boolean } = {}): void {
+export function reportStop(op: string, e: unknown, executed: string[], backupName: string | null, extra: string[] = []): void {
   const stop = e instanceof SpreadStop ? e : null;
   const msg = stop ? stop.message : e instanceof SessionError ? e.message : `Beklenmeyen hata: ${errText(e)}`;
   log(`✗ ${op} DURDU: ${msg}`, "err");
@@ -248,8 +252,8 @@ export function reportStop(op: string, e: unknown, executed: string[], backupNam
   }
   for (const x of extra) log(x, "warn");
   // v1.0.0 arayüz: tek cümle + ne yapılacağı (+ tam mesaj ve günlük "Ayrıntı ▸" altında) — yalnız görünüm
-  const hint = ui.cutsDone
-    ? "Kesim yerinde ve doğru. Yardımcıyı düzeltip BAĞLA'ya tekrar bas (yalnız bağlar) ya da Spread Helper panelinde Ayrıntı ▸ → BAĞLA."
+  const hint = stop?.retryLink
+    ? "Düzen yerinde ve doğrulandı; yalnız bağlama olmadı. Yardımcıyı düzeltip BAĞLA'ya tekrar bas (yalnız bağlar) ya da Spread Helper panelinde Ayrıntı ▸ → BAĞLA."
     : executed.length && stop?.restored
       ? "Düzen değişmedi; geri alman gerekmez."
       : executed.length && stop?.unreliableCount

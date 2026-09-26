@@ -286,7 +286,7 @@ export async function runCollect(): Promise<void> {
       saveMapping(mapping);
       log("✓ Zaten toplanmış: oturumlar sırayla, klipler cihaz / kaynak track'lerinde. Yapılacak bir şey yok.", "ok");
       log(CHECK_MSG, "head");
-      done("topla", "ok", "Zaten toplanmış; yapılacak bir şey yok.", "Timeline'ı gözle kontrol et, sonra BAĞLA.");
+      done("topla", "ok", "Zaten toplanmış; yapılacak bir şey yok.", "Timeline'ı gözle kontrol et, sonra BAĞLA.", true);
       return;
     }
     const newV = Math.max(0, plan.neededV - s0.vCount);

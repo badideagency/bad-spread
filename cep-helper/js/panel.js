@@ -18,8 +18,9 @@
   var hhmmss = function (iso) {
     return iso ? String(iso).slice(11, 19) : "—";
   };
-  // bu panelde son BAĞLA: hangi plan (createdAt; yapıştırılan plan → "yapıştır") ve sonucu — sonuç, yeni bir plan gelene kadar görünür
-  var last = null; // { at: string, ok: boolean|null }
+  // bu panelde son BAĞLA: hangi plan (createdAt; yapıştırılan plan → "yapıştır"), o an dosyadaki plan (seen) ve sonucu. Sonuç, plan
+  // dosyası değişene (Spread yeni bir plan yazana) kadar görünür; sonra yeni plan gösterilir.
+  var last = null; // { at: string, seen: string, ok: boolean|null }
   var busy = false;
 
   function renderStatus() {
@@ -60,7 +61,13 @@
     if (!app || !app.helper || typeof app.helper.planStatus !== "function") return;
     var p = app.helper.planStatus();
     var box = $("bindbox");
-    var mine = last !== null && (last.at === "yapıştır" || last.at === p.createdAt);
+    if (last !== null && last.ok !== null && String(p.createdAt || "") !== last.seen) {
+      last = null; // yeni plan geldi → eski sonuç onun değil
+      set("summary", "", "row");
+      var rs = $("results");
+      while (rs && rs.firstChild) rs.removeChild(rs.firstChild);
+    }
+    var mine = last !== null;
     var visible = p.waiting || mine;
     if (box) box.style.display = visible ? "block" : "none";
     if (mine && last.ok === true) {
@@ -118,7 +125,8 @@
     busy = true;
     var pasted = $("paste") && $("paste").value.trim() !== "";
     var p = typeof app.helper.planStatus === "function" ? app.helper.planStatus() : null;
-    last = { at: pasted ? "yapıştır" : p && p.createdAt ? p.createdAt : "yapıştır", ok: null };
+    var seen = String((p && p.createdAt) || "");
+    last = { at: pasted || !seen ? "yapıştır" : seen, seen: seen, ok: null };
     var b1 = $("btn-bind");
     var b2 = $("btn-bind2");
     b1.disabled = b2.disabled = true;

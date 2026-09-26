@@ -1,8 +1,8 @@
 // Arka plan günlüğü (v1.0.0) — arayüzde gizli, her zaman tutulur: bellekte (son satırlar) + dosyada. Premiere API'si YOK.
 // Dosya: Windows %USERPROFILE%\AppData\Roaming\BadIdeaAgency\Spread\spread-gunluk.txt,
 //        macOS ~/Library/Application Support/BadIdeaAgency/Spread/spread-gunluk.txt (yardımcının klasörünün kardeşi).
-// Panel her açıldığında önceki oturumun dosyası spread-gunluk-onceki.txt'ye alınır ve son satırları "Sorun bildir"e girer (Premiere
-// çöktüyse / yeniden başladıysa son TOPLA / BAĞLA günlüğü kaybolmasın).
+// Dosya önceki panel oturumlarını da tutar (son PREV_KEEP satırı; her yeni oturum bir ayraç satırıyla eklenir) ve onların son satırları
+// "Sorun bildir"e girer: Premiere çöktüyse / birkaç kez yeniden başladıysa da son TOPLA / BAĞLA günlüğü kaybolmaz.
 // Dosyaya yazma gecikmeli ve toplu (UXP fs.writeFileSync); yazılamazsa sessizce bellekte kalır — günlük hiçbir işlemi durdurmaz.
 // "Sorun bildir" buradan okur: son işlemlerin günlükleri (TOPLA / BAĞLA / SPREAD), son hata ve ayrıntısı.
 
@@ -18,14 +18,17 @@ interface UxpOs {
 
 const MAX_LINES = 4000;
 const MAX_OP_LINES = 1500;
+const PREV_KEEP = 4000; // dosyada tutulan önceki oturum satırları (en yenileri)
 const lines: string[] = [];
 const opLogs = new Map<string, { at: string; lines: string[] }>();
 let current: { label: string; at: string; lines: string[] } | null = null;
 let lastError: { at: string; op: string; headline: string; details: string[] } | null = null;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let filePath: string | null | undefined; // undefined: henüz hesaplanmadı; null: yazılamıyor
-let dirReady = false;
-let previous: string[] = []; // önceki panel oturumunun günlüğü (dosyadan, ilk yazmadan önce)
+let loaded = false; // önceki oturumlar dosyadan okundu mu (ilk yazmadan ÖNCE, bir kez)
+let flushing: Promise<void> | null = null; // aynı anda tek yazma (zamanlayıcı + "Sorun bildir" çakışmasın)
+let again = false;
+let previous: string[] = []; // önceki panel oturumlarının günlüğü (dosyadan, ilk yazmadan önce; en çok PREV_KEEP satır)
 
 const stamp = () => new Date().toISOString().replace("T", " ").slice(0, 19);
 
@@ -50,34 +53,51 @@ function logFile(): string | null {
   return filePath;
 }
 
-async function flush(): Promise<void> {
-  flushTimer = null;
+async function writeOnce(): Promise<void> {
   const p = logFile();
   if (!p) return;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fs = require("fs") as UxpFs;
-    if (!dirReady) {
+    if (!loaded) {
+      loaded = true; // await'ten ÖNCE: ikinci bir yazma eski dosyayı yeniden "önceki" sanmasın
       try {
         await fs.mkdir(p.replace(/[\\/][^\\/]+$/, ""), { recursive: true }); // uxp.d.ts:L9159 fs.mkdir
       } catch {
         /* zaten var */
       }
-      // önceki oturumun dosyası → spread-gunluk-onceki.txt (+ son satırları bellekte, "Sorun bildir" için)
+      // önceki oturumlar: dosyanın son PREV_KEEP satırı bellekte ("Sorun bildir" için) ve dosyada korunur
       try {
         const old = fs.readFileSync(p, { encoding: "utf-8" }); // uxp.d.ts:L8985 fs.readFileSync
-        if (typeof old === "string" && old.trim()) {
-          previous = old.split(/\r?\n/).filter((l) => l.trim()).slice(-1500);
-          fs.writeFileSync(p.replace(/\.txt$/, "-onceki.txt"), old, { encoding: "utf-8" }); // uxp.d.ts:L9022 fs.writeFileSync
-        }
+        if (typeof old === "string" && old.trim()) previous = old.split(/\r?\n/).filter((l) => l.trim()).slice(-PREV_KEEP);
       } catch {
         /* önceki dosya yok */
       }
-      dirReady = true;
     }
-    fs.writeFileSync(p, lines.join("\n") + "\n", { encoding: "utf-8" }); // uxp.d.ts:L9022 fs.writeFileSync
+    const sep = previous.length ? [...previous, `==== yeni panel oturumu (${lines.length ? lines[0].slice(0, 19) : stamp()}) ====`] : [];
+    fs.writeFileSync(p, [...sep, ...lines].join("\n") + "\n", { encoding: "utf-8" }); // uxp.d.ts:L9022 fs.writeFileSync
   } catch {
     /* yazılamıyor → bellekte kalır */
+  }
+}
+
+/** Tek yazma hattı: yazma sürerken gelen istek, o bitince bir kez daha yazdırır (son satırlar da girsin). */
+async function flush(): Promise<void> {
+  flushTimer = null;
+  if (flushing) {
+    again = true;
+    return flushing;
+  }
+  flushing = (async () => {
+    do {
+      again = false;
+      await writeOnce();
+    } while (again);
+  })();
+  try {
+    await flushing;
+  } finally {
+    flushing = null;
   }
 }
 
@@ -138,7 +158,7 @@ export function snapshotJournal(): {
   };
 }
 
-/** "Sorun bildir"den önce: bekleyen satırları dosyaya yaz (önceki oturum dosyası da o an alınmış olur). */
+/** "Sorun bildir"den önce: bekleyen satırları dosyaya yaz (önceki oturumlar da o an okunmuş olur). */
 export async function flushNow(): Promise<void> {
   if (flushTimer) clearTimeout(flushTimer);
   await flush();

@@ -141,6 +141,19 @@ function autoSummary(question: string): string[] {
 }
 
 /**
+ * Özet en çok 5 satır: ilk satır ve son satır (soru) kalır; aradakilerden önce dikkat satırları, sonra diğerleri (sıra korunur).
+ * Sığmayanlar "Ayrıntı ▸"daki tam metinde; son tutulan satıra kaç satırın orada kaldığı eklenir.
+ */
+function capSummary(ls: string[], max = 5): string[] {
+  if (ls.length <= max) return ls;
+  const mid = ls.slice(1, -1).map((l, i) => ({ l, i }));
+  const keep = new Set([...mid.filter((x) => ATTENTION.test(x.l)), ...mid.filter((x) => !ATTENTION.test(x.l))].slice(0, max - 2).map((x) => x.i));
+  const kept = mid.filter((x) => keep.has(x.i)).map((x) => x.l);
+  kept[kept.length - 1] += ` (+${mid.length - kept.length} satır Ayrıntı'da)`;
+  return [ls[0], ...kept, ls[ls.length - 1]];
+}
+
+/**
  * Panelde soru gösterir, kullanıcı Evet/Hayır'a basana kadar bekler.
  * @param question tam metin ("Ayrıntı ▸" altında; günlüğe de yazılır)
  * @param summary 3–5 satırlık özet (dikkat satırları dahil); verilmezse sorudan çıkarılır
@@ -151,7 +164,7 @@ export function ask(question: string, summary?: string[]): Promise<Answer> {
   const sum = maybe("ask-summary");
   if (sum) {
     clear(sum);
-    for (const l of summary && summary.length ? summary : autoSummary(question)) addLine(sum, l, ATTENTION.test(l) ? "attn" : "");
+    for (const l of capSummary(summary && summary.length ? summary : autoSummary(question))) addLine(sum, l, ATTENTION.test(l) ? "attn" : "");
   }
   collapse("ask-more-toggle");
   show("progress", false);
@@ -235,9 +248,9 @@ export function renderSteps(steps: Record<StepId, StepView>, next: StepId | null
 let opActive = false;
 let opEnded = false;
 let opLabel = "";
-let doneHandler: ((step: StepId, kind: "ok" | "warn", text: string) => void) | null = null;
+let doneHandler: ((step: StepId, kind: "ok" | "warn", text: string, noop: boolean) => void) | null = null;
 
-export function setDoneHandler(fn: (step: StepId, kind: "ok" | "warn", text: string) => void): void {
+export function setDoneHandler(fn: (step: StepId, kind: "ok" | "warn", text: string, noop: boolean) => void): void {
   doneHandler = fn;
 }
 
@@ -306,10 +319,11 @@ function paintResult(kind: ResultKind, headline: string, hint: string, details: 
 }
 
 /** Başarılı / uyarılı bitiş — adımın ✓'ü ve kısa sonucu (sequence başına hatırlanır). */
-export function done(step: StepId, kind: "ok" | "warn", text: string, hint = ""): void {
+/** @param noop true → işlem hiçbir şeyi değiştirmedi ("zaten …"): sonraki adımların ✓'ü silinmez */
+export function done(step: StepId, kind: "ok" | "warn", text: string, hint = "", noop = false): void {
   opEnd(kind, text, hint);
   try {
-    if (doneHandler) doneHandler(step, kind, text);
+    if (doneHandler) doneHandler(step, kind, text, noop);
   } catch {
     /* kayıt yoksa geç */
   }

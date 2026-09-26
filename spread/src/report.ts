@@ -57,18 +57,20 @@ export async function buildIssueReport(allowRead: boolean): Promise<string> {
   L.push("---- KALİBRASYON SONUCU ----");
   let guid: string | null = null;
   let seqName = "?";
-  try {
-    const ctx = await requireActive();
-    guid = ctx.guid;
-    seqName = ctx.name;
-  } catch (e) {
-    L.push(`(aktif sequence okunamadı: ${errText(e)})`);
-  }
+  if (!allowRead) L.push("(bir işlem sürüyordu — Premiere'e hiç sorulmadı; kalibrasyon satırları aşağıda, günlükten)");
+  else
+    try {
+      const ctx = await requireActive();
+      guid = ctx.guid;
+      seqName = ctx.name;
+    } catch (e) {
+      L.push(`(aktif sequence okunamadı: ${errText(e)})`);
+    }
   const cal = guid ? loadTrimCal(guid, host) : null;
   if (cal) {
     L.push(`sequence "${seqName}", ölçüm ${cal.at}, Premiere ${cal.host}, δ = ${cal.delta} tick`);
     for (const l of describeCal(cal)) L.push(`  ${l}`);
-  } else L.push("(bu sequence için saklı ölçüm yok)");
+  } else if (allowRead) L.push("(bu sequence için saklı ölçüm yok)");
   const calLog = j.lines.filter((l) => /KALİBRASYON|tek başına \(|BİRLİKTE/.test(l));
   if (calLog.length) {
     L.push("günlükteki kalibrasyon satırları:");
@@ -94,8 +96,8 @@ export async function buildIssueReport(allowRead: boolean): Promise<string> {
   L.push("---- AYRINTILI GÜNLÜK (son satırlar) ----");
   for (const l of tail(j.lines, 600)) L.push(l);
   L.push("");
-  L.push("---- ÖNCEKİ PANEL OTURUMUNUN GÜNLÜĞÜ (Premiere yeniden başladıysa; son satırlar) ----");
-  if (j.previous.length) for (const l of tail(j.previous, 500)) L.push(l);
+  L.push("---- ÖNCEKİ PANEL OTURUMLARININ GÜNLÜĞÜ (dosyadan; Premiere çöktüyse / yeniden başladıysa; son satırlar) ----");
+  if (j.previous.length) for (const l of tail(j.previous, 1500)) L.push(l);
   else L.push("(yok)");
   return L.join("\n");
 }

@@ -128,7 +128,7 @@ exit /b 1
 
 :nozip
 echo.
-echo  HATA: kurulum dosyalari bulunamadi (%HERE%).
+echo  HATA: kurulum dosyalari bulunamadi: "%HERE%"
 echo  Zip'i once bir klasore CIKART (sag tik ^> Tumunu ayikla), sonra KUR.cmd'yi o klasorden calistir.
 echo.
 pause

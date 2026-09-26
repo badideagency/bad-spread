@@ -30,7 +30,7 @@ BİR ŞEY TERS GİDERSE
   - Beğenmediğin bir sonuç: panelin yazdığı kadar Ctrl+Z bas (timeline'a tıkladıktan sonra) ya da yedek sequence'ı kullan.
   - Panel durduysa ya da tuhaf bir şey olduysa: "Sorun bildir"e bas. Rapor panoya kopyalanır ve masaüstüne
     SpreadRapor_<tarih>.txt olarak kaydedilir. Bu dosyayı gönder. Düğme işlem sürerken de çalışır;
-    Premiere çöktüyse rapor önceki oturumun günlüğünü de içerir.
+    Premiere çöktüyse rapor önceki oturumların günlüğünü de içerir.
   - "Yardımcı kapalı" yazıyorsa: Window > Extensions (Legacy) > Spread Helper panelini aç.
 
 KALDIRMA

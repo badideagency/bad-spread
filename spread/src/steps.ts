@@ -21,18 +21,22 @@ function all(): Record<string, Saved> {
   }
 }
 
-/** Başarılı / uyarılı bitişi hatırla; önceki adım yeniden yapılınca sonrakilerin ✓'ü silinir. */
-export function rememberStep(guid: string | null, step: StepId, kind: "ok" | "warn", text: string): void {
+/**
+ * Başarılı / uyarılı bitişi hatırla; önceki adım yeniden yapılınca sonrakilerin ✓'ü silinir.
+ * @param noop işlem hiçbir şeyi değiştirmedi ("zaten dağıtılmış / toplanmış"): zamanı eski kalır ("" = en eski), sonrakiler silinmez
+ */
+export function rememberStep(guid: string | null, step: StepId, kind: "ok" | "warn", text: string, noop = false): void {
   if (!guid) return;
   try {
     const a = all();
     const s: Saved = { ...(a[guid] ?? {}) };
-    s[step] = { kind, text, at: new Date().toISOString() };
-    if (step === "spread") {
+    s[step] = { kind, text, at: noop ? (s[step]?.at ?? "") : new Date().toISOString() };
+    if (noop) {
+      /* düzen değişmedi → sonraki adımların ✓'ü geçerli kalır */
+    } else if (step === "spread") {
       delete s.topla;
       delete s.bagla;
-    }
-    if (step === "topla") delete s.bagla;
+    } else if (step === "topla") delete s.bagla;
     a[guid] = s;
     window.localStorage.setItem(KEY, JSON.stringify(a));
   } catch {

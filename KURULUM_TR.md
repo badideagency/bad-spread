@@ -52,7 +52,7 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
   - ✓ işaretleri bu panelin bu sequence'ta yaptığı işlere göredir. Bir işlemi elle geri aldıysan ✓ kalabilir; işlemler yine kendi
     denetimlerini yapar.
 - **İşlem sırasında:** ilerleme çubuğu ve tek satır ne yapıldığı ("Oturum 2–4/4 yerine taşınıyor…").
-- **Onay penceresi:** 3–5 satırlık özet. Dikkat gerektiren satırlar **sarı** yazılır: ÇİFT KOPYA, VETO, ŞÜPHELİ, KAMERA SESİ
+- **Onay penceresi:** en çok 5 satırlık özet. Dikkat gerektiren satırlar **sarı** yazılır: ÇİFT KOPYA, VETO, ŞÜPHELİ, KAMERA SESİ
   KORUNACAK, SESSİZ KALACAK… Tam metin **"Ayrıntı ▸"** altında.
 - **Sonuç:** tek cümle ve ne yapılacağı ("Beğenmezsen Ctrl+Z × 5 ya da yedek sequence …"). Teknik ayrıntı **"Ayrıntı ▸"** altında.
 - **Sorun bildir:** tek bir rapor hazırlar. İçinde sürümler, Durum raporu, son TOPLA/BAĞLA günlükleri, kalibrasyon sonucu, yardımcı
@@ -60,8 +60,8 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
   - Rapor panoya kopyalanır ve masaüstüne `SpreadRapor_<tarih>.txt` olarak kaydedilir. Masaüstüne yazılamazsa
     `%APPDATA%\BadIdeaAgency\Spread\` altına kaydedilir.
   - Bir şey ters gittiğinde bunu bana gönder. Düğme işlem sürerken de (ör. onay beklerken) çalışır.
-  - Premiere çöktüyse ya da panel yeniden açıldıysa rapor **önceki oturumun günlüğünü** de içerir
-    (`spread-gunluk-onceki.txt`).
+  - Premiere çöktüyse ya da panel yeniden açıldıysa rapor **önceki oturumların günlüğünü** de içerir: günlük dosyası
+    önceki açılışları da tutar (son ~4000 satır).
 - **Gelişmiş ▸** (varsayılan kapalı):
   - kaynak eşleme (hangi ses hangi A track'e, "Sil");
   - güçlü bağ eşiği ve oturum arası boşluk;

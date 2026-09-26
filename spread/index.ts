@@ -227,8 +227,8 @@ function init(): void {
   bindToggle("adv-toggle", "adv", "Gelişmiş");
   bindToggle("ask-more-toggle", "ask-more", "Ayrıntı");
   bindToggle("result-more-toggle", "result-more", "Ayrıntı");
-  setDoneHandler((step, kind, text) => {
-    rememberStep(opGuid, step, kind, text);
+  setDoneHandler((step, kind, text, noop) => {
+    rememberStep(opGuid, step, kind, text, noop);
     paintSteps();
   });
   on("btn-spread", () => void exclusive("SPREAD", runSpread));

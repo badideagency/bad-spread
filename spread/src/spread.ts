@@ -77,7 +77,7 @@ export async function runSpread(): Promise<void> {
     const moving = plan.overwrite.length + plan.clone.length;
     if (!moving) {
       log("✓ Zaten dağıtılmış: her klip kendi hedef track'inde. Yapılacak bir şey yok.", "ok");
-      done("spread", "ok", "Zaten dağıtılmış; yapılacak bir şey yok.", "Sonra: Premiere'de Clip › Synchronize, ardından TOPLA.");
+      done("spread", "ok", "Zaten dağıtılmış; yapılacak bir şey yok.", "Sonra: Premiere'de Clip › Synchronize, ardından TOPLA.", true);
       return;
     }
     const newV = Math.max(0, plan.neededV - s0.vCount);

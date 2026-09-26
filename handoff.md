@@ -21,7 +21,8 @@ Tutarlı kural çıkmazsa BAĞLA hiçbir şey kesmeden durur.
     Kaynağı `spread/src/steps.ts`: panelin sequence başına hatırladığı sonuçlar + TOPLA/BAĞLA kaydı. Timeline okunmaz; elle geri
     alınan işlemin ✓'ü kalabilir, işlemler yine kendi denetimlerini yapar.
   - İlerleme çubuğu + tek satır. Sonuç: tek cümle + ne yapılacağı + "Ayrıntı ▸" (bu işlemin günlüğü).
-  - Onay: 3–5 satırlık özet + dikkat satırları (sarı) + "Ayrıntı ▸" (tam, eski metin — değişmedi).
+  - Onay: en çok 5 satırlık özet (`ui.capSummary`: ilk satır + soru kalır, aradan önce dikkat satırları; sığmayan "+N satır
+    Ayrıntı'da") + dikkat satırları (sarı) + "Ayrıntı ▸" (tam, eski metin — değişmedi).
   - "Gelişmiş ▸": kaynak eşleme, eşik, boşluk, yardımcı ayrıntısı, Durum raporu, günlük.
   - UXP sınırları gözetildi (inceleme: flex `gap`, `font` kısaltması, animasyon, `<details>` yok) → margin + JS katlama.
 - **Runner'lara eklenenler** (`spread.ts`, `topla.ts`, `bagla.ts`, `calibrate.ts`) — karar mantığına dokunulmadı:
@@ -31,14 +32,17 @@ Tutarlı kural çıkmazsa BAĞLA hiçbir şey kesmeden durur.
   - KES planına `handoff: "panel" | "bridge"` alanı: yardımcı panel bölümünü göstermek için; yardımcının plan doğrulaması bu alanı
     okumaz.
 - **Arka plan günlüğü** (`spread/src/journal.ts`): bellek (son 4000 satır) + dosya
-  `%APPDATA%\BadIdeaAgency\Spread\spread-gunluk.txt`. Panel her açıldığında önceki oturumun dosyası
-  `spread-gunluk-onceki.txt`'ye alınır; son 500 satırı Sorun bildir raporuna girer (Premiere çökse de son TOPLA / BAĞLA günlüğü kalır).
+  `%APPDATA%\BadIdeaAgency\Spread\spread-gunluk.txt`. Dosya önceki panel oturumlarını da tutar (son 4000 satırı; her açılış bir
+  "==== yeni panel oturumu ====" ayracıyla eklenir); önceki oturumların son 1500 satırı Sorun bildir raporuna girer. Premiere çöküp
+  birkaç kez boş açılsa da son TOPLA / BAĞLA günlüğü kalır (sınırı: aradaki oturumlar 4000 satırı doldurursa). Yazma tek hatlı
+  (zamanlayıcı ile Sorun bildir çakışmaz).
 - **Sorun bildir** (`spread/src/report.ts`): sürümler, yardımcı durumu, son hata + ayrıntısı, kalibrasyon sonucu, son SPREAD /
   TOPLA / BAĞLA günlükleri, Durum raporu (işlem sürerken atlanır), ayrıntılı günlüğün sonu, önceki oturumun günlüğü.
   - Rapor panoya kopyalanır ve `Desktop\SpreadRapor_<tarih>.txt` olarak kaydedilir. Kopyalama olmazsa metin panelde bir kutuda görünür.
   - Denenen yollar sırayla: `<home>\Desktop`, `<home>\OneDrive\Desktop`, `<home>\OneDrive\Masaüstü`, `<home>/Desktop` ("/" ayraçlı),
     veri klasörü. Önce "\\" ayraç (linker.ts'teki yardımcı dosyalarıyla aynı, çalıştığı bilinen biçim).
-  - Düğme hiç kapanmaz: işlem sürerken (ör. onay beklerken) de çalışır; o sırada timeline'ı okumaz (Durum raporu atlanır).
+  - Düğme hiç kapanmaz: işlem sürerken (ör. onay beklerken) de çalışır; o sırada Premiere'e hiçbir şey sormaz (Durum raporu ve
+    saklı kalibrasyon atlanır; kalibrasyon satırları günlükten gelir).
   - Rapor `#report` kutusuna yazılmaz (orada yardımcıya yapıştırılacak KES planı durabilir); kendi kutusu `#issue-text`.
 - **Spread Helper** (`cep-helper/index.html`, `js/panel.js`):
   - Tek durum satırı.
@@ -106,13 +110,13 @@ BLOCKER yok. Denetim 1 (mantık dosyalarında davranış farkı yok), 2 (kurulum
 
 | # | Bulgu | Düzeltme |
 |---|---|---|
-| M1 | Günlük dosyası her açılışta eziliyordu → çökme sonrası Sorun bildir'de son TOPLA / BAĞLA yok | ilk yazmadan önce eski dosya `spread-gunluk-onceki.txt`'ye alınır; son satırları raporda ayrı bölüm (en çok 500) |
-| M2 | Yardımcı paneli başarısız bağlamadan sonra yeşil "bağlandı" gösterebiliyordu; yapıştırılan planda sonuç kutusu hemen kayboluyordu | son BAĞLA (plan `createdAt` ya da "yapıştır") + sonucu tutulur; yeşil yalnız `ok`; başarısızsa kırmızı "Bağlama tamamlanmadı — nedeni aşağıda"; kutu yeni plan gelene kadar görünür. İncelemecinin jsdom repro'su (5 durum) doğru |
-| m1 | Sorun bildir işlem boyunca (onay beklerken de) kapalıydı | düğme hiç kapanmaz; işlem sürerken timeline okunmaz (Durum raporu atlanır), `reporting` kilidi çift tıklamayı engeller |
+| M1 | Günlük dosyası her açılışta eziliyordu → çökme sonrası Sorun bildir'de son TOPLA / BAĞLA yok | #8'de son hâli: dosya önceki oturumları tutar (son 4000 satır), rapor onların son 1500 satırını içerir; yazma tek hatlı |
+| M2 | Yardımcı paneli başarısız bağlamadan sonra yeşil "bağlandı" gösterebiliyordu; yapıştırılan planda sonuç kutusu hemen kayboluyordu | son BAĞLA (plan `createdAt` ya da "yapıştır") + sonucu tutulur; yeşil yalnız `ok`; başarısızsa kırmızı "Bağlama tamamlanmadı — nedeni aşağıda"; kutu plan dosyası değişene (yeni plan) kadar görünür, sonra yeni plan gösterilir (#8). İncelemecinin jsdom repro'ları (5 + 2 durum) doğru |
+| m1 | Sorun bildir işlem boyunca (onay beklerken de) kapalıydı | düğme hiç kapanmaz; işlem sürerken Premiere'e hiçbir şey sorulmaz (#8), `reporting` kilidi çift tıklamayı engeller |
 | m2 | Arayüz çağrıları istisna güvenli değildi | `opStart` / `progress` / `opEnd` / `done` / `opFinish` try/catch içinde; `finally`'de önce `busy=false` |
 | m3 | Adım göstergesi: yeniden SPREAD'den sonra eski TOPLA ✓'ü; yardımcı panelinde bağlandıktan sonra hâlâ "bekliyor" | kayıt yalnız son SPREAD'den yeniyse kullanılır; BAĞLA ✓'ü `link-result.json` (`planCreatedAt` = kayıt, `ok`) ile; plan panelde zaten bağlandıysa BAĞLA sonucu "zaten bağlandı" gösterir (KES / plan akışı aynı) |
 | m4 | Onay özetleri 3–5 satırı aşıyordu; VETO "+N daha" yoktu; OTURUM SIRASI / ŞÜPHELİ ÜYE özetinde asıl bilgi yoktu | TOPLA / BAĞLA özetleri sıkıştırıldı (VETO / SESSİZ önce, "+N … daha (Ayrıntı)", tek "Not:" satırı: park, ŞÜPHELİ, kalibrasyon, köprü, kamerasız, uyarı sayısı); OTURUM SIRASI ve ŞÜPHELİ ÜYE için açık özet ("Hayır = oturumda kalsın" dahil). Soru metinleri (`q`) aynen |
-| m5 | Kesim bittikten sonra durunca ipucu "Ctrl+Z × N" diyordu, başlık "BAĞLA'ya tekrar bas" | `reportStop(…, { cutsDone })` (yalnız arayüz): "Kesim yerinde ve doğru. Yardımcıyı düzeltip BAĞLA'ya tekrar bas…" |
+| m5 | Kesim bittikten sonra durunca ipucu "Ctrl+Z × N" diyordu, başlık "BAĞLA'ya tekrar bas" | #8'de son hâli: yalnız bağlama isteğinin kendisi düşünce (`SpreadStop.retryLink`, yalnız arayüz; kesme/silme doğrulanmış ve kayıtta) "Düzen yerinde ve doğrulandı; yalnız bağlama olmadı … tekrar bas (yalnız bağlar)"; diğer duruşlarda eski ipucu |
 | m6 | Eski metinler (`spread-helper-klasor.zip`, "SUNUCU BAŞLAMADI", "Planı elle bağla") | linker ipuçları → `Spread_Kurulum_v1.0.0.zip` / KUR.cmd, "Spread Helper çalışmıyor"; yardımcıdaki adlar Spread'in günlük metinlerine uyduruldu ("Planı yapıştır" + "BAĞLA") — smoke'un denetlediği günlük metinleri değişmedi |
 | m7 | KUR.cmd: `else ( … "%DEST%" … )` bloğu `%APPDATA%` ")" içerince cmd'yi bozar | özet yalnız tek satırlık `if`'ler; Wine'da ")" içeren `%APPDATA%` ile sınandı |
 | m8 | `onceki.txt` yazılamasa da kayıt defteri değişiyordu | yazılamazsa `:nostate` — hiçbir şeye dokunmadan durur |
@@ -122,6 +126,22 @@ BLOCKER yok. Denetim 1 (mantık dosyalarında davranış farkı yok), 2 (kurulum
 | NIT | humanize kalıbı eşleşmiyordu; küçük harfle başlayan başlıklar; `#adv` JS'ten önce görünüyordu; açık temada koyu kart + koyu yazı | kalıp gerçek metne ("sequence yok", "proje yok"); başlığın ilk harfi büyük; CSS'te `display:none`; sabit koyu palet |
 | NIT | KALDIR veri klasörüne düşmüş raporları da siliyor | belgelendi (KURULUM_TR, OKU_BENI, KALDIR özeti) |
 | NIT | `.debug` pakette; boş anahtar / klasör kalıyor; `%APPDATA%` boşsa; `net session` Sunucu hizmeti kapalıysa "yönetici değil" der | değiştirilmedi (Belirsizlik 6); `%APPDATA%` Windows'ta etkileşimli kullanıcıda hep tanımlı |
+
+### İnceleme #8 (aynı alt ajan, düzeltmelerin denetimi: 9ce1dd8..b6bc739)
+
+BLOCKER / MAJOR yok. Denetim 1–3 yine **PASS**; Wine sınaması, `npm run check` (79 senaryo) ve zip'in bayt bayt yeniden üretimi PASS.
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| 1 | Yardımcı paneli: yapıştırılan planın sonucu, sonra gelen yeni planı gizliyordu; dosya planında eski sonuç yeni "bekliyor" mesajının altında kalıyordu | son BAĞLA, o an dosyadaki planın `createdAt`'ini (`seen`) de tutar; plan dosyası değişince sonuç ve sonuç satırları silinir, yeni plan gösterilir. İncelemecinin iki jsdom repro'su (7 durum) doğru |
+| 2 | Günlük: tek kuşak (iki boş açılışta çökme günlüğü gidiyordu) + `mkdir` beklerken iki yazma yarışı | `-onceki.txt` yerine dosya önceki oturumları tutar (son 4000 satır, oturum ayracıyla); `loaded` bayrağı `await`'ten önce; yazma tek hatlı (sürerken gelen istek bir kez daha yazdırır). Node'da sahte gecikmeli `mkdir` ile sınandı: çökme satırı 3 açılıştan sonra da raporda, oturumlar çift yazılmıyor |
+| 3 | "Tekrar bas (yalnız bağlar)" ipucu kesimden sonraki her duruşta çıkıyordu (ortak kural uyuşmazlığı, "klipler değişti", kesimsiz dal) | ipucu duruşun kendisinde: `SpreadStop.retryLink` yalnız bağlama isteği düşünce / grup bağlanamayınca (ikisi de kayıt yazıldıktan sonra); `reportStop`'un `ui` parametresi kaldırıldı. Mesajlar ve `cutsDone` mantığı aynen |
+| 4 | "Zaten dağıtılmış" SPREAD sonraki adımların ✓'ünü siliyordu | `done(…, noop = true)`: SPREAD "zaten dağıtılmış" ve TOPLA "zaten toplanmış"ta adım zamanı eski kalır, sonrakiler silinmez |
+| NIT | Köprüsüz yolda "zaten bağlandı" sonucunun üstünde "bekliyor … BAĞLA'ya bas" günlüğü | panelde bağlandıysa günlük "zaten bağlanmış (zaman)" der, "→ BAĞLA'ya bas" satırları yazılmaz (yalnız o durumda; diğer metinler aynı) |
+| NIT | İşlem sürerken Sorun bildir yine aktif sequence'ı soruyordu | işlem sürerken Premiere'e hiçbir şey sorulmaz |
+| NIT | Özet 6 satıra çıkabiliyordu | `capSummary`: en çok 5 satır, dikkat satırları önce |
+| NIT | KUR.cmd `%HERE%` tırnaksız | tırnaklı |
+| NIT | Wine ")" sınaması eski hatayı yakalayamazdı (Wine'ın cmd'si hoşgörülü) | not edildi; düzeltme yapı gereği doğru (blok içinde tırnaksız genişletme yok) |
 
 ---
 
