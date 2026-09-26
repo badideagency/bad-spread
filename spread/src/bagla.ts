@@ -380,9 +380,14 @@ export async function runBind(): Promise<void> {
     const groups = targets.filter((t) => t.items.length >= 2);
     const specs: LinkSpec[] = groups.map((t) => ({ id: t.group.id, label: t.label, items: t.items }));
     if (!plan.errors.length) {
-      const mm = layoutMismatch(expectedFinalClips(s0, plan), lf, specs);
+      const fin = expectedFinalClips(s0, plan);
+      const mm = layoutMismatch(fin, lf, specs);
       if (mm.length)
         plan.errors.push(`yardımcıyla ortak "düzenden gruplar" kuralı KES'ten sonra bu grupları bulamayacak (iç tutarsızlık — raporu getir): ${mm.slice(0, 4).join(" | ")}`);
+      // KES'ten sonraki düzende aynı track'te üst üste binen klip olmamalı (ör. "korunan kamera sesi" track'inde duran başka bir klip:
+      // TX-4 onun üstüne yazardı) → düzenlemeden ÖNCE dur
+      const ov = snapshotOverlaps({ vCount: s0.vCount, aCount: s0.aCount, clips: fin, warnings: [], gen: 0 });
+      for (const o of ov) plan.errors.push(`KES'ten sonra üst üste binecek: ${o} — o track'teki klibi başka bir track'e al`);
     }
     // son düzendeki harici klipler (park'takiler ve kamerasız oturumlarınkiler hariç — onlara dokunulmaz) + ait oldukları oturum
     // (oturumlar zamanda ayrık)
@@ -404,12 +409,15 @@ export async function runBind(): Promise<void> {
     printBindPlan(plan, s0);
     if (plan.errors.length) throw new SpreadStop(`Plan kurulamadı (${plan.errors.length} hata). BAĞLA BAŞLAMADI, hiçbir şey değişmedi.`);
     const deletes = [...plan.deleteGuides, ...plan.deleteSil, ...plan.deleteOutside];
-    const nPieces = plan.cuts.reduce((n, c) => n + c.pieces.length, 0);
+    const extCuts = plan.cuts.filter((c) => !c.pieces[0]?.camera);
+    const nPieces = extCuts.reduce((n, c) => n + c.pieces.length, 0);
+    const nKept = plan.pieces.filter((p) => p.camera).length;
     const edits = deletes.length + plan.cuts.length > 0;
 
     const ans = await askUser(
       `BAĞLA: ${plan.groups.length} grup (çapa = gruptaki en uzun kamera klibi). ` +
-        `${plan.cuts.length} harici ses ${nPieces} parçaya kesilecek, ${plan.pieces.filter((p) => p.whole).length} ses olduğu gibi kalacak; ` +
+        `${extCuts.length} harici ses ${nPieces} parçaya kesilecek, ${plan.pieces.filter((p) => p.whole).length} ses olduğu gibi kalacak` +
+        `${nKept ? `, ${nKept} korunan kamera sesi parçası kesilecek` : ""}; ` +
         `silinecek: ${plan.deleteGuides.length} kılavuz ses, ${plan.deleteSil.length} "sil" kaynağı klibi, ${plan.deleteOutside.length} çapa dışı ses; ` +
         `${[...plan.keptGuides.values()].reduce((n, g) => n + g.length, 0)} kamera sesi (grubunda harici ses yok) korunacak. ` +
         (plan.camless.length ? `${plan.camless.length} kamerasız oturumun (${plan.camless.map((x) => x.id).join(", ")}) seslerine dokunulmayacak. ` : "") +
@@ -419,13 +427,13 @@ export async function runBind(): Promise<void> {
           : `Yardımcıya köprü YOK → yalnız KES yapılacak; ${groups.length} grup sonra Spread Helper panelindeki BAĞLA ile bağlanacak. `) +
         `${plan.warnings.length ? `${plan.warnings.length} uyarı (günlükte). ` : ""}` +
         (plan.keptCamera.length
-          ? `\nKAMERA SESİ KORUNACAK (harici sesin olmadığı aralıkta kamera sesi o aralığa kesilip "korunan kamera sesi" track'ine konacak ve gruba bağlanacak):\n${plan.keptCamera
+          ? `\nKAMERA SESİ KORUNACAK (harici ses parçasının olmadığı aralıkta — çapa içindeki boşluk ya da çapa dışına taşan kamera kısmı, harici ses çapaya göre kesildiği için — kamera sesi o aralığa kesilip "korunan kamera sesi" track'ine konacak ve gruba bağlanacak):\n${plan.keptCamera
               .slice(0, 8)
               .map((x) => "  • " + x)
               .join("\n")}${plan.keptCamera.length > 8 ? `\n  … ${plan.keptCamera.length - 8} tane daha (günlükte)` : ""}\n`
           : "") +
         (plan.silent.length
-          ? `\nSESSİZ KALACAK (harici ses yok, kılavuz sesi olan kamera da yok):\n${plan.silent
+          ? `\nSESSİZ KALACAK (harici ses parçası yok ve kamera sesi korunamıyor):\n${plan.silent
               .slice(0, 8)
               .map((x) => "  • " + x)
               .join("\n")}${plan.silent.length > 8 ? `\n  … ${plan.silent.length - 8} tane daha (günlükte)` : ""}\n`
@@ -517,8 +525,9 @@ export async function runBind(): Promise<void> {
       if (fin.length) throw new SpreadStop("Kesme doğrulaması tutmadı.", fin);
       cutsDone = true;
       log(
-        `✓ Kesme/silme doğrulandı: ${nPieces} parça tick düzeyinde doğru; her çapa içindeki ses süresi aynı (boşluk yok); ` +
-          `kaynak kayması yok; kılavuz ses ve kapalı kanal kalmadı.`,
+        `✓ Kesme/silme doğrulandı: ${nPieces} harici ses parçası${nKept ? ` + ${nKept} korunan kamera sesi parçası` : ""} tick düzeyinde doğru; ` +
+          `her çapa içindeki harici ses süresi aynı; kaynak kayması yok; silinecek kılavuz sesler ve "sil" kaynakları silindi` +
+          `${nKept ? ` (kamera sesi yalnız "korunan kamera sesi" track'inde, harici sesin olmadığı aralıklarda)` : ""}.`,
         "ok"
       );
     } else {

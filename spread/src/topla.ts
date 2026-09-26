@@ -112,7 +112,7 @@ export async function runCollect(): Promise<void> {
         bs === "partial"
           ? "BAĞLA'dan sonra düzen değişmiş (kesilen parçaların bir kısmı yerinde, bir kısmı değil). TOPLA BAŞLAMADI, hiçbir şey değişmedi. " +
               "BAĞLA öncesi yedek sequence'la çalış ya da BAĞLA'yı Ctrl+Z ile tamamen geri al."
-          : "Bu sequence BAĞLA'dan geçti: harici sesler çapalara göre kesildi, oturumları bulduran tam kayıtlar artık yok → oturumlar güvenle " +
+          : "Bu sequence BAĞLA'dan geçti: sesler kesildi (harici sesler çapalara, kamera sesleri harici sessiz aralıklara), oturumları bulduran tam kayıtlar artık yok → oturumlar güvenle " +
               "yeniden bulunamaz (tahmin edilmez). TOPLA BAŞLAMADI, hiçbir şey değişmedi. Yeniden toplamak için BAĞLA öncesi yedek sequence'ı kullan " +
               "(ya da BAĞLA'yı Ctrl+Z ile tamamen geri al)."
       );

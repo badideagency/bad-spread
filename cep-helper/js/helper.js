@@ -95,6 +95,8 @@
   /** Spread'in KES planı (link-plan.json) — yapıya ve sınırlara göre doğrulanır; yalnız bilinen alanlar alınır. */
   function cleanPlan(obj) {
     if (!obj || typeof obj !== "object" || obj.kind !== "spread-link-plan" || obj.v !== 1) throw bad("bu bir Spread KES planı değil (kind/v)");
+    if (typeof obj.panel === "string" && obj.panel !== VERSION)
+      throw bad("plan Spread " + obj.panel.slice(0, 16) + " ile yazılmış, bu yardımcı " + VERSION + " — ikisini aynı sürüme güncelle (KURULUM_TR.md), sonra Spread'de BAĞLA'ya tekrar bas");
     var seq = obj.sequence;
     if (!seq || typeof seq.name !== "string" || !seq.name || seq.name.length > LIMITS.sequenceName) throw bad("plan: sequence adı geçersiz");
     var f = obj.frame;

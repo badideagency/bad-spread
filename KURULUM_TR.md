@@ -133,10 +133,15 @@ Ana yol **klasör kurulumu**:
 - **ÖNEMLİ — aynı adlandırmayla kaydeden iki gövde:** Aynı çekimde, dosyaları aynı biçimde adlandıran iki kamera kullanacaksan (ör. iki
   Sony gövdesi, ikisi de `C0001, C0002…`), **çekimden ÖNCE birinin dosya adı önekini kamerada değiştir.** Nasıl yapılacağını kameranın
   kılavuzunda "dosya adı / başlık / clip name" ayarı altında bul.
-  - Panel cihazı dosya adından tanır. Aynı adlandırmayı kullanan iki gövde onun için **tek cihazdır**: üst üste kayıtları "aynı cihazın
-    iki kaydı çakışıyor" sayılır, gerçek bir oturum ikiye bölünebilir.
-  - Önek değişince panel o gövdeyi **ayrı bir cihaz** olarak tanır: bilinmeyen adlarda rakamlar atılmış ad cihaz, sondaki sayı sayaç olur.
-  - Bu yüzden önek her dosyada **aynı** kalmalı, sayaç da artmaya devam etmeli.
+  - Neden: panel cihazı dosya adından tanır.
+    - Aynı adlandırmayı kullanan iki gövde onun için **tek cihazdır**. Üst üste kayıtları "aynı cihazın iki kaydı çakışıyor" sayılır ve
+      gerçek bir oturum ikiye bölünebilir.
+    - İki gövde **aynı dosya adını** üretirse (ikisinde de `C0001`), panel ikisini aynı kaydın parçası sanır. TOPLA "aynı kaydın klipleri
+      farklı senkron konumunda" deyip durur.
+  - Önek nasıl olmalı: panel, adın **rakamlar atılmış hâlini** cihaz, sondaki sayıyı sayaç sayar.
+    - Önekler **harflerle** ayrılmalı. `CAM1_`/`CAM2_` ya da `FX3_`/`FX30_` gibi yalnız rakamla ayrılan önekler yine aynı cihaz olur.
+    - Önek **tek harf olmamalı**. `B0001` gibi bir ad, sinema kamerası B'yle (`B001C001_…`) aynı cihaz sayılır.
+    - İyi örnek: bir gövde `C0001…` (Sony) olarak kalır, diğeri `SONYB_0001…` olur. Her dosyada önek aynı kalmalı, sayaç artmalı.
 - **"OTURUM SIRASI ÇELİŞKİLİ"** sorusu: kameraların sayaçları farklı sıra söylüyor.
   - **Hayır**: hiçbir şey değişmez.
   - **Evet**: oturumlar senkronun bıraktığı sırayla dizilir.
@@ -174,16 +179,22 @@ Ana yol **klasör kurulumu**:
   - Kesim **yalnız oturum içinde**: bir Zoom/DJI kaydı sadece kendi oturumundaki kameraların çapasına göre kesilir.
   - Oturumda harici ses yoksa (ör. sadece iki kamera) kamera sesi **korunur** ve kameralarla bağlanır.
   - Oturumda hiç kamera yoksa (ör. yalnız Zoom + DJI) o oturumun seslerine **dokunulmaz**: kesilmez, silinmez, bağlanmaz.
-  - Onay penceresinde **"KAMERA SESİ KORUNACAK"** satırları çıkabilir. Bunlar, Zoom/DJI sesinin 1 sn'den uzun süre olmadığı yerlerdir:
-    çapanın içindeki boşluklar ya da çapadan taşan kamera kısımları.
+  - Onay penceresinde **"KAMERA SESİ KORUNACAK"** satırları çıkabilir. Bunlar, BAĞLA'dan sonra 1 sn'den uzun süre Zoom/DJI **parçası
+    olmayacak** yerlerdir. İki tür vardır:
+    - çapanın içindeki boşluklar: orada harici ses hiç yok, satırda "çapa içinde harici ses yok" yazar;
+    - çapadan taşan kamera kısımları: harici ses çapaya göre kesildiği için oraya ulaşmaz, Zoom orada kayıt yapıyor olsa bile. Satırda
+      "çapa dışında" yazar.
     - Oralarda kamera sesi silinmez. Kamera sesi **yalnız o aralığa** kesilir, "korunan kamera sesi" track'ine konur ve gruba bağlanır.
     - Aralığı birden çok kamera kapsıyorsa grubun en uzun kamerasının sesi kullanılır.
     - 12 Eylül verinde üç satır çıkar:
       - A038C001'in başı, 2.3 sn;
       - A038C002'nin sonu, 41.8 sn;
       - C0143'ün çapadan 1 kare (0.04 sn) sonra bitmesi. O son kareyi yalnız C0143 kapsadığı için oradaki ses onun kamera sesinden gelir.
-  - **"SESSİZ KALACAK"** satırı yalnız o aralıkta sesi olan hiçbir kamera yoksa çıkar (ör. sessiz kaydeden bir kamera). BAĞLA'dan sonra
-    orada ses kalmaz. Kabul etmiyorsan **Hayır** de; hiçbir şey değişmez.
+  - **"SESSİZ KALACAK"** satırı iki durumda çıkar. BAĞLA'dan sonra orada ses kalmaz; kabul etmiyorsan **Hayır** de, hiçbir şey değişmez.
+    - O aralıkta sesi olan hiçbir kamera yoktur (ör. sessiz kaydeden bir kamera).
+    - Her biri 1 sn'den kısa boşlukların toplamı 1 sn'yi geçer. Bunlar senkron kenar payı sayılır ve kamera sesi korunmaz.
+  - **"KES'ten sonra üst üste binecek: …"** derse: bir track'te, örneğin boş olması gereken "korunan kamera sesi" track'inde başka bir
+    klip duruyor. Hiçbir şey değişmedi; o klibi başka bir track'e al ve tekrar bas.
   - **"TOPLA'ya tekrar bas (v0.3.3 track çerçevesi)"** derse: sequence eski sürümle toplanmış ve korunan kamera sesi track'i yok.
     TOPLA'ya bir kez bas (track'leri düzenler), sonra BAĞLA'ya.
 - **Evet** → yedek sequence → sırasıyla:

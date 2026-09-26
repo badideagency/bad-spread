@@ -68,7 +68,8 @@ export function makeFrame(items: Classified[], mapping: Map<string, Target>): Fr
   const guideCh = new Map<string, number>();
   for (const g of items.filter((x) => x.role === "guide")) guideCh.set(g.device!, Math.max(guideCh.get(g.device!) ?? 0, ch.get(g.clip)! + 1));
   const guideBase = new Map<string, number>();
-  const keptCount = guideCh.size ? Math.max(...guideCh.values()) : 0;
+  // korunan kamera sesi yalnız harici sesli grupta olur → eşlenen (silinmeyecek) harici kaynak yoksa track ayrılmaz
+  const keptCount = srcTrack.size && guideCh.size ? Math.max(...guideCh.values()) : 0;
   let base = mappedCount + keptCount;
   for (const d of devices) {
     guideBase.set(d.key, base);

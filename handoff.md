@@ -6,17 +6,18 @@
 |---|---|
 | Sürüm | **Spread v0.3.3** (`release/spread.ccx`) + **Spread Helper v0.3.3** (`release/spread-helper-klasor.zip`, imzasız klasör; `.zxp` yok — ADIM 3.2) |
 | Kullanıcı kararları | (1) BAĞLA eşleşmesi: **KES planına karşı tick düzeyinde birebir** (düz "çapayla birebir" kuralı İSTENMEDİ) — v0.3.2'deki gibi kaldı. (2) SESSİZ KALACAK yerlerde **kamera sesi korunur**: kılavuz ses yalnız harici sesin olmadığı aralığa kesilir, harici kanal track'lerinin altındaki ayrı bir track'e konur, gruba bağlanır; onayda "KAMERA SESİ KORUNACAK". (3) İki Sony gövdesi: kod değişmedi; KURULUM_TR.md'ye not (birinin dosya adı öneki kamerada değiştirilmeli). |
-| Bulutta doğrulanan | `npm run check` (… check:xml, check:core, **Spread smoke 69 senaryo**), yeni korumaların mutasyon sınaması (3/3 yakalandı), bağımsız alt ajan incelemesi (#5) |
+| Bulutta doğrulanan | `npm run check` (… check:xml, check:core, **Spread smoke 70 senaryo**), yeni korumaların mutasyon sınaması (3/3 yakalandı), bağımsız alt ajan incelemesi (#5: engelleyici yok, 9 bulgu ele alındı) |
 
 ### Tasarım (v0.3.3)
 
 **Korunan kamera sesi** (`bind.ts makeBindPlan`, harici sesli her grup için):
 1. Boşluklar = [grup başı, grup sonu) − harici parçaların birleşimi. Grup aralığı = çakışan kameraların birleşimi, yani çapa dışına taşan kamera kısımları da dahil.
-2. 1 sn'den kısa boşluk yok sayılır (senkron kenar payı; önceki "SESSİZ KALACAK" eşiğiyle aynı).
+2. 1 sn'den kısa boşluk senkron kenar payı sayılır ve kamera sesi korunmaz. Bu kısa boşlukların **toplamı** 1 sn'yi geçerse "SESSİZ KALACAK: N kısa boşluk … toplam X sn" diye bildirilir.
 3. Boşluk kamera sınırlarında dilimlenir. Her dilim, onu kapsayan ve kılavuz sesi olan **en iyi** kameraya gider (çapa kuralı: en uzun, eşitlikte alt track, sonra erken start). Ardışık aynı-kamera dilimleri birleşir.
 4. O kameranın her kılavuz kanalı j dilime kesilir: `inPt = kılavuz.inPt + (dilim.start − kılavuz.start)`, yani senkron tick düzeyinde korunur. Parça "korunan kamera sesi" track'ine (base + j) konur ve grubun bağlama öğelerine eklenir.
 5. Kesilen kılavuz, "kesim" kaynağı olarak silinir: TX-1'de park kopyası alınır, kırpılır ve TX-4'te `aOff = hedef − kaynak track` ile yerine konur. Kesilmeyen kılavuzlar eskisi gibi silinir.
-6. Kılavuz sesi olan kamera yoksa dilim "SESSİZ KALACAK" diye listelenir.
+6. Kılavuz sesi olan kamera yoksa dilim "SESSİZ KALACAK" diye listelenir. Her satır nedenini yazar: "çapa içinde harici ses yok" ya da "çapa dışında: harici ses çapaya göre kesilir". Zoom orada kayıt yapıyor olsa bile parçaları çapaya kesildiği için oraya ulaşmaz.
+6b. KES'ten sonra BEKLENEN düzende aynı track'te üst üste binen klip varsa (ör. korunan track'te duran bilinmeyen bir klip) → plan hatası, düzenlemeden ÖNCE.
 7. Kamera sesinde hız ≠ 1 ya da süre ≠ kaynak aralığı → plan hatası.
 
 Gerçek 12 Eylül verisi (mock, tick): O1-G1 "A038C001" 0.000–2.320 s; O2-G1 "A038C002" 2824.320–2866.160 s (41.840 sn); O2-G1 "C0143"
@@ -24,7 +25,7 @@ Gerçek 12 Eylül verisi (mock, tick): O1-G1 "A038C001" 0.000–2.320 s; O2-G1 "
 kılavuzundan) → hepsi A3 (Tr1 A1, Tr2 A2, **korunan A3**, kılavuzlar A4–A5, TrLR A6). Sessiz kalan yer yok.
 
 **TOPLA çerçevesi** (`collect.ts makeFrame`): A = eşlenen kaynaklar → **korunan kamera sesi** (`keptBase = mappedCount`, `keptCount = en çok
-kılavuz kanalı`; TOPLA boş bırakır) → kılavuzlar → "sil" → park. Kayıt `keptBase/keptCount` taşır; eski (v0.3.2) kayıtta yok → 0 →
+kılavuz kanalı`; eşlenen harici kaynak yoksa 0; TOPLA boş bırakır) → kılavuzlar → "sil" → park. Kayıt `keptBase/keptCount` taşır; eski (v0.3.2) kayıtta yok → 0 →
 korunacak parça gereken BAĞLA "TOPLA'ya tekrar bas (v0.3.3 track çerçevesi)" der (hiçbir şeye dokunmadan). v0.3.2 ile toplanmış düzende
 TOPLA kılavuzları bir track aşağı taşır.
 
@@ -40,10 +41,34 @@ KAPSAYAN grubun öğesidir; değilse HATA. Plan `frame.keptTracks` taşır (`hel
 | `keepcam_noguide` | dilimi kapsayan kamera sessiz (kanalsız) → "SESSİZ KALACAK" (0.000–2.000 s), parça yok |
 | `keepcam_oldrecord` | v0.3.2 kaydı (ayrılmış track yok) → BAĞLA başlamaz, "TOPLA'ya tekrar bas"; TOPLA sonrası çalışır |
 | `bridgeoff_real` | 12 Eylül (korunan parçalar dahil) köprülü = yardımcı paneldeki BAĞLA |
-| (güncellendi) | `expectTopla`/`expectBagla` (bağımsız: korunan track + boşluk dilimleri), `limits` (273 öğe: +2 korunan parça), kesimsiz senaryolarda Zoom çapayı birebir kapsar |
+| `keepcam_guard` | korunan track'te başka klip → BAĞLA düzenlemeden önce durur; çapa içinde iki 0.8 sn'lik boşluk → korunmaz ama "2 kısa boşluk … toplam 1.600 sn" bildirilir |
+| (güncellendi) | `keepcam_oldrecord` artık GERÇEK v0.3.2 düzeniyle (kılavuzlar hemen altta, kayıt eski): BAĞLA durur → TOPLA kılavuzları aşağı taşır → BAĞLA çalışır; `bridgeoff_paste` + plan sürümü uyuşmazlığı; `expectTopla`/`expectBagla` (bağımsız: korunan track + boşluk dilimleri), `limits` (273 öğe: +2 korunan parça), kesimsiz senaryolarda Zoom çapayı birebir kapsar |
 
 Mutasyon: TX-4'te dikey taşıma yok → `real0912` + `keepcam_multi` düşer; ortak kuralda korunan track dalı yok → `bridgeoff_real` +
 `keepcam_multi` düşer; dilimde en iyi yerine en kötü kamera → `keepcam_multi` düşer.
+
+### Bağımsız alt ajan incelemesi #5 (v0.3.3) — engelleyici yok; bulgular ele alındı
+
+İnceleyici çalıştırarak doğruladı:
+- korunan parçaların senkronu tick düzeyinde (kamera inPt ≠ 0, kare-altı WAV kenarları; trim/move/endmove anlamlarında aynı);
+- karışık kanal sayıları; sesi olmayan uzun kamera; tam 1 sn'lik boşluk;
+- harici ve korunan parçalar arasında örtüşme ya da delik yok;
+- köprüsüz tekrar bağlama; gerçek v0.3.2 düzeninden yükseltme;
+- köprü ile panel yolunun eşdeğerliği.
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| 1 | korunan track'te başka klip → TX-4 üstüne yazıyor, ancak 4 düzenlemeden sonra yakalanıyordu | beklenen son düzende üst üste binme denetimi, düzenlemeden ÖNCE (`keepcam_guard`) |
+| 2 | onay "harici sesin olmadığı aralık" diyordu; çapa dışına taşan kısımda Zoom kayıt yapıyor ama parçası oraya ulaşmıyor | başlık "harici ses PARÇASININ olmadığı" + satır başına neden (çapa içi / dışı); KURULUM açıklaması |
+| 3 | onaydaki "N harici ses M parçaya" sayısı kamera kesimlerini de sayıyordu | harici ve korunan kamera sesi ayrı sayılır |
+| 4 | "kılavuz ses … kalmadı" başarı metni yanlış | metin korunan kamera sesini anlatır |
+| 5 | ≤ 1 sn'lik boşluklar hiç bildirilmiyordu (v0.3.2 toplamı bildirirdi) | toplamı 1 sn'yi aşarsa SESSİZ KALACAK |
+| 6 | "hiç … track'i var" çelişkili hata metni | "… track'i yok" |
+| 7 | BAĞLA sonrası TOPLA reddi yalnız harici kesimden söz ediyordu | kamera sesi kesimini de söyler |
+| 8 | iki gövde notu eksikti (yalnız rakamla ayrılan önek aynı cihaz; tek harf sinema kamerasıyla çakışır; aynı ad → aynı kayıt → TOPLA durur) | KURULUM notu `identify` çıktısına göre düzeltildi |
+| 9 | `keepcam_oldrecord` gerçek v0.3.2 düzenini sınamıyordu | senaryo gerçek v0.3.2 düzenini kurar |
+| küçük | kamera-yalnız projede boş korunan track | eşlenen harici kaynak yoksa ayrılmaz |
+| küçük | eski yardımcı + yeni plan yanıltıcı mesaj | plan `panel` sürümü ≠ yardımcı → "ikisini aynı sürüme güncelle" |
 
 ### Belirsizlikler (v0.3.3)
 

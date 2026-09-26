@@ -176,8 +176,15 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>, kept: Ke
       const ext0 = pieces.filter((p) => p.group === g && !p.camera);
       if (!ext0.length) continue;
       const gaps = subtract([g.start, g.end], ext0.map((p) => [p.start, p.end] as [bigint, bigint]));
+      // ≤ 1 sn'lik boşluklar senkron kenar payı sayılır (kamera sesi korunmaz); toplamları 1 sn'yi aşarsa bildirilir
+      const small = gaps.filter(([x, y]) => y - x <= SILENT_MIN);
+      const smallSum = small.reduce((n, [x, y]) => n + (y - x), 0n);
+      if (smallSum > SILENT_MIN)
+        silent.push(`${g.id}: ${small.length} kısa boşluk (her biri ≤ 1 sn) toplam ${secOf(smallSum)} sn — senkron kenar payı sayıldı, kamera sesi korunmadı → oralarda ses kalmaz`);
+      const as0 = big(g.anchor.start);
+      const ae0 = big(g.anchor.end);
       for (const [gs0, ge0] of gaps) {
-        if (ge0 - gs0 <= SILENT_MIN) continue; // senkron kenar payı
+        if (ge0 - gs0 <= SILENT_MIN) continue; // senkron kenar payı (yukarıda toplamı bildirildi)
         // aralığı kamera sınırlarında böl; her dilimde kılavuzu olan, dilimi kapsayan en iyi kamera (çapa kuralı)
         const pts = [...new Set([gs0, ge0, ...g.cams.flatMap((v) => [big(v.start), big(v.end)]).filter((t) => t > gs0 && t < ge0)])].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
         const segs: { s: bigint; e: bigint; v: ClipInfo | null }[] = [];
@@ -190,15 +197,18 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>, kept: Ke
           else segs.push({ s: x, e: y, v: best });
         }
         for (const sg of segs) {
-          const span = `${secOf(sg.s)}–${secOf(sg.e)} s (${secOf(sg.e - sg.s)} sn)`;
+          // dilim ya çapanın içinde (orada harici ses yok) ya dışında (harici ses çapaya göre kesildiği için oraya ulaşmaz) — dilimler çapa
+          // sınırlarında da bölündüğü için ikisi karışmaz
+          const why = sg.s >= as0 && sg.e <= ae0 ? "çapa içinde harici ses yok" : "çapa dışında: harici ses çapaya göre kesilir";
+          const span = `${secOf(sg.s)}–${secOf(sg.e)} s (${secOf(sg.e - sg.s)} sn, ${why})`;
           if (!sg.v) {
-            silent.push(`${g.id}: ${span} harici ses yok ve kılavuz sesi olan kamera yok → orada ses kalmaz`);
+            silent.push(`${g.id}: ${span}; kılavuz sesi olan kamera yok → orada ses kalmaz`);
             continue;
           }
           const gg = guideOf(sg.v);
           if (gg.length > kept.count) {
             errors.push(
-              `${g.id}: "${sg.v.name}" ${span} için kamera sesi korunacak ama ${kept.count ? `yalnız ${kept.count}` : "hiç"} "korunan kamera sesi" track'i var ` +
+              `${g.id}: "${sg.v.name}" ${span} için kamera sesi korunacak ama ${kept.count ? `yalnız ${kept.count} "korunan kamera sesi" track'i var` : `"korunan kamera sesi" track'i yok`} ` +
                 `(${gg.length} kanal gerekli) — TOPLA'ya tekrar bas (v0.3.3 track çerçevesi)`
             );
             continue;
