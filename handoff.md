@@ -41,8 +41,9 @@ Tutarlı kural çıkmazsa BAĞLA hiçbir şey kesmeden durur.
   - Rapor panoya kopyalanır ve `Desktop\SpreadRapor_<tarih>.txt` olarak kaydedilir. Kopyalama olmazsa metin panelde bir kutuda görünür.
   - Denenen yollar sırayla: `<home>\Desktop`, `<home>\OneDrive\Desktop`, `<home>\OneDrive\Masaüstü`, `<home>/Desktop` ("/" ayraçlı),
     veri klasörü. Önce "\\" ayraç (linker.ts'teki yardımcı dosyalarıyla aynı, çalıştığı bilinen biçim).
-  - Düğme hiç kapanmaz: işlem sürerken (ör. onay beklerken) de çalışır; o sırada Premiere'e hiçbir şey sormaz (Durum raporu ve
-    saklı kalibrasyon atlanır; kalibrasyon satırları günlükten gelir).
+  - Düğme hiç kapanmaz: işlem sürerken (ör. onay beklerken) de çalışır; o sırada Spread timeline'ı ve aktif sequence'ı okumaz
+    (Durum raporu ve saklı kalibrasyon atlanır; kalibrasyon satırları günlükten gelir). Yalnız yardımcıya ping gider (yardımcı
+    ExtendScript'le Premiere sürümünü ve aktif sequence adını okur — yalnız okuma).
   - Rapor `#report` kutusuna yazılmaz (orada yardımcıya yapıştırılacak KES planı durabilir); kendi kutusu `#issue-text`.
 - **Spread Helper** (`cep-helper/index.html`, `js/panel.js`):
   - Tek durum satırı.
@@ -112,7 +113,7 @@ BLOCKER yok. Denetim 1 (mantık dosyalarında davranış farkı yok), 2 (kurulum
 |---|---|---|
 | M1 | Günlük dosyası her açılışta eziliyordu → çökme sonrası Sorun bildir'de son TOPLA / BAĞLA yok | #8'de son hâli: dosya önceki oturumları tutar (son 4000 satır), rapor onların son 1500 satırını içerir; yazma tek hatlı |
 | M2 | Yardımcı paneli başarısız bağlamadan sonra yeşil "bağlandı" gösterebiliyordu; yapıştırılan planda sonuç kutusu hemen kayboluyordu | son BAĞLA (plan `createdAt` ya da "yapıştır") + sonucu tutulur; yeşil yalnız `ok`; başarısızsa kırmızı "Bağlama tamamlanmadı — nedeni aşağıda"; kutu plan dosyası değişene (yeni plan) kadar görünür, sonra yeni plan gösterilir (#8). İncelemecinin jsdom repro'ları (5 + 2 durum) doğru |
-| m1 | Sorun bildir işlem boyunca (onay beklerken de) kapalıydı | düğme hiç kapanmaz; işlem sürerken Premiere'e hiçbir şey sorulmaz (#8), `reporting` kilidi çift tıklamayı engeller |
+| m1 | Sorun bildir işlem boyunca (onay beklerken de) kapalıydı | düğme hiç kapanmaz; işlem sürerken Spread timeline'ı / sequence'ı okumaz (#8; yalnız yardımcıya ping), `reporting` kilidi çift tıklamayı engeller |
 | m2 | Arayüz çağrıları istisna güvenli değildi | `opStart` / `progress` / `opEnd` / `done` / `opFinish` try/catch içinde; `finally`'de önce `busy=false` |
 | m3 | Adım göstergesi: yeniden SPREAD'den sonra eski TOPLA ✓'ü; yardımcı panelinde bağlandıktan sonra hâlâ "bekliyor" | kayıt yalnız son SPREAD'den yeniyse kullanılır; BAĞLA ✓'ü `link-result.json` (`planCreatedAt` = kayıt, `ok`) ile; plan panelde zaten bağlandıysa BAĞLA sonucu "zaten bağlandı" gösterir (KES / plan akışı aynı) |
 | m4 | Onay özetleri 3–5 satırı aşıyordu; VETO "+N daha" yoktu; OTURUM SIRASI / ŞÜPHELİ ÜYE özetinde asıl bilgi yoktu | TOPLA / BAĞLA özetleri sıkıştırıldı (VETO / SESSİZ önce, "+N … daha (Ayrıntı)", tek "Not:" satırı: park, ŞÜPHELİ, kalibrasyon, köprü, kamerasız, uyarı sayısı); OTURUM SIRASI ve ŞÜPHELİ ÜYE için açık özet ("Hayır = oturumda kalsın" dahil). Soru metinleri (`q`) aynen |
@@ -133,15 +134,23 @@ BLOCKER / MAJOR yok. Denetim 1–3 yine **PASS**; Wine sınaması, `npm run chec
 
 | # | Bulgu | Düzeltme |
 |---|---|---|
-| 1 | Yardımcı paneli: yapıştırılan planın sonucu, sonra gelen yeni planı gizliyordu; dosya planında eski sonuç yeni "bekliyor" mesajının altında kalıyordu | son BAĞLA, o an dosyadaki planın `createdAt`'ini (`seen`) de tutar; plan dosyası değişince sonuç ve sonuç satırları silinir, yeni plan gösterilir. İncelemecinin iki jsdom repro'su (7 durum) doğru |
+| 1 | Yardımcı paneli: yapıştırılan planın sonucu, sonra gelen yeni planı gizliyordu; dosya planında eski sonuç yeni "bekliyor" mesajının altında kalıyordu | son BAĞLA, o an dosyadaki planın `createdAt`'ini (`seen`) de tutar; plan dosyası değişince sonuç ve sonuç satırları silinir, yeni plan gösterilir. İncelemecinin iki jsdom repro'su (5 + 8 durum) doğru |
 | 2 | Günlük: tek kuşak (iki boş açılışta çökme günlüğü gidiyordu) + `mkdir` beklerken iki yazma yarışı | `-onceki.txt` yerine dosya önceki oturumları tutar (son 4000 satır, oturum ayracıyla); `loaded` bayrağı `await`'ten önce; yazma tek hatlı (sürerken gelen istek bir kez daha yazdırır). Node'da sahte gecikmeli `mkdir` ile sınandı: çökme satırı 3 açılıştan sonra da raporda, oturumlar çift yazılmıyor |
 | 3 | "Tekrar bas (yalnız bağlar)" ipucu kesimden sonraki her duruşta çıkıyordu (ortak kural uyuşmazlığı, "klipler değişti", kesimsiz dal) | ipucu duruşun kendisinde: `SpreadStop.retryLink` yalnız bağlama isteği düşünce / grup bağlanamayınca (ikisi de kayıt yazıldıktan sonra); `reportStop`'un `ui` parametresi kaldırıldı. Mesajlar ve `cutsDone` mantığı aynen |
 | 4 | "Zaten dağıtılmış" SPREAD sonraki adımların ✓'ünü siliyordu | `done(…, noop = true)`: SPREAD "zaten dağıtılmış" ve TOPLA "zaten toplanmış"ta adım zamanı eski kalır, sonrakiler silinmez |
 | NIT | Köprüsüz yolda "zaten bağlandı" sonucunun üstünde "bekliyor … BAĞLA'ya bas" günlüğü | panelde bağlandıysa günlük "zaten bağlanmış (zaman)" der, "→ BAĞLA'ya bas" satırları yazılmaz (yalnız o durumda; diğer metinler aynı) |
-| NIT | İşlem sürerken Sorun bildir yine aktif sequence'ı soruyordu | işlem sürerken Premiere'e hiçbir şey sorulmaz |
+| NIT | İşlem sürerken Sorun bildir yine aktif sequence'ı soruyordu | işlem sürerken Spread `requireActive` çağırmaz (yardımcı ping'i kalır: yalnız okuma) |
 | NIT | Özet 6 satıra çıkabiliyordu | `capSummary`: en çok 5 satır, dikkat satırları önce |
 | NIT | KUR.cmd `%HERE%` tırnaksız | tırnaklı |
 | NIT | Wine ")" sınaması eski hatayı yakalayamazdı (Wine'ın cmd'si hoşgörülü) | not edildi; düzeltme yapı gereği doğru (blok içinde tırnaksız genişletme yok) |
+
+Denetim (#8 düzeltmeleri, 6caf269): **fixes verified** — BLOCKER / MAJOR / MINOR yok; denetim 1–3 PASS, `npm run check` PASS,
+Wine sınaması 24/24, zip ve ccx bayt bayt yeniden üretildi. Kalan (bilerek bırakılan) NIT'ler:
+- `capSummary` ortada 3 satır tutar: ÇİFT KOPYA + VETO + DİKKAT + ŞÜPHELİ içeren "Not:" birlikte gelirse (çok seyrek) "Not:" satırı
+  özette görünmez, yalnız "(+1 satır Ayrıntı'da)" kalır; tam metin "Ayrıntı ▸"da.
+- Özette çift parantez olabilir: "SESSİZ KALACAK: … (+2 aralık daha, Ayrıntı) (+1 satır Ayrıntı'da)" (görünüm).
+- Yardımcı paneli: bekleyen bir plan dosyası varken FARKLI bir plan yapıştırılıp bağlanırsa, dosyadaki plan Spread yeni bir plan
+  yazana kadar bölümde gösterilmez (Ayrıntı ▸ → BAĞLA ile yine bağlanabilir).
 
 ---
 
