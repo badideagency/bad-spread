@@ -62,7 +62,7 @@ export async function frameTicks(ctx: SeqContext): Promise<bigint | null> {
 /** x'i kare sınırına YUKARI yuvarlar (frame null → olduğu gibi). */
 export function ceilTo(x: bigint, frame: bigint | null): bigint {
   if (!frame) return x;
-  const r = x % frame;
+  const r = ((x % frame) + frame) % frame; // negatif x için de doğru (Δ çoğunlukla negatif)
   return r === 0n ? x : x + (frame - r);
 }
 

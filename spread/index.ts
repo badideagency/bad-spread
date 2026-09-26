@@ -6,9 +6,9 @@ import { runSpread } from "./src/spread";
 import { runCollect } from "./src/topla";
 import { runBind } from "./src/bagla";
 import { buildStatusReport } from "./src/status";
-import { classify, channelsOf } from "./src/classify";
+import { classify, sourcesOf } from "./src/classify";
 import { getLinker } from "./src/linker";
-import { renderChannels } from "./src/settings";
+import { bindSettingInputs, renderMapping } from "./src/settings";
 import { errText, snapshot } from "./src/model";
 import { answer, byId, clearLog, isAsking, log, setHelperStatus, setReportText } from "./src/ui";
 
@@ -53,16 +53,16 @@ async function refresh(): Promise<void> {
   for (const id of ACTIONS) setDisabled(id, busy || !ok);
 }
 
-/** Aktif sequence'taki harici kanalları bulur ve onay kutularını çizer (salt okuma). */
+/** Aktif sequence'taki harici kaynakları bulur ve kaynak eşleme panelini çizer (salt okuma). */
 async function scanChannels(verbose: boolean): Promise<void> {
   try {
     const ctx = await requireActive();
     const items = classify(await snapshot(ctx));
-    const chans = channelsOf(items).map((key) => ({ key, count: items.filter((x) => x.role === "external" && x.channel === key).length }));
-    renderChannels(chans);
-    if (verbose) log(`Harici kanallar: ${chans.map((c) => `${c.key} (${c.count})`).join(", ") || "yok"}`, "dim");
+    const srcs = sourcesOf(items).map((key) => ({ key, count: items.filter((x) => x.role === "external" && x.source === key).length }));
+    renderMapping(srcs);
+    if (verbose) log(`Harici kaynaklar: ${srcs.map((c) => `${c.key} (${c.count})`).join(", ") || "yok"}`, "dim");
   } catch (e) {
-    if (verbose) log(`Kanallar okunamadı: ${errText(e)}`, "warn");
+    if (verbose) log(`Kaynaklar okunamadı: ${errText(e)}`, "warn");
   }
 }
 
@@ -163,6 +163,7 @@ function init(): void {
   on("btn-clear", () => {
     if (!isAsking()) clearLog();
   });
+  bindSettingInputs();
   log("Spread hazır. Sıra: SPREAD → Clip > Synchronize → TOPLA → kontrol → BAĞLA. Her işlem önce onay ister ve yedek sequence alır.", "head");
   void refresh();
   void checkHelper(false);

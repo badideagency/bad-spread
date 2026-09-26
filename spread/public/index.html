@@ -45,12 +45,18 @@
       margin: 0 0 8px 0;
       color: #9a9a9a;
     }
-    #channels {
+    #mapping {
       margin: 2px 0 4px 0;
     }
-    .chan {
+    .map-row {
+      margin: 2px 0;
+    }
+    .settings label {
       display: block;
       margin: 2px 0;
+    }
+    .settings input {
+      width: 60px;
     }
     #ask {
       display: none;
@@ -63,6 +69,7 @@
       color: #e8b04a;
       font-weight: bold;
       margin-bottom: 8px;
+      white-space: pre-wrap;
     }
     #log {
       border: 1px solid #555555;
@@ -89,7 +96,7 @@
   </style>
 
   <body>
-    <h3>Spread v0.3.0</h3>
+    <h3>Spread v0.3.1</h3>
     <div class="hint">Sıra: SPREAD → Clip &gt; Synchronize → TOPLA → gözle kontrol → BAĞLA. Hiçbir işlem klip zamanlarını kaydırmaz; her biri önce onay ister ve yedek sequence alır.</div>
     <div id="status">Durum okunuyor…</div>
 
@@ -105,10 +112,14 @@
       <sp-button id="btn-helper" variant="secondary">Yardımcıyı kontrol et</sp-button>
     </div>
 
-    <div class="label">Tutulacak harici kanallar (kapatılan kanal BAĞLA'da silinir)</div>
-    <div id="channels">(sequence okunuyor…)</div>
+    <div class="label">Harici ses kaynakları → A track ("Sil" = BAĞLA'da silinir)</div>
+    <div id="mapping">(sequence okunuyor…)</div>
     <div class="row">
-      <sp-button id="btn-channels" variant="secondary" disabled="true">Kanalları tara</sp-button>
+      <sp-button id="btn-channels" variant="secondary" disabled="true">Kaynakları tara</sp-button>
+    </div>
+    <div class="settings">
+      <label>Güçlü bağ eşiği (%) <input id="set-threshold" type="number" min="50" max="100" step="1" value="90" /></label>
+      <label>Oturum arası boşluk (sn) <input id="set-gap" type="number" min="0" max="600" step="0.5" value="2" /></label>
     </div>
 
     <div id="ask">

@@ -3,13 +3,15 @@
 //   - birim eşleşmesi: hangi ses hangi kamerayla zamanda çakışıyor, çakışma süresi
 //   - makine okunur blok (CLIP / OVERLAP satırları)
 
-import { classify, devicesOf, channelsOf, roleLabel } from "./classify";
-import { makeGroups } from "./bind";
+import { classify, devicesOf, sourcesOf, roleLabel } from "./classify";
+import { collectedShape, makeFrame } from "./collect";
+import { analyze, describeLinks, sessionGroups } from "./sessions";
+import { getThreshold, mappingFor } from "./settings";
 import { big, secOf, snapshot, trackLabel, type ClipInfo } from "./model";
 import { makePlan, type Unit } from "./plan";
 import { requireActive } from "./session";
 
-const PANEL = "Spread v0.3.0";
+const PANEL = "Spread v0.3.1";
 
 function overlapTicks(a: ClipInfo, b: ClipInfo): bigint {
   const s = big(a.start) > big(b.start) ? big(a.start) : big(b.start);
@@ -81,13 +83,27 @@ export async function buildStatusReport(): Promise<string> {
 
   L.push("");
   L.push("SINIFLAMA (TOPLA / BAĞLA)");
-  for (const d of devicesOf(cls)) L.push(`  cihaz ${d.key}: ${d.clips.length} klip, toplam ${secOf(d.total)} sn (ör. "${d.sample}")`);
-  for (const ch of channelsOf(cls)) L.push(`  harici kanal ${ch}: ${cls.filter((x) => x.role === "external" && x.channel === ch).length} klip`);
+  for (const d of devicesOf(cls)) L.push(`  kamera cihazı ${d.key}: ${d.clips.length} klip, toplam ${secOf(d.total)} sn (ör. "${d.sample}")`);
+  for (const src of sourcesOf(cls)) L.push(`  harici kaynak ${src}: ${cls.filter((x) => x.role === "external" && x.source === src).length} klip`);
   for (const x of cls.filter((i) => i.role === "unknown")) L.push(`  dokunulmaz: ${trackLabel(x.clip.kind, x.clip.track)} "${x.clip.name}" (${x.why})`);
-  const groups = makeGroups(cls.filter((x) => x.role === "camera").map((x) => x.clip));
-  L.push(`  gruplar (zamanda çakışan kameralar): ${groups.length}`);
-  for (const g of groups)
-    L.push(`    ${g.id} [${secOf(g.start)}s–${secOf(g.end)}s] ${g.cams.length} kamera; çapa ${trackLabel("V", g.anchor.track)} "${g.anchor.name}" [${secOf(g.anchor.start)}s–${secOf(g.anchor.end)}s]`);
+
+  const frame = makeFrame(cls, mappingFor(sourcesOf(cls)));
+  const shape = collectedShape(frame, cls);
+  const a = analyze(s, cls, { threshold: getThreshold(), exclude: shape.shaped ? shape.parked : undefined });
+  L.push("");
+  L.push(`OTURUMLAR (güçlü bağ eşiği %${Math.round(getThreshold() * 100)}; ${shape.shaped ? "TOPLA düzeninde — park track'leri hariç" : "TOPLA düzeninde değil"})`);
+  for (const d of a.duplicates) L.push(`  ÇİFT KOPYA: ${d}`);
+  L.push(`  güçlü bağlar (${a.links.length}):`);
+  for (const l of describeLinks(a, 200)) L.push(`    ${l}`);
+  for (const x of a.sessions) {
+    L.push(`  ${x.id} [${secOf(x.start)}s–${secOf(x.end)}s] ${x.label}`);
+    for (const g of sessionGroups(x))
+      L.push(`    ${g.id}: ${g.cams.length} kamera; çapa ${trackLabel("V", g.anchor.track)} "${g.anchor.name}" [${secOf(g.anchor.start)}s–${secOf(g.anchor.end)}s]`);
+  }
+  for (const o of a.orphans) L.push(`  sahipsiz: ${o.label} [${secOf(o.start)}s–${secOf(o.end)}s]`);
+  for (const v of a.vetoDecisions) L.push(`  ${v}`);
+  for (const u of a.unresolved) for (const l of u.lines) L.push(`  AYRILAMADI: ${l}`);
+  if (a.orderIssue) for (const l of a.orderIssue.lines) L.push(`  SIRA ${a.orderIssue.kind === "conflict" ? "ÇELİŞKİSİ" : "BELİRSİZ"}: ${l}`);
 
   L.push("");
   L.push("MAKİNE OKUNUR (noktalı virgül ayraçlı)");

@@ -1,5 +1,6 @@
-// BAĞLA — TOPLA + gözle kontrolden SONRA: gruplar → çapalar → harici sesleri çapaya göre kes → kılavuz sesleri ve kapatılmış
-// kanalları sil → her grubu yardımcı (CEP / ExtendScript linkSelection) ile bağla.
+// BAĞLA — TOPLA + gözle kontrolden SONRA, OTURUM İÇİNDE: gruplar → çapalar → harici sesleri KENDİ oturumunun çapasına göre kes →
+// kılavuz sesleri (grubunda harici ses varsa) ve "sil" kaynaklarını sil → her grubu yardımcı (CEP / ExtendScript linkSelection) ile bağla.
+// Oturumlar TOPLA ile aynı modülden (sessions.ts) ve aynı track çerçevesinden (collect.makeFrame); park track'leri analize girmez.
 // Plan: bind.ts (saf). Bağlama: linker.ts (TEK modül). Güvenlik: guard.ts (onay → yedek → her transaction sonrası tick düzeyinde
 // doğrulama → tutmazsa DUR + Ctrl+Z sayısı + yedeğin adı; kendi başına düzeltme yok).
 // Yarım iş bırakmamak için sıra: ÖNCE yardımcıya ping (yoksa HİÇBİR ŞEYE dokunmadan dur), sonra kesme ve silme, EN SON bağlama.
@@ -20,7 +21,7 @@ import {
   type BindPlan,
   type Slot,
 } from "./bind";
-import { where } from "./classify";
+import { classify, sourcesOf, where } from "./classify";
 import {
   askUser,
   assertNotStopped,
@@ -35,12 +36,13 @@ import {
   runTx,
   SpreadStop,
 } from "./guard";
-import { makeCollectPlan } from "./collect";
+import { collectedShape, makeFrame } from "./collect";
+import { analyze } from "./sessions";
 import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
 import { getLinker, type LinkGroupResult } from "./linker";
 import { big, fmtClip, relocate, secOf, settle, sleep, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
 import { assertSameSequence, requireActive, type SeqContext } from "./session";
-import { isKept } from "./settings";
+import { getThreshold, mappingFor } from "./settings";
 import { log, setHelperStatus } from "./ui";
 import type { TxOps } from "./edit";
 
@@ -58,13 +60,14 @@ function printBindPlan(plan: BindPlan, s: Snapshot): void {
     );
     for (const p of ps)
       log(
-        `     ${p.channel.padEnd(6)} ${trackLabel("A", p.src.track)} "${p.src.name}" → [${secOf(p.start)}s–${secOf(p.end)}s] in=${secOf(p.inPt)}s` +
+        `     ${p.source.padEnd(10)} ${trackLabel("A", p.src.track)} "${p.src.name}" → [${secOf(p.start)}s–${secOf(p.end)}s] in=${secOf(p.inPt)}s` +
           (p.whole ? " (olduğu gibi kalır)" : " (kesilecek)"),
         "dim"
       );
   }
   for (const c of plan.deleteOutside) log(`  sil (hiçbir çapaya düşmüyor): ${where(c)}`, "dim");
-  if (plan.deleteUnkept.length) log(`  sil (ayarda kapalı kanal): ${plan.deleteUnkept.map(where).join(", ")}`, "dim");
+  if (plan.deleteSil.length) log(`  sil (kaynak eşlemede "sil"): ${plan.deleteSil.map(where).join(", ")}`, "dim");
+  for (const [g, gg] of plan.keptGuides) if (gg.length) log(`  ${g.id}: kamera sesi korunur (${gg.map(where).join(", ")})`, "dim");
   if (plan.deleteGuides.length) log(`  sil: ${plan.deleteGuides.length} kamera kılavuz sesi`, "dim");
   for (const w of plan.warnings) log(`uyarı: ${w}`, "warn");
   for (const e of plan.errors) log(`HATA: ${e}`, "err");
@@ -152,21 +155,47 @@ export async function runBind(): Promise<void> {
     log(`sequence: "${ctx.name}"`, "dim");
     const s0 = await snapshot(ctx);
     assertNotStopped(ctx, s0, "BAĞLA");
-    const plan = makeBindPlan(s0, isKept);
-    // BAĞLA TOPLA düzeninde çalışır: TOPLA taşıdığı kamera/kılavuz çiftlerini clone ile AYIRIR; kılavuzu hâlâ kamerasına bağlı bir
-    // düzende (ör. SPREAD'den hemen sonra) kılavuz silmek bağlı kamerayı da silebilir (kanıtlanmadı). Kanal sırası ayara bağlı
-    // olduğundan iki sıra da kabul edilir.
-    const notCollected = [makeCollectPlan(s0, isKept), makeCollectPlan(s0, () => true)].reduce((a, b) => (a.moves.length <= b.moves.length ? a : b));
-    if (notCollected.moves.length && !plan.errors.length)
-      plan.errors.push(
-        `düzen TOPLA düzeninde değil (${notCollected.moves.length} klip cihaz/kanal track'inde değil, ör. ${notCollected.moves
+    const items = classify(s0);
+    const mapping = mappingFor(sourcesOf(items));
+    const frame = makeFrame(items, mapping);
+    const shape = collectedShape(frame, items);
+    const a = analyze(s0, items, { threshold: getThreshold(), exclude: shape.parked });
+    const plan = makeBindPlan(a, mapping);
+    // Ön koşullar (hepsi plan hatası → hiçbir şey değişmez):
+    //  - TOPLA düzeni (dikey): TOPLA taşıdığı kamera/kılavuz çiftlerini clone ile AYIRIR; kılavuzu hâlâ kamerasına bağlı bir düzende
+    //    kılavuz silmek bağlı kamerayı da silebilir (kanıtlanmadı). Park bölgesi (sahipsizler) analize girmez.
+    //  - oturumlar zamanda ayrık (TOPLA'nın yatay dizimi) ve ayrılamayan / çift kopya yok
+    const pre: string[] = [];
+    if (!shape.shaped)
+      pre.push(
+        `düzen TOPLA düzeninde değil (${shape.misplaced.length} klip cihaz/kaynak track'inde değil, ör. ${shape.misplaced
           .slice(0, 3)
-          .map((m) => `${where(m.x.clip)} → ${trackLabel(m.x.clip.kind, m.target)}`)
+          .map((m) => where(m.clip))
           .join(", ")}) — önce TOPLA'ya bas`
       );
+    for (const d of a.duplicates) pre.push(`çift kopya: ${d}`);
+    for (const u of a.unresolved) pre.push(`ayrılamayan kayıtlar (önce TOPLA): ${u.lines[0]}`);
+    for (let i = 0; i < a.sessions.length; i++)
+      for (let j = i + 1; j < a.sessions.length; j++) {
+        const x = a.sessions[i];
+        const y = a.sessions[j];
+        if (x.start < y.end && y.start < x.end) pre.push(`${x.id} ile ${y.id} zamanda çakışıyor — önce TOPLA'ya bas (oturumları sırayla dizer)`);
+      }
+    plan.errors.unshift(...pre);
+    // son düzendeki harici klipler (park bölgesi hariç) + ait oldukları oturum (oturumlar zamanda ayrık)
+    const extFinal = (snap: Snapshot) =>
+      classify(snap)
+        .filter((x) => x.role === "external" && x.clip.track < frame.aPark)
+        .map((x) => ({
+          clip: x.clip,
+          source: x.source!,
+          sessionId: a.sessions.find((ss) => big(x.clip.start) >= ss.start && big(x.clip.end) <= ss.end)?.id ?? null,
+        }));
+    for (const x of a.sessions) log(`  ${x.id} [${secOf(x.start)}s–${secOf(x.end)}s] ${x.label}`, "dim");
+    if (shape.parked.size) log(`  park track'lerinde ${shape.parked.size} klip — BAĞLA'ya girmez, dokunulmaz`, "dim");
     printBindPlan(plan, s0);
     if (plan.errors.length) throw new SpreadStop(`Plan kurulamadı (${plan.errors.length} hata). BAĞLA BAŞLAMADI, hiçbir şey değişmedi.`);
-    const deletes = [...plan.deleteGuides, ...plan.deleteUnkept, ...plan.deleteOutside];
+    const deletes = [...plan.deleteGuides, ...plan.deleteSil, ...plan.deleteOutside];
     const nPieces = plan.cuts.reduce((n, c) => n + c.pieces.length, 0);
     const edits = deletes.length + plan.cuts.length > 0;
     const linkable = plan.groups.length;
@@ -174,8 +203,9 @@ export async function runBind(): Promise<void> {
     const ans = await askUser(
       `BAĞLA: ${plan.groups.length} grup (çapa = gruptaki en uzun kamera klibi). ` +
         `${plan.cuts.length} harici ses ${nPieces} parçaya kesilecek, ${plan.pieces.filter((p) => p.whole).length} ses olduğu gibi kalacak; ` +
-        `silinecek: ${plan.deleteGuides.length} kılavuz ses, ${plan.deleteUnkept.length} kapalı kanal klibi, ${plan.deleteOutside.length} çapa dışı ses. ` +
-        `Tutulan kanallar: ${plan.keptChannels.join(", ") || "yok"}. Sonra ${linkable} grup yardımcıyla bağlanacak. ` +
+        `silinecek: ${plan.deleteGuides.length} kılavuz ses, ${plan.deleteSil.length} "sil" kaynağı klibi, ${plan.deleteOutside.length} çapa dışı ses; ` +
+        `${[...plan.keptGuides.values()].reduce((n, g) => n + g.length, 0)} kamera sesi (grubunda harici ses yok) korunacak. ` +
+        `Kaynaklar: ${plan.keptSources.join(", ") || "yok"}. Kesim yalnız oturum içinde. Sonra ${linkable} grup yardımcıyla bağlanacak. ` +
         `${plan.warnings.length ? `${plan.warnings.length} uyarı (günlükte). ` : ""}` +
         `${edits ? "Önce yedek sequence oluşturulacak." : "Kesme/silme yok → yalnız bağlama (yedek alınmaz)."} Devam?`
     );
@@ -256,7 +286,7 @@ export async function runBind(): Promise<void> {
         await settle();
       }
       sF = await snapshot(ctx);
-      const fin = [...compareLayout(expectBindFinal(s0, plan), sF), ...verifyBindContent(plan, sF), ...snapshotOverlaps(sF)];
+      const fin = [...compareLayout(expectBindFinal(s0, plan), sF), ...verifyBindContent(plan, extFinal(sF)), ...snapshotOverlaps(sF)];
       if (fin.length) throw new SpreadStop("Kesme doğrulaması tutmadı.", fin);
       cutsDone = true;
       log(
@@ -267,13 +297,13 @@ export async function runBind(): Promise<void> {
     } else {
       sF = await snapshot(ctx);
       if (!multisetEqual(s0, sF)) throw new SpreadStop("Onay beklerken timeline değişti. Güvenlik için durduruldu (hiçbir şey yapılmadı).");
-      const fin = verifyBindContent(plan, sF);
+      const fin = verifyBindContent(plan, extFinal(sF));
       if (fin.length) throw new SpreadStop("Düzen beklenen hâlde değil.", fin);
       cutsDone = true;
     }
 
     // bağlama — en son; önce tekrar ping (ağır transaction'lardan sonra gecikebilir → birkaç deneme)
-    const targets = linkTargets(plan, sF);
+    const targets = linkTargets(plan);
     const groups = targets.filter((t) => t.items.length >= 2);
     for (const t of targets.filter((x) => x.items.length < 2)) log(`   ${t.label}: bağlanacak ikinci öğe yok — atlandı`, "dim");
     const ping2 = await pingRetry(3);

@@ -1,13 +1,12 @@
 // Sınıflama (TOPLA / BAĞLA) — SAF fonksiyonlar (Premiere çağrısı yok; yalnız snapshot DEĞERLERİ).
 //
-// Dosya adı = klibin proje öğesinin adı (ProjectItem.name; okunamazsa klip adı).
-//   KAMERA   : video klibi, uzantısı bir video dosyası (.MP4/.MOV/.MXF…), ayar katmanı değil.
-//              CİHAZ = dosya adının ilk rakamdan önceki kısmı: "A038C001_….MP4" → "A", "C0112.MP4" → "C".
-//   KILAVUZ  : ses klibi, kaynağı (proje öğesi) timeline'daki bir kamera videosuyla AYNI → kameranın kendi sesi.
-//   HARİCİ   : ses klibi, uzantısı bir ses dosyası (.WAV/.BWF/.MP3…), kılavuz değil.
-//              KANAL = dosya adının son eki "_Tr1", "_Tr2", "_TrLR"… → "Tr1", "Tr2", "TrLR"; eki yoksa "(eksiz)".
+// Rol timeline'dan ve dosya türünden gelir; cihaz / kayıt / kanal kimliği dosya adından (identity.ts):
+//   KAMERA    : video klibi, uzantısı bir video dosyası (.MP4/.MOV/.MXF…), ayar katmanı değil.
+//   KILAVUZ   : ses klibi, kaynağı (proje öğesi) timeline'daki bir kamera videosuyla AYNI → kameranın kendi sesi.
+//   HARİCİ    : ses klibi, uzantısı bir ses dosyası (.WAV/.BWF/.MP3…), kılavuz değil. Kaynak anahtarı: "Zoom Tr1", "DJI", …
 //   BİLİNMEYEN: geri kalan her şey (grafik, metin, renk, ayar katmanı, videosu timeline'da olmayan kamera sesi…) → DOKUNULMAZ.
 
+import { identify, sourceCompare, sourceKey, type Identity } from "./identity";
 import { big, trackLabel, type ClipInfo, type Snapshot } from "./model";
 
 export type Role = "camera" | "guide" | "external" | "unknown";
@@ -15,15 +14,15 @@ export type Role = "camera" | "guide" | "external" | "unknown";
 export interface Classified {
   clip: ClipInfo;
   role: Role;
-  /** kamera / kılavuz: cihaz anahtarı */
+  /** kamera / kılavuz: kamera dosyasının kimliği; harici: ses dosyasının kimliği; bilinmeyen: null */
+  ident: Identity | null;
+  /** kamera / kılavuz: cihaz (V track'i belirler) */
   device: string | null;
-  /** harici: kanal anahtarı */
-  channel: string | null;
+  /** harici: kaynak anahtarı (A track'i belirler) */
+  source: string | null;
   /** bilinmeyen: neden */
   why: string;
 }
-
-export const NO_CHANNEL = "(eksiz)";
 
 const VIDEO_EXT = new Set(["mp4", "mov", "mxf", "mts", "m2ts", "avi", "mkv", "m4v", "3gp", "mpg", "mpeg", "wmv", "r3d", "braw", "crm", "insv", "lrv", "hevc", "h264"]);
 const AUDIO_EXT = new Set(["wav", "bwf", "mp3", "aif", "aiff", "m4a", "flac", "aac", "ogg", "wma", "caf"]);
@@ -37,63 +36,37 @@ export function extOf(name: string): string {
   return m ? m[1].toLowerCase() : "";
 }
 
-export function baseOf(name: string): string {
-  return name.trim().replace(/\.[A-Za-z0-9]{1,5}$/, "");
-}
-
-/** "A038C001_260912.MP4" → "A"; "C0112.MP4" → "C"; "DJI_0001.MP4" → "DJI"; "20230101_1.mp4" → "#" */
-export function deviceOf(name: string): string {
-  const head = (/^[^0-9]*/.exec(baseOf(name)) ?? [""])[0].replace(/[\s._-]+$/, "").toUpperCase();
-  return head || "#";
-}
-
-/**
- * "260912_101512_Tr1.WAV" → "Tr1"; "…_TrLR.WAV" → "TrLR"; Zoom H serisi "…_LR.WAV" / "…_MS.WAV" → "LR" / "MS"; eki yoksa NO_CHANNEL.
- * Yalnız bilinen biçimler (Tr + sayı | LR | MS | MIX | L | R): "_trim" gibi rastgele ekler kanal sayılmaz.
- */
-export function channelOf(name: string): string {
-  const b = baseOf(name);
-  const tr = /_tr(\d+|lr|ms|mix|l|r)$/i.exec(b);
-  if (tr) return `Tr${tr[1].toUpperCase()}`;
-  const zoom = /_(lr|ms)$/i.exec(b);
-  return zoom ? zoom[1].toUpperCase() : NO_CHANNEL;
-}
-
-/** Kanal sırası: Tr1, Tr2, … (sayısal) → TrLR, TrMS, LR … (alfabetik) → (eksiz) */
-export function channelCompare(a: string, b: string): number {
-  const rank = (c: string) => (c === NO_CHANNEL ? 2 : /^Tr\d+$/.test(c) ? 0 : 1);
-  const ra = rank(a);
-  const rb = rank(b);
-  if (ra !== rb) return ra - rb;
-  if (ra === 0) return Number(a.slice(2)) - Number(b.slice(2));
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
 export function classify(s: Snapshot): Classified[] {
   const out: Classified[] = [];
-  const camSources = new Set<string>();
-  const mk = (clip: ClipInfo, role: Role, device: string | null, channel: string | null, why: string): Classified => ({ clip, role, device, channel, why });
+  const camIdent = new Map<string, Identity>(); // projId → kamera kimliği
+  const mk = (clip: ClipInfo, role: Role, ident: Identity | null, why = ""): Classified => ({
+    clip,
+    role,
+    ident,
+    device: role === "camera" || role === "guide" ? ident!.device : null,
+    source: role === "external" ? sourceKey(ident!) : null,
+    why,
+  });
   for (const c of s.clips) {
     if (c.kind !== "V") continue;
     const fn = fileName(c);
-    if (c.adjustment) out.push(mk(c, "unknown", null, null, "ayar katmanı"));
-    else if (c.projId === "?") out.push(mk(c, "unknown", null, null, "proje öğesi okunamadı"));
-    else if (!VIDEO_EXT.has(extOf(fn))) out.push(mk(c, "unknown", null, null, "video dosyası değil (grafik / metin / renk?)"));
+    if (c.adjustment) out.push(mk(c, "unknown", null, "ayar katmanı"));
+    else if (c.projId === "?") out.push(mk(c, "unknown", null, "proje öğesi okunamadı"));
+    else if (!VIDEO_EXT.has(extOf(fn))) out.push(mk(c, "unknown", null, "video dosyası değil (grafik / metin / renk?)"));
     else {
-      out.push(mk(c, "camera", deviceOf(fn), null, ""));
-      camSources.add(c.projId);
+      const id = identify(fn);
+      out.push(mk(c, "camera", id));
+      if (!camIdent.has(c.projId)) camIdent.set(c.projId, id);
     }
   }
-  const deviceOfSource = new Map<string, string>();
-  for (const x of out) if (x.role === "camera" && !deviceOfSource.has(x.clip.projId)) deviceOfSource.set(x.clip.projId, x.device!);
   for (const c of s.clips) {
     if (c.kind !== "A") continue;
     const fn = fileName(c);
-    if (c.projId !== "?" && camSources.has(c.projId)) out.push(mk(c, "guide", deviceOfSource.get(c.projId)!, null, ""));
-    else if (c.projId === "?") out.push(mk(c, "unknown", null, null, "proje öğesi okunamadı"));
-    else if (AUDIO_EXT.has(extOf(fn))) out.push(mk(c, "external", null, channelOf(fn), ""));
-    else if (VIDEO_EXT.has(extOf(fn))) out.push(mk(c, "unknown", null, null, "kamera sesi ama videosu timeline'da yok"));
-    else out.push(mk(c, "unknown", null, null, "ses dosyası değil"));
+    if (c.projId !== "?" && camIdent.has(c.projId)) out.push(mk(c, "guide", camIdent.get(c.projId)!));
+    else if (c.projId === "?") out.push(mk(c, "unknown", null, "proje öğesi okunamadı"));
+    else if (AUDIO_EXT.has(extOf(fn))) out.push(mk(c, "external", identify(fn)));
+    else if (VIDEO_EXT.has(extOf(fn))) out.push(mk(c, "unknown", null, "kamera sesi ama videosu timeline'da yok"));
+    else out.push(mk(c, "unknown", null, "ses dosyası değil"));
   }
   return out;
 }
@@ -105,7 +78,7 @@ export interface DeviceInfo {
   sample: string;
 }
 
-/** Cihazlar, toplam süreye göre (uzun olan önce; eşitlikte ada göre). İndeks = hedef V track. */
+/** Kamera cihazları: toplam süre uzun olan önce; EŞİTSE cihaz adı alfabetik. İndeks = hedef V track. */
 export function devicesOf(items: Classified[]): DeviceInfo[] {
   const m = new Map<string, DeviceInfo>();
   for (const x of items) {
@@ -118,9 +91,9 @@ export function devicesOf(items: Classified[]): DeviceInfo[] {
   return [...m.values()].sort((a, b) => (a.total > b.total ? -1 : a.total < b.total ? 1 : a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
-/** Sequence'ta bulunan harici kanallar (sıralı). */
-export function channelsOf(items: Classified[]): string[] {
-  return [...new Set(items.filter((x) => x.role === "external").map((x) => x.channel!))].sort(channelCompare);
+/** Sequence'ta bulunan harici kaynaklar (sıralı): "Zoom Tr1", "Zoom Tr2", "Zoom TrLR", "DJI", … */
+export function sourcesOf(items: Classified[]): string[] {
+  return [...new Set(items.filter((x) => x.role === "external").map((x) => x.source!))].sort(sourceCompare);
 }
 
 export const overlapTicks = (a: { start: string; end: string }, b: { start: string; end: string }): bigint => {
@@ -141,7 +114,7 @@ export function roleLabel(x: Classified): string {
     case "guide":
       return `kılavuz ses (${x.device})`;
     case "external":
-      return `harici ${x.channel}`;
+      return `harici ${x.source}`;
     default:
       return `DOKUNULMAZ (${x.why})`;
   }
