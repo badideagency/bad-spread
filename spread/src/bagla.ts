@@ -178,7 +178,12 @@ async function handToPanel(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame, w
   const text = planText(ctx, bind, lf);
   const w = await writeLinkPlan(text);
   if (why === null) {
-    log(w.ok ? `   KES planı: ${w.path}` : `   KES planı dosyaya yazılamadı (${w.path}): ${w.detail}`, "dim");
+    if (w.ok) log(`   KES planı: ${w.path}`, "dim");
+    else {
+      // köprü bu an çalışıyor ama bağlama yine de düşebilir: panel yolu her zaman açık kalsın → plan rapor kutusunda
+      setReportText(text);
+      log(`   KES planı dosyaya yazılamadı (${w.path}): ${w.detail} — plan rapor kutusunda (gerekirse Spread Helper panelinde 'Planı yapıştır').`, "warn");
+    }
     return;
   }
   setReportText(text);

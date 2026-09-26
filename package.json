@@ -11,7 +11,7 @@
     "check:api": "node scripts/check-api-refs.mjs",
     "api:table": "node scripts/check-api-refs.mjs --table",
     "smoke": "npm run build && node dev/smoke.cjs && node dev/smoke.cjs grim && node dev/smoke.cjs throw && node dev/smoke.cjs strict && node dev/smoke.cjs linked && node dev/smoke.cjs filter",
-    "check": "npm run typecheck && npm run lint && npm run check:api && npm run check:jsx && npm run check:core && npm run smoke && npm run smoke:spread",
+    "check": "npm run typecheck && npm run lint && npm run check:api && npm run check:jsx && npm run check:xml && npm run check:core && npm run smoke && npm run smoke:spread",
     "package": "bash scripts/package-ccx.sh",
     "verify:ccx": "python3 scripts/verify-ccx.py release/spread-probe.ccx",
     "build:spread": "vite build --config spread/vite.config.mjs",
@@ -21,6 +21,7 @@
     "check:jsx": "node scripts/check-jsx.mjs",
     "build:core": "vite build --config spread/vite.core.mjs",
     "check:core": "node scripts/check-core.mjs",
+    "check:xml": "python3 scripts/check-xml.py",
     "package:helper": "bash scripts/package-helper.sh"
   },
   "devDependencies": {

@@ -47,6 +47,12 @@
     return p.join(p.dirname(infoPath(pathMod, platform, home)), "link-plan.json");
   }
 
+  /** Paneldeki BAĞLA'nın sonucu (Spread'in durum raporu okur; spread/src/linker.ts helperResultPath ile AYNI kural). */
+  function resultPath(pathMod, platform, home) {
+    var p = /^win/i.test(platform) ? pathMod.win32 : pathMod.posix;
+    return p.join(p.dirname(infoPath(pathMod, platform, home)), "link-result.json");
+  }
+
   // ------------------------------------------------------------------ doğrulama
   var ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
   var TICKS_RE = /^-?\d{1,24}$/;
@@ -131,6 +137,7 @@
     var server6 = null;
     var chain = Promise.resolve();
     var planFile = planPath(deps.path, platform, home);
+    var resultFile = resultPath(deps.path, platform, home);
     var core = deps.core || null;
     var listeners = [];
     // panelde gösterilen durum (sunucu, Premiere, son istek, son BAĞLA)
@@ -333,8 +340,20 @@
      */
     function bindFromPlan(opts) {
       var t0 = new Date().toISOString();
+      var planAt = null;
       var finish = function (out) {
         state.lastBind = { at: t0, ok: out.ok, summary: out.summary };
+        // Spread'in durum raporu için: bu plan (createdAt) panelde bağlandı mı
+        try {
+          if (out.sequence)
+            deps.fs.writeFileSync(
+              resultFile,
+              JSON.stringify({ v: 1, kind: "spread-link-result", sequence: out.sequence, planCreatedAt: planAt, at: t0, ok: out.ok, summary: out.summary }),
+              "utf8"
+            );
+        } catch (e) {
+          log("sonuç dosyası yazılamadı: " + (e && e.message));
+        }
         emit("bind");
         return out;
       };
@@ -342,6 +361,7 @@
         .then(function () {
           if (!core || typeof core.groupsFromLayout !== "function") throw stopWith("js/spread-core.js yüklenmedi — yardımcıyı yeniden kur");
           var plan = readPlan(opts && opts.text);
+          planAt = plan.createdAt;
           log("BAĞLA (panel): plan " + plan.from + ", " + plan.groups.length + " grup, sequence \"" + plan.sequence + "\"");
           return jsx("spreadHelper_read()", 60000).then(function (r) {
             if (!r || r.ok !== true) throw stopWith("aktif sequence okunamadı: " + ((r && r.error) || "?"));
@@ -357,17 +377,30 @@
               return g.items.length >= 2;
             });
             var results = [];
+            var batchError = null;
             var i = 0;
             var next = function () {
               if (i >= groups.length) return Promise.resolve();
               var batch = groups.slice(i, i + LINK_BATCH);
               i += LINK_BATCH;
               var req = cleanLinkRequest({ sequence: plan.sequence, groups: batch });
-              return jsx("spreadHelper_link(" + literal(req) + ")", 170000).then(function (lr) {
-                if (!lr || lr.ok !== true) throw stopWith("bağlama başarısız: " + ((lr && lr.error) || "?"));
-                for (var k = 0; k < lr.results.length; k++) results.push(lr.results[k]);
-                return next();
-              });
+              var fail = function (why) {
+                // bu parti ve sonrakiler gönderilmedi / sonuçsuz: grup grup "hata" olarak raporlanır (bağlananlar korunur)
+                batchError = why;
+                groups.slice(i - LINK_BATCH).forEach(function (g) {
+                  results.push({ id: g.id, total: g.items.length, found: g.items.length, missing: [], linked: false, verified: null, detail: "bağlanmadı — " + why });
+                });
+              };
+              return jsx("spreadHelper_link(" + literal(req) + ")", 170000).then(
+                function (lr) {
+                  if (!lr || lr.ok !== true) return fail("bağlama isteği başarısız: " + ((lr && lr.error) || "?"));
+                  for (var k = 0; k < lr.results.length; k++) results.push(lr.results[k]);
+                  return next();
+                },
+                function (e) {
+                  return fail("bağlama isteği başarısız: " + ((e && e.message) || e));
+                }
+              );
             };
             return next().then(function () {
               var labelOf = {};
@@ -391,6 +424,7 @@
               var summary =
                 (bad ? "✗ " + bad + "/" + rows.length + " grup bağlanamadı" : unv ? "⚠ " + rows.length + " grup bağlandı, " + unv + " doğrulanamadı" : "✓ " + rows.length + " grup bağlandı ve doğrulandı") +
                 (lay.ignored.length ? " (" + lay.ignored.length + " öğeye dokunulmadı)" : "");
+              if (batchError) summary += " — " + batchError + " (yeniden basmak güvenli: bağlananlar yeniden bağlanır)";
               log("BAĞLA (panel): " + summary);
               return finish({ ok: !bad, summary: summary, sequence: plan.sequence, rows: rows, ignored: lay.ignored, lines: [] });
             });
@@ -418,20 +452,18 @@
       }
     }
 
-    return {
+    var api0 = {
       version: VERSION,
       port: port,
       infoFile: file,
+      resultFile: resultFile,
       address: function () {
         return server ? server.address() : null;
       },
       start: function () {
-        // önceki (çökmüş) bir oturumdan kalan bilgi dosyası: sunucu açılamazsa panel eski token'la başka bir sürece gitmesin
-        try {
-          deps.fs.unlinkSync(file);
-        } catch (e) {
-          /* yoksa geç */
-        }
+        // Bilgi dosyası dinlemeden ÖNCE silinmez: port başka bir Spread Helper'daysa (EADDRINUSE) dosya ONUNDUR. Başarılı dinlemede
+        // üzerine yazılır; kapanışta yalnız KENDİ token'ımızı taşıyorsa silinir.
+        if (server) return Promise.resolve();
         return new Promise(function (resolve, reject) {
           server = deps.http.createServer(handle);
           server.on("error", function (e) {
@@ -461,9 +493,16 @@
             try {
               server6 = deps.http.createServer(handle);
               server6.on("error", function (e6) {
-                state.v6 = "açılamadı (" + ((e6 && e6.code) || (e6 && e6.message) || e6) + ") — localhost 127.0.0.1'e gider";
-                log("[::1]:" + port + " " + state.v6);
                 server6 = null;
+                if (e6 && e6.code === "EADDRINUSE") {
+                  // [::1]:PORT başka bir programda: "localhost" oraya çözülürse Spread token'ı ONA gönderirdi → güvenlik için dur
+                  state.error = "[::1]:" + port + " başka bir program tarafından kullanılıyor — token sızmasın diye sunucu DURDURULDU";
+                  log(state.error);
+                  api0.stop();
+                  return;
+                }
+                state.v6 = "açılamadı (" + ((e6 && e6.code) || (e6 && e6.message) || e6) + ") — IPv6 yok, localhost 127.0.0.1'e gider";
+                log("[::1]:" + port + " " + state.v6);
                 emit("status");
               });
               server6.listen(port, "::1", function () {
@@ -519,12 +558,15 @@
         var s6 = server6;
         server = null;
         server6 = null;
-        return Promise.all([close(s4), close(s6)]).then(function () {});
+        return Promise.all([close(s4), close(s6)]).then(function () {
+          emit("status");
+        });
       },
     };
+    return api0;
   }
 
-  var api = { createHelper: createHelper, cleanLinkRequest: cleanLinkRequest, cleanPlan: cleanPlan, literal: literal, infoPath: infoPath, planPath: planPath, VERSION: VERSION, PORT: PORT, LIMITS: LIMITS };
+  var api = { createHelper: createHelper, cleanLinkRequest: cleanLinkRequest, cleanPlan: cleanPlan, literal: literal, infoPath: infoPath, planPath: planPath, resultPath: resultPath, VERSION: VERSION, PORT: PORT, LIMITS: LIMITS };
   if (typeof module === "object" && module && module.exports) module.exports = api;
 
   // ------------------------------------------------------------------ CEP paneli: sunucuyu başlat, arayüze (js/panel.js) aç

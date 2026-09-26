@@ -214,7 +214,7 @@ var SpreadCore = (function(exports) {
 	*  - harici ses (A track < aPark): çapanın İÇİNDE (start ≥ çapa.start ve end ≤ çapa.end) → o grubun. KES parçası = ses ∩ çapa:
 	*    ses çapayı kapsıyorsa start/end çapayla BİREBİR aynı, kapsamıyorsa çapanın içinde kısa bir parça. Hiçbir çapanın içinde değil ama
 	*    bir ana kameraya değiyorsa HATA (KES yapılmamış / düzen değişmiş); hiçbir ana kameraya değmiyorsa (kamerasız oturum) dokunulmaz.
-	*  - "sil" track'inde klip → HATA (KES silmemiş).
+	*  - "sil" track'inde klip bir ana kameraya değiyorsa → HATA (KES silmemiş); değmiyorsa (kamerasız oturum) dokunulmaz.
 	*  - kamera sesi: videosuyla aynı kaynak + aynı start/end → grubunda harici ses YOKSA grubun (korunan kamera sesi), VARSA HATA (KES
 	*    kılavuzu silmemiş). Videosuyla aynı yerde olmayan kamera sesi: harici sesli bir grubun çapasına değiyorsa HATA, değilse dokunulmaz.
 	*/
@@ -233,13 +233,15 @@ var SpreadCore = (function(exports) {
 		const sil = new Set(frame.silTracks);
 		for (const x of items.filter((i) => i.role === "external" && i.clip.track < frame.aPark)) {
 			const c = x.clip;
+			const touchesCam = mainCams.some((v) => touches(c, v));
 			if (sil.has(c.track)) {
-				errors.push(`${at(c)}: "sil" kaynağının track'inde — KES silmemiş`);
+				if (touchesCam) errors.push(`${at(c)}: "sil" kaynağının track'inde — KES silmemiş`);
+				else ignored.push(`${at(c)}: "sil" kaynağı, hiçbir kameraya değmiyor (kamerasız oturum) — dokunulmaz`);
 				continue;
 			}
 			const g = groups.find((q) => inside(c, q));
 			if (g) g.audio.push(c);
-			else if (mainCams.some((v) => touches(c, v))) errors.push(`${at(c)}: hiçbir çapanın içinde değil ama bir kameraya değiyor — KES yapılmamış ya da düzen değişmiş`);
+			else if (touchesCam) errors.push(`${at(c)}: hiçbir çapanın içinde değil ama bir kameraya değiyor — KES yapılmamış ya da düzen değişmiş`);
 			else ignored.push(`${at(c)}: hiçbir kameraya değmiyor (kamerasız oturum) — dokunulmaz`);
 		}
 		const hasExt = new Set(groups.filter((g) => g.audio.length).map((g) => g.anchor));

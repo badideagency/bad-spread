@@ -96,6 +96,35 @@ export function helperPlanPath(platform: string, home: string): string {
   return helperInfoPath(platform, home).replace(/helper\.json$/, "link-plan.json");
 }
 
+/** Yardımcı paneldeki BAĞLA'nın sonucu (yardımcı: resultPath ile AYNI kural). */
+export function helperResultPath(platform: string, home: string): string {
+  return helperInfoPath(platform, home).replace(/helper\.json$/, "link-result.json");
+}
+
+export interface PanelLinkResult {
+  sequence: string;
+  planCreatedAt: string | null;
+  at: string;
+  ok: boolean;
+  summary: string;
+}
+
+/** Yardımcı paneldeki son BAĞLA'nın sonucu (yoksa / okunamazsa null — yalnız durum raporu için). */
+export function readPanelLinkResult(): PanelLinkResult | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require("os") as UxpOs;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs") as UxpFs;
+    const r = fs.readFileSync(helperResultPath(os.platform(), os.homedir()), { encoding: "utf-8" }); // uxp.d.ts:L8985 fs.readFileSync, uxp.d.ts:L9198 OS.platform, uxp.d.ts:L9232 OS.homedir
+    const j = JSON.parse(typeof r === "string" ? r : "") as Partial<PanelLinkResult> & { kind?: string };
+    if (j.kind !== "spread-link-result" || typeof j.sequence !== "string" || typeof j.summary !== "string") return null;
+    return { sequence: j.sequence, planCreatedAt: typeof j.planCreatedAt === "string" ? j.planCreatedAt : null, at: String(j.at ?? "?"), ok: j.ok === true, summary: j.summary };
+  } catch {
+    return null;
+  }
+}
+
 interface HelperInfo {
   port: number;
   token: string;

@@ -23,6 +23,7 @@ TSA="${TSA:-http://timestamp.digicert.com}"
 
 node scripts/check-jsx.mjs
 node scripts/check-core.mjs
+python3 scripts/check-xml.py
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
@@ -31,6 +32,7 @@ cp -R "$SRC/CSXS" "$SRC/index.html" "$SRC/js" "$SRC/jsx" "$SRC/.debug" "$STAGE/$
 for f in CSXS/manifest.xml .debug index.html js/spread-core.js js/helper.js js/panel.js jsx/host.jsx; do
   [ -f "$STAGE/$BUNDLE/$f" ] || { echo "HATA: pakette $f yok"; exit 1; }
 done
+python3 scripts/check-xml.py "$STAGE/$BUNDLE" >/dev/null || { echo "HATA: paketteki XML geçersiz"; exit 1; }
 find "$STAGE" -type d -exec chmod 755 {} +
 find "$STAGE" -type f -exec chmod 644 {} +
 find "$STAGE" -exec touch -h -t 202601010000 {} +

@@ -36,8 +36,11 @@ Her işlem önce onay sorar ve **önce yedek sequence** alır. Her adımdan sonr
 
 ## 2) Yardımcıyı kur (bir kez) — Spread Helper paneli
 
-`.zxp` bu sürümde YOK: ZXP Installer'ın reddettiği v0.3.0 paketinin imzasında zaman damgası yoktu ve Adobe'nin imzalama aracı
-böyle paketin "diğer araçlarca büyük ihtimalle reddedileceğini" söylüyor. Ana yol **klasör kurulumu**:
+`.zxp` bu sürümde YOK. ZXP Installer'ın reddettiği önceki paketin iki kusuru vardı:
+- yardımcının `manifest.xml` dosyası **geçerli XML değildi**, bu sürümde düzeltildi;
+- imzasında zaman damgası yoktu. Adobe'nin imzalama aracı böyle paketin "diğer araçlarca büyük ihtimalle reddedileceğini" söylüyor.
+
+Ana yol **klasör kurulumu**:
 
 1. İndir: <https://github.com/badideagency/bad-spread/raw/claude/sweet-bell-do4j75/release/spread-helper-klasor.zip>
    ve bir klasöre **çıkart**.
@@ -62,6 +65,7 @@ böyle paketin "diğer araçlarca büyük ihtimalle reddedileceğini" söylüyor
   - `%TEMP%` klasöründeki **`CEP12-PPRO.log`** dosyasını bana getir. Neden yüklenmediğini yazar, ör. "Signature verification failed".
 - Panel açık ama **"✗ SUNUCU BAŞLAMADI: …"** → oradaki hatayı getir.
   - Örneğin "EADDRINUSE" portun kullanımda olduğunu gösterir: ikinci bir Spread Helper paneli açıktır ya da başka bir program 47731'i kullanıyordur.
+  - "[::1]:47731 başka bir program tarafından kullanılıyor — … DURDURULDU" ise yardımcı, güvenlik anahtarı başka bir programa gitmesin diye kendini kapatmıştır.
 - Panel **"Node.js bu panelde kapalı"** diyor → satırı getir.
 - Spread'de **"Yardımcı: bağlı değil — [bilgi dosyası] …"** → yardımcı hiç başlamamış. Spread Helper panelini aç.
 - Spread'de **"[bağlantı] UXP İZİN REDDİ …"** → Spread'in ağ izni sorunu. Satırı getir.
@@ -177,6 +181,8 @@ böyle paketin "diğer araçlarca büyük ihtimalle reddedileceğini" söylüyor
   - Grupları Spread'in **aynı** kuralıyla bulur: zamanda çakışan kameralar + çapanın içindeki ses parçaları.
   - Planla **birebir** karşılaştırır (tick düzeyinde). Aynıysa bağlar ve grup grup sonucu yazar: ✓ tamam / ⚠ doğrulanamadı / ✗ neden.
   - Aynı değilse **hiçbir şey yapmaz** ve farkı yazar. Örnekler: KES'ten sonra bir parça kaydırılmış ya da silinmiş, başka bir sequence açık, KES geri alınmış.
+  - Bir kısım grup bağlanamazsa hangilerinin bağlandığını tek tek yazar. Yeniden basmak güvenlidir.
+  - Spread'in **Durum raporu** panelde yapılan bağlamayı da gösterir.
   - Plan dosyası yazılamadıysa Spread bunu söyler ve planı rapor kutusuna koyar. **Raporu kopyala** → Spread Helper panelinde
     **"Plan dosyası okunamıyorsa: planı yapıştır"** → yapıştır → **BAĞLA**.
 - **"İLK PARÇA TUTMADI"** yazarsa: Premiere kırpmayı beklenen biçimde yapmamıştır ve panel orada durmuştur. **Ctrl+Z × 2** (ya da yedek sequence) ile geri dön ve raporu bana getir. Kesme için yedek yöntem hazırlanacak.

@@ -7,12 +7,18 @@
 | Sürüm | **Spread v0.3.2** (`release/spread.ccx`) + **Spread Helper v0.3.2** (`release/spread-helper-klasor.zip`, İMZASIZ klasör + `KUR.cmd` + `.reg`). **`.zxp` YOK** (aşağıda neden). |
 | Kullanıcının gerçek durumu | Windows, Premiere 26.5.1: `.zxp` aescripts ZXP/UXP Installer'da kodsuz "was not installed"; klasör + PlayerDebugMode=1 ile de yardımcı BAŞLAMADI (`127.0.0.1:47731` tarayıcıda hiç açılmıyor → sunucu hiç çalışmadı). |
 | Yapılan | (1) Spread gerçek hatayı adımıyla yazar; (2) yardımcı GÖRÜNÜR panel (Window → Extensions (Legacy) → Spread Helper: sunucu durumu, adresler, Premiere/Node sürümü, son istek, günlük) + `.debug` (PPRO, 8098); (3) BAĞLA = KES (Spread) + BAĞLA (köprüyle tek tık ya da yardımcı paneldeki düğme; plan dosyası / yapıştırma); (4) UXP ağ izni `localhost` (IP yazılı izin reddediliyor), sunucu 127.0.0.1 + ::1; (5) klasör kiti imzasız + PlayerDebugMode, `.zxp` yalnız zaman damgalı imzayla |
-| Bulutta doğrulanan | `npm run check` (tsc, eslint, d.ts 75 + uxp.d.ts 9, host.jsx ES3 + belge, **check:core** (yardımcıdaki derlenmiş modül = kaynak), Probe smoke, **Spread smoke 64 senaryo**), yeni korumaların mutasyon sınaması, bağımsız alt ajan incelemesi |
+| Bulutta doğrulanan | `npm run check` (tsc, eslint, d.ts 75 + uxp.d.ts 12, host.jsx ES3 + belge, **check:xml** (yardımcı manifesti + `.debug` iyi biçimli XML, kimlikler tutarlı), **check:core** (yardımcıdaki derlenmiş modül = kaynak), Probe smoke, **Spread smoke 66 senaryo**), yeni korumaların mutasyon sınaması, bağımsız alt ajan incelemesi (#4; bulguları düzeltildi) |
 | Dal | `claude/sweet-bell-do4j75` |
 
 ### Kök neden analizi (kanıt + kaynak; kesin neden kullanıcının CEP günlüğüyle kapanacak)
 
-**A) Yardımcı hiç yüklenmedi / başlamadı** (port hiç açılmadı). İki aday, ikisi de bu sürümde ortadan kaldırıldı:
+**A) Yardımcı hiç yüklenmedi / başlamadı** (port hiç açılmadı). Üç aday; üçü de bu sürümde ortadan kaldırıldı:
+0. **Yardımcının `CSXS/manifest.xml`'i GEÇERLİ XML DEĞİLDİ** (v0.3.0 ve v0.3.1, kullanıcının kurduğu sürüm dahil).
+   - Neden: baştaki açıklama yorumunda CEF bayrakları "--enable-nodejs, --mixed-context" diye yazılmıştı. XML yorumlarında art arda iki tire YASAK.
+   - Bu ortamda doğrulandı: expat "not well-formed (invalid token): line 13, column 32" veriyor; xmllint de "Comment must not contain '--'" diyor.
+   - CEP'in ve ExMan / ZXP Installer'ın bu dosyayı ayrıştırırken ne yaptığı ölçülmedi. Ama katı bir ayrıştırıcı eklentiyi hiç görmez, ZXP kurulumu da manifesti okuyamaz. Bu hem "yüklenmedi" hem kodsuz "was not installed" belirtisiyle uyuşuyor → **en güçlü aday**.
+   - Bulan: v0.3.2 kapanış incelemesi (#4).
+   - Düzeltme: yorumdan tireler kaldırıldı; `npm run check:xml` (`scripts/check-xml.py`) eklendi, hem `npm run check`'te hem paketlemede çalışıyor. Bu denetim, iyi biçimli XML'e ek olarak şunları da kontrol ediyor: Extension Id = DispatchInfo Id = `.debug` Id, PPRO, CSXS 12.0, Panel + Menu, MainPath/ScriptPath dosyaları, sürüm = `helper.js` VERSION.
 1. **Gizli başlatma (StartOn) Premiere'de güvenilir değil.**
    - Adobe CEP 12 Cookbook'un standart olaylar tablosunda `applicationActivate` için Premiere Pro sütunu **"Yes on macOS; No on Windows"** diyor.
    - Aynı Cookbook'un görünmez eklenti örneği "Premiere Pro dispatches this event on startup" diyerek `com.adobe.csxs.events.ApplicationActivate` gösteriyor.
@@ -107,14 +113,33 @@ UXP'nin gerçek hata metinleri ölçülmedi. Sınıflama metin sezgisidir, ham h
 | `panel_guard` | paneldeki BAĞLA hiçbir şey yapmaz: başka sequence aktif; KES'ten sonra 1 kare kayan parça; silinen parça ("planda var, düzende YOK"); KES geri alınmış |
 | `core_rules` | yardımcıya SEVK EDİLEN derlenmiş modülde kuralın dalları: birebir / kısa parça, kılavuz (harici sesli → HATA, sessiz → korunur), çapa dışı → HATA, kamerasız → dokunulmaz, "sil" → HATA, park → girmez, planla karşılaştırma |
 | `diag` | `[bilgi dosyası]` (yardımcı yok), `[bağlantı]` (bilgi dosyası var, sunucu yok, ham TypeError), **UXP İZİN REDDİ** (istek yardımcıya ULAŞMADI: son istek yok), bağlı → yardımcıda son istek `POST /v1/ping → 200`, Premiere sürümü |
-| (güncellendi) | `security` (GET 405 yardımcıyı tanıtır; ::1 yetkisi), `rebind`, `linkfail` (tekrar bas → yalnız bağla), eski `helperoff` (durma) → `bridgeoff` (KES) |
+| `panel_batchfail` | paneldeki BAĞLA'da 2. parti düşer (12 Eylül, 11 grup) → 8 grup ✓ + 3 grup ✗ grup grup raporlanır; yeniden basınca 11 ✓ |
+| `helper_second` | ikinci yardımcı örneği (port dolu) EADDRINUSE gösterir, çalışanın bilgi dosyasına dokunmaz; köprü çalışır |
+| (güncellendi) | `bridgeoff_real` + **kamerasız oturum + "sil" kaynağı**; `bridgeoff` + Spread'in durum raporu paneldeki BAĞLA'yı gösterir; `security` (GET 405 yardımcıyı tanıtır; ::1 yetkisi bu ortamda sınanamadı — IPv6 yok), `rebind`, `linkfail`, eski `helperoff` (durma) → `bridgeoff` (KES) |
 
 Mutasyon: planla karşılaştırmayı kaldırmak → `panel_guard` düşer; "harici sesli grupta kılavuz" hatasını kaldırmak → `core_rules`
 düşer (ikisi de ilk denemede YAKALANMAMIŞTI — başka korumaların arkasında kalıyordu; senaryolar eklendi).
 
+### Bağımsız alt ajan incelemesi #4 (v0.3.2 kapanış) — 2 engelleyici + 6 bulgu, hepsi ele alındı
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| 1 (engelleyici) | yardımcı `manifest.xml` iyi biçimli XML değil (yorumda `--`; v0.3.0'dan beri) | yorum düzeltildi; `check:xml` (check + paketleme) |
+| 2 (engelleyici) | kamerasız oturum + "sil" kaynağı → ortak kural HATA → BAĞLA köprü açıkken de BAŞLAMIYORDU (v0.3.1'e göre gerileme) | "sil" track'indeki klip yalnız bir kameraya değiyorsa HATA; değmiyorsa dokunulmaz (`bridgeoff_real`, `core_rules`) |
+| 3 | paneldeki BAĞLA'da parti hatası grup sonuçlarını kaybediyordu | bağlananlar + gönderilemeyenler grup grup (`panel_batchfail`) |
+| 4 | ikinci başlatma çalışan yardımcının bilgi dosyasını siliyordu; aynı örnekte çift başlatma | dinlemeden önce silme yok; çift başlatma koruması (`helper_second`) |
+| 5 | `[::1]` başka programdaysa "localhost 127.0.0.1'e gider" yanlış olabilir (token oraya gidebilirdi); ::1 yetki testi yok | `[::1]` EADDRINUSE → güvenlik için sunucu DURUR (hata gösterilir); ::1 testi bu ortamda yapılamadı (belgelendi) |
+| 6 | paneldeki BAĞLA Spread'in kaydını güncellemiyor, rapor "bağlama bitmedi" diyordu | yardımcı `link-result.json` yazar; durum raporu bu plan için panel sonucunu gösterir |
+| 7 | plan kontrolünde yalnız sequence adı; yapıştırılan plan dosyadan önce | bilinçli: ExtendScript sequenceID ile UXP guid biçimi aynı değil; yanlış bağlama imkânsız (grup kümeleri iki yönlü birebir) — belgelendi |
+| 8 | köprü açık + plan yazılamadı + bağlama düştü → plan hiçbir yerde yok | plan dosyası yazılamazsa (köprü açıkken de) plan hemen rapor kutusuna |
+
+İnceleme ayrıca şunları doğruladı: iki yol ayrışmıyor (park, gap 0, < 2 öğe, tüm WAV, kısa parça, korunan/başıboş kılavuz), `literal()`
+kaçışı (ASCII, ES3, U+2028, yalnız vekil, enjeksiyon), `panel.js` yalnız textContent, Host / uzak adres denetimi, klasör kitinde imza yok,
+`.debug` Id eşleşmesi, `KUR.cmd` (blok içinde kaçışsız `>`/`)` yok, CRLF).
+
 ### Belirsizlikler (v0.3.2 — gerçek Premiere'de bakılacak)
 
-1. Yardımcının v0.3.0'da neden yüklenmediği kesin değil: gizli başlatma mı, imza mı? `CEP12-PPRO.log` söyleyecek. Yeni kurulum ikisini de ortadan kaldırıyor.
+1. Yardımcının v0.3.0/0.3.1'de neden yüklenmediği kesin değil: geçersiz manifest XML'i mi (en güçlü aday), gizli başlatma mı, imza mı? `CEP12-PPRO.log` söyleyecek. Yeni kurulum üçünü de ortadan kaldırıyor.
 2. "Window → **Extensions (Legacy)**" adı Adobe belgesinde bulunamadı; üçüncü taraf README'ler Premiere 2026 için böyle diyor. Eski sürümlerde "Window → Extensions".
 3. UXP'nin `localhost` izniyle istek atabildiği yalnız üçüncü taraf kanıtla (Premiere 26.5 Windows). Hata metinleri ölçülmedi; ham hata yazılır.
 4. ::1 dinleme bu ortamda sınanamadı (IPv6 yok); açılamazsa sunucu 127.0.0.1'le devam eder (sınandı).

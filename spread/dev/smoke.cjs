@@ -840,11 +840,13 @@ const CORE = new Function(fsReal.readFileSync(path.join(__dirname, "..", "..", "
 const HOST_SRC = fsReal.readFileSync(path.join(__dirname, "..", "..", "cep-helper", "jsx", "host.jsx"), "utf8");
 let helper = null;
 const helperLog = [];
+/** yardımcının ExtendScript çağrısı (senaryolar araya girebilsin diye dolaylı) */
+const helperEval = { fn: null };
 async function startHelper() {
   if (helper) return helper;
   const ctx = vm.createContext({ app: fakeApp });
   vm.runInContext(HOST_SRC, ctx);
-  const evalScript = (script, cb) =>
+  helperEval.fn = (script, cb) =>
     setTimeout(() => {
       let r;
       try {
@@ -854,6 +856,7 @@ async function startHelper() {
       }
       cb(String(r));
     }, 1);
+  const evalScript = (script, cb) => helperEval.fn(script, cb);
   helper = HELPER.createHelper({ http, crypto: cryptoReal, fs: fsReal, path, os: osReal, evalScript, core: CORE, home: TMPHOME, platform: "darwin", log: (l) => helperLog.push(l) });
   await helper.start();
   return helper;
@@ -2003,6 +2006,9 @@ scenarios.bridgeoff = async () => {
   else ok("köprü kapalıyken KES + yardımcı paneldeki BAĞLA = köprülü tek tıkla AYNI son düzen (tick) ve AYNI bağlar");
   checkLinks(seqByGuid("guid-main-edit"), expectBagla(collected, SMALL).groups, "yardımcı panelden bağlar");
   if (!h.state().lastBind || !h.state().lastBind.ok) fail("panel durumu son BAĞLA'yı göstermiyor");
+  await clickAndWait("btn-status", yes, doneRe);
+  if (!/bağlama Spread Helper panelinden \(.*\): ✓ 2 grup bağlandı ve doğrulandı/.test(els.report.value)) fail("durum raporu paneldeki BAĞLA'yı göstermiyor:\n" + els.report.value.split("\n").filter((l) => /BAĞLA kaydı/.test(l)).join("\n"));
+  else ok("Spread'in durum raporu yardımcı paneldeki BAĞLA'nın sonucunu gösteriyor (sonuç dosyası, bu plan için)");
   // Spread'de tekrar BAĞLA (köprü artık açık): kayıttaki gruplarla yalnız bağlama — düzen aynı kalır
   const n = counters.txNames.length;
   const oC = await clickAndWait("btn-bind", yes, doneRe);
@@ -2016,6 +2022,23 @@ scenarios.bridgeoff_real = async () => {
   const cases = [
     ["12 Eylül (gerçek rapor, TrLR 'sil')", async () => (setupFromReport(R0912, ["A27", "A30"]), await setMap("Zoom TrLR", "sil"), topla())],
     ["23 Eylül (sentetik: DJI iki Zoom'u kapsıyor, harici sessiz oturumda kamera sesi korunur)", async () => (setupSync(sep23()), topla())],
+    [
+      "kamerasız oturum + 'sil' kaynağı (Zoom 120000 Tr1/Tr2 + DJI, Tr2 'sil')",
+      async () => (
+        setupSync(
+          smallSpec({
+            wavs: [
+              ...smallSpec().wavs,
+              { name: "260912_120000_Tr1.WAV", start: sec(300), dur: sec(60) },
+              { name: "260912_120000_Tr2.WAV", start: sec(300), dur: sec(60) },
+              { name: "DJI_01_20260912_120100.WAV", start: sec(301), dur: sec(58) },
+            ],
+          })
+        ),
+        await setMap("Zoom Tr2", "sil"),
+        topla()
+      ),
+    ],
     [
       "kamerasız oturum (Zoom + DJI) + normal oturum",
       async () => (setupSync(smallSpec({ wavs: [...smallSpec().wavs, { name: "260912_120000_Tr1.WAV", start: sec(300), dur: sec(60) }, { name: "DJI_01_20260912_120100.WAV", start: sec(301), dur: sec(58) }] })), topla()),
@@ -2131,7 +2154,8 @@ scenarios.core_rules = async () => {
     ["harici sessiz grupta kılavuz ses → korunan kamera sesi (grubun)", run([camA, camB, guideA]), (r) => !r.errors.length && r.groups[0].audio.length === 1],
     ["çapa dışına taşan ama kameraya değen ses → HATA (KES yapılmamış)", run([camA, camB, C("A", 0, 5, 45, "260912_101512_Tr1.WAV")]), (r) => r.errors.some((e) => /KES yapılmamış/.test(e))],
     ["hiçbir kameraya değmeyen ses (kamerasız oturum) → dokunulmaz", run([camA, camB, zoom, C("A", 2, 100, 160, "260912_120000_Tr1.WAV")]), (r) => !r.errors.length && r.ignored.length === 1 && r.groups[0].audio.length === 1],
-    ["'sil' track'inde ses → HATA", run([camA, camB, zoom, C("A", 3, 10, 40, "260912_101512_TrLR.WAV")]), (r) => r.errors.some((e) => /"sil" kaynağının track'inde/.test(e))],
+    ["'sil' track'inde, kameraya değen ses → HATA (KES silmemiş)", run([camA, camB, zoom, C("A", 3, 10, 40, "260912_101512_TrLR.WAV")]), (r) => r.errors.some((e) => /"sil" kaynağının track'inde/.test(e))],
+    ["'sil' track'inde, hiçbir kameraya değmeyen ses (kamerasız oturum) → dokunulmaz", run([camA, camB, zoom, C("A", 3, 100, 160, "260912_120000_TrLR.WAV")]), (r) => !r.errors.length && r.ignored.length === 1],
     ["park track'indeki kamera ve ses (V ≥ vPark, A ≥ aPark) → gruplara girmez", run([camA, camB, zoom, C("V", 2, 20, 21, "A041C005_260923ZT.MP4"), C("A", 4, 20, 22, "DJI_09_20260912_090000.WAV")]), (r) => !r.errors.length && r.groups.length === 1 && r.groups[0].cams.length === 2 && r.groups[0].audio.length === 1],
   ];
   for (const [label, r, test] of cases) test(r) ? ok(`ortak kural: ${label}`) : fail(`ortak kural: ${label} → ${JSON.stringify({ e: r.errors, i: r.ignored, g: r.groups.map((g) => [g.cams.length, g.audio.length]) })}`);
@@ -2141,6 +2165,49 @@ scenarios.core_rules = async () => {
   const diff = CORE.compareLinkGroups([{ label: "G", items: items.slice(1) }], lay.groups);
   if (same.length || diff.length !== 2) fail(`planla karşılaştırma: aynı → ${same.length}, farklı → ${diff.length}`);
   else ok("planla karşılaştırma: aynı grup → fark yok; bir öğesi eksik plan → 'planda var, düzende YOK' + 'düzende var, planda YOK'");
+};
+
+scenarios.panel_batchfail = async () => {
+  // paneldeki BAĞLA'da ikinci parti (8'den sonrası) başarısız: bağlanan 8 grup ve başarısızlar grup grup raporlanır
+  setupFromReport(R0912, ["A27", "A30"]);
+  await setMap("Zoom TrLR", "sil");
+  await clickAndWait("btn-collect", yes, doneRe);
+  await stopHelper();
+  await clickAndWait("btn-bind", yes, doneRe);
+  const h = await startHelper();
+  const origEval = helperEval.fn;
+  let calls = 0;
+  helperEval.fn = (script, cb) => (/^spreadHelper_link\(/.test(script) && ++calls === 2 ? setTimeout(() => cb("EvalScript error."), 1) : origEval(script, cb));
+  const r = await h.bindFromPlan({});
+  helperEval.fn = origEval;
+  const okRows = r.rows.filter((x) => x.status === "tamam").length;
+  const badRows = r.rows.filter((x) => x.status === "hata" && /bağlanmadı — bağlama isteği başarısız/.test(x.detail)).length;
+  if (r.ok || okRows !== 8 || badRows !== 3 || !/yeniden basmak güvenli/.test(r.summary)) fail(`parti hatası: ${r.summary} (tamam ${okRows}, hata ${badRows})`);
+  else ok(`paneldeki BAĞLA'da 2. parti düştü → 8 grup ✓ + 3 grup ✗ grup grup raporlandı ("${r.summary.slice(0, 60)}…")`);
+  const r2 = await h.bindFromPlan({});
+  if (!r2.ok) fail(`yeniden basınca: ${r2.summary}`);
+  else ok(`yeniden bas → ${r2.summary}`);
+};
+
+scenarios.helper_second = async () => {
+  // ikinci bir Spread Helper örneği (port dolu) çalışanın bilgi dosyasına DOKUNMAZ; köprü çalışmaya devam eder
+  setupSync(smallSpec());
+  await startHelper();
+  const info = fsReal.readFileSync(INFO_FILE(), "utf8");
+  const h2 = HELPER.createHelper({ http, crypto: cryptoReal, fs: fsReal, path, os: osReal, evalScript: (sc, cb) => cb('{"ok":true,"premiere":"x"}'), core: CORE, home: TMPHOME, platform: "darwin" });
+  let err = null;
+  try {
+    await h2.start();
+  } catch (e) {
+    err = e;
+  }
+  const still = fsReal.existsSync(INFO_FILE()) && fsReal.readFileSync(INFO_FILE(), "utf8") === info;
+  await h2.stop();
+  const still2 = fsReal.existsSync(INFO_FILE()) && fsReal.readFileSync(INFO_FILE(), "utf8") === info;
+  const o = await clickAndWait("btn-helper", yes, /✓ Yardımcı|✗ Yardımcı bağlı değil/);
+  if (!err || !/EADDRINUSE/.test(h2.state().error || "") || !still || !still2 || !/✓ Yardımcı bağlı/.test(o))
+    fail(`ikinci örnek: hata=${err && err.code} durum=${h2.state().error} dosya=${still}/${still2}\n${o}`);
+  else ok("ikinci yardımcı örneği: 'EADDRINUSE … port kullanımda' gösterdi, çalışanın bilgi dosyasına dokunmadı (başlarken de kapanırken de); köprü çalışıyor");
 };
 
 scenarios.diag = async () => {

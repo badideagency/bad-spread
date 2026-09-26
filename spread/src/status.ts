@@ -7,6 +7,7 @@ import { classify, devicesOf, sourcesOf, roleLabel } from "./classify";
 import { bindState, layoutState, parkedFromRecord } from "./collect";
 import { analyze, describeLinks, sessionGroups } from "./sessions";
 import { getThreshold, loadRecord, mappingFor, recordDrift } from "./settings";
+import { readPanelLinkResult } from "./linker";
 import { big, secOf, snapshot, trackLabel, type ClipInfo } from "./model";
 import { makePlan, type Unit } from "./plan";
 import { requireActive } from "./session";
@@ -100,7 +101,13 @@ export async function buildStatusReport(): Promise<string> {
     L.push(`  TOPLA düzeni: ${ls === "collected" ? "duruyor" : ls === "undone" ? "GERİ ALINMIŞ (park kaydı TOPLA'da bırakılır)" : "TOPLA'dan sonra DEĞİŞMİŞ (TOPLA park kaydını sorar)"}`);
     for (const d of recordDrift(rec, mappingFor(sourcesOf(cls)), Math.round(getThreshold() * 100))) L.push(`  TOPLA'dan sonra değişti: ${d}`);
     const bs = bindState(rec, s);
-    if (rec.bind) L.push(`  BAĞLA kaydı: ${rec.bind.stage === "linked" ? "kesme/silme + bağlama" : "kesme/silme (bağlama bitmedi)"} ${rec.bind.at}; timeline'da ${bs === "applied" ? "yerinde" : bs === "partial" ? "KISMEN yerinde (düzen değişmiş)" : "yok (geri alınmış)"}`);
+    const pr = rec.bind ? readPanelLinkResult() : null;
+    const byPanel = pr && pr.sequence === ctx.name && pr.planCreatedAt === rec.bind!.at ? pr : null;
+    if (rec.bind)
+      L.push(
+        `  BAĞLA kaydı: ${rec.bind.stage === "linked" ? "kesme/silme + bağlama" : byPanel ? `kesme/silme; bağlama Spread Helper panelinden (${byPanel.at}): ${byPanel.summary}` : "kesme/silme (bağlama bitmedi — Spread'de BAĞLA ya da Spread Helper panelinde BAĞLA)"} ` +
+          `${rec.bind.at}; timeline'da ${bs === "applied" ? "yerinde" : bs === "partial" ? "KISMEN yerinde (düzen değişmiş)" : "yok (geri alınmış)"}`
+      );
     if (bs === "applied" && rec.bind!.created.length) L.push("  not: harici sesler çapalara kesildi — aşağıdaki oturum analizi kesilmiş düzene göredir (TOPLA/BAĞLA bunu kullanmaz)");
   }
   for (const d of a.duplicates) L.push(`  ÇİFT KOPYA: ${d}`);

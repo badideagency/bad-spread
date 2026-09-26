@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
+  DİKKAT: XML yorumlarında iki tire art arda YAZILMAZ (XML kuralı; v0.3.0/0.3.1 manifesti bu yüzden geçersiz XML'di).
+  `npm run check:xml` bunu ve kimliklerin tutarlılığını denetler.
+
   Spread Helper — GÖRÜNÜR CEP paneli (Premiere Pro): Window > Extensions (Legacy) > Spread Helper.
   Panel açıkken 127.0.0.1:47731'de Spread (UXP) panelinin köprüsünü dinler ve kendi BAĞLA düğmesiyle KES planını bağlar
   (ExtendScript Sequence.linkSelection). Premiere, açık bırakılan paneli çalışma alanıyla (workspace) birlikte hatırlar.
@@ -9,8 +12,8 @@
   güvenilirliğiyle ilgili kaynaklar handoff.md'de. Görünür panel: kullanıcı açar, durumunu görür, sunucu panel açıkken çalışır.
 
   Kaynaklar (Adobe, birincil):
-   - CEP 12 HTML Extension Cookbook — manifest, <UI><Type>Panel</Type>, <Menu>, <Geometry>, CEF bayrakları (--enable-nodejs,
-     --mixed-context), <ScriptPath>, uzaktan hata ayıklama (.debug):
+   - CEP 12 HTML Extension Cookbook: manifest, UI Type Panel, Menu, Geometry, CEF bayrakları (enable-nodejs, mixed-context),
+     ScriptPath, uzaktan hata ayıklama (.debug):
      https://github.com/Adobe-CEP/CEP-Resources/blob/master/CEP_12.x/Documentation/CEP%2012%20HTML%20Extension%20Cookbook.md
    - RangedVersion (XSD): "[25.0,99.9]" = 25.0 ve üstü
 -->
