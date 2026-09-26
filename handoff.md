@@ -7,7 +7,7 @@
 | Sürüm | **Spread v0.3.2** (`release/spread.ccx`) + **Spread Helper v0.3.2** (`release/spread-helper-klasor.zip`, İMZASIZ klasör + `KUR.cmd` + `.reg`). **`.zxp` YOK** (aşağıda neden). |
 | Kullanıcının gerçek durumu | Windows, Premiere 26.5.1: `.zxp` aescripts ZXP/UXP Installer'da kodsuz "was not installed"; klasör + PlayerDebugMode=1 ile de yardımcı BAŞLAMADI (`127.0.0.1:47731` tarayıcıda hiç açılmıyor → sunucu hiç çalışmadı). |
 | Yapılan | (1) Spread gerçek hatayı adımıyla yazar; (2) yardımcı GÖRÜNÜR panel (Window → Extensions (Legacy) → Spread Helper: sunucu durumu, adresler, Premiere/Node sürümü, son istek, günlük) + `.debug` (PPRO, 8098); (3) BAĞLA = KES (Spread) + BAĞLA (köprüyle tek tık ya da yardımcı paneldeki düğme; plan dosyası / yapıştırma); (4) UXP ağ izni `localhost` (IP yazılı izin reddediliyor), sunucu 127.0.0.1 + ::1; (5) klasör kiti imzasız + PlayerDebugMode, `.zxp` yalnız zaman damgalı imzayla |
-| Bulutta doğrulanan | `npm run check` (tsc, eslint, d.ts 75 + uxp.d.ts 11, host.jsx ES3 + belge, **check:core** (yardımcıdaki derlenmiş modül = kaynak), Probe smoke, **Spread smoke 65 senaryo**), yeni korumaların mutasyon sınaması, bağımsız alt ajan incelemesi |
+| Bulutta doğrulanan | `npm run check` (tsc, eslint, d.ts 75 + uxp.d.ts 9, host.jsx ES3 + belge, **check:core** (yardımcıdaki derlenmiş modül = kaynak), Probe smoke, **Spread smoke 64 senaryo**), yeni korumaların mutasyon sınaması, bağımsız alt ajan incelemesi |
 | Dal | `claude/sweet-bell-do4j75` |
 
 ### Kök neden analizi (kanıt + kaynak; kesin neden kullanıcının CEP günlüğüyle kapanacak)
