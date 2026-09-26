@@ -13,10 +13,12 @@
 // "X-Spread-Token" başlığıyla gönderir. Tarayıcıdaki bir sayfa bu dosyayı okuyamaz ve özel başlıklı istek gönderemez.
 // UXP API'leri: @adobe/cc-ext-uxp-types (uxp.d.ts) — satırlar `npm run check:api` ile doğrulanır.
 
+import { SPREAD_VERSION } from "./version";
+
 export const HELPER_PORT = 47731;
 /** manifest.json requiredPermissions.network.domains ile AYNI ad (IP değil). */
 export const HELPER_URL = `http://localhost:${HELPER_PORT}`;
-export const HELPER_VERSION = "0.3.4";
+export const HELPER_VERSION = SPREAD_VERSION; // yardımcı ve panel aynı sürümle yayımlanır (v1.0.0)
 const PING_TIMEOUT_MS = 3000;
 /** Bağlama grupları yardımcıya parti parti gönderilir (uzun çekimlerde tek istek zaman aşımına uğramasın). */
 const LINK_BATCH = 8;
@@ -306,8 +308,8 @@ class CepLinker implements Linker {
   installHint(): string[] {
     return [
       "Yardımcı: Premiere'de Window → Extensions (Legacy) → Spread Helper panelini aç; sunucu panel açıkken çalışır (paneli çalışma alanında açık bırak).",
-      "Menüde yoksa kurulu değil: KURULUM_TR.md → \"Yardımcıyı kur\" (release/spread-helper-klasor.zip → KUR.cmd), Premiere'i kapatıp aç.",
-      `Panel açık ama "SUNUCU BAŞLAMADI" diyorsa oradaki hatayı getir (ör. 127.0.0.1:${HELPER_PORT} kullanımda). Köprü kurulamasa da yardımcı paneldeki BAĞLA çalışır.`,
+      "Menüde yoksa kurulu değil: Spread_Kurulum_v1.0.0.zip → KUR.cmd (KURULUM_TR.md → \"Kurulum\"), Premiere'i kapatıp aç.",
+      `Panel açık ama kırmızı "Spread Helper çalışmıyor" diyorsa oradaki hatayı getir (ör. localhost:${HELPER_PORT} kullanımda). Köprü kurulamasa da yardımcı paneldeki BAĞLA çalışır.`,
     ];
   }
 }

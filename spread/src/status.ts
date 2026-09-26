@@ -13,8 +13,9 @@ import { readPanelLinkResult } from "./linker";
 import { big, secOf, snapshot, trackLabel, type ClipInfo } from "./model";
 import { makePlan, type Unit } from "./plan";
 import { requireActive } from "./session";
+import { SPREAD_VERSION } from "./version";
 
-const PANEL = "Spread v0.3.4";
+const PANEL = `Spread v${SPREAD_VERSION}`;
 
 function overlapTicks(a: ClipInfo, b: ClipInfo): bigint {
   const s = big(a.start) > big(b.start) ? big(a.start) : big(b.start);

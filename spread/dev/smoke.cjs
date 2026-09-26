@@ -337,7 +337,11 @@ projectW = {
 };
 
 // ------------------------------------------------------------ sahte DOM
-const els = {};
+// SPREAD_SCREENS=<klasör>: ekran görüntüsü kipi — sahte DOM yerine jsdom'la GERÇEK panel HTML'i (spread/public/index.html); "screens"
+// senaryosu belirli anlarda panelin HTML'ini klasöre yazar (spread/dev/screens.mjs Chromium'da PNG'ye çevirir). Diğer senaryolar
+// sahte DOM'la çalışır (değişmedi).
+const SCREENS = process.env.SPREAD_SCREENS || null;
+const els = SCREENS ? new Proxy({}, { get: (_, k) => (typeof k === "string" ? global.document.getElementById(k) : undefined) }) : {};
 function mkEl(id) {
   const listeners = [];
   const attrs = {};
@@ -357,7 +361,11 @@ function mkEl(id) {
   };
   return el;
 }
-global.document = { getElementById: (id) => (els[id] ??= mkEl(id)), createElement: () => mkEl(null) };
+if (SCREENS) {
+  const { JSDOM } = require("jsdom");
+  const html = require("fs").readFileSync(path.join(__dirname, "..", "public", "index.html"), "utf8").replace(/<script[^>]*><\/script>/g, "");
+  global.document = new JSDOM(html).window.document;
+} else global.document = { getElementById: (id) => (els[id] ??= mkEl(id)), createElement: () => mkEl(null) };
 // localStorage (UXP'de var; mock'ta bozulabilir → try/catch sınanır)
 const lsStore = new Map();
 let lsBroken = false;
@@ -473,8 +481,8 @@ const fail = (m) => {
 };
 const ok = (m) => console.log("  ✓ " + m);
 let logMark = 0;
-const markLog = () => (logMark = (els.log?.children ?? []).length);
-const newLog = () => (els.log?.children ?? []).slice(logMark).map((c) => c.textContent).join("\n");
+const markLog = () => (logMark = Array.from(els.log?.children ?? []).length);
+const newLog = () => Array.from(els.log?.children ?? []).slice(logMark).map((c) => c.textContent).join("\n");
 
 async function clickAndWait(btn, answerer, done = /✓ SPREAD tamam|✗ SPREAD DURDU|İptal edildi|Zaten dağıtılmış|Durum raporu hazır/) {
   markLog();
@@ -3012,6 +3020,70 @@ scenarios.plan = async () => {
   if (p.clone.length || p.overwrite.length || p.errors.length) fail("zaten dağıtılmış düzende iş planlandı");
   else ok("plan: zaten dağıtılmış düzen → hiçbir taşıma planlanmadı");
 };
+
+// ------------------------------------------------------------ ekran görüntüleri (yalnız SPREAD_SCREENS ile; "all"a girmez)
+if (SCREENS)
+  scenarios.screens = async () => {
+    const shot = (name) => {
+      fsReal.writeFileSync(path.join(SCREENS, `${name}.html`), "<!DOCTYPE html>\n" + global.document.documentElement.outerHTML);
+      ok(`ekran: ${name}`);
+    };
+    const visible = (id) => els[id] && els[id].style.display === "block";
+    /** tıkla; ilk soru görünce shot(askName) + Evet; sonuç satırı gelince döner */
+    const run = async (btn, askName, done) => {
+      markLog();
+      els[btn].click();
+      let asked = false;
+      const t0 = Date.now();
+      while (Date.now() - t0 < 60000) {
+        await sleep(20);
+        if (visible("ask")) {
+          if (!asked && askName) shot(askName);
+          asked = true;
+          els["ask-yes"].click();
+          await sleep(30);
+        }
+        if (done.test(newLog())) return sleep(150);
+      }
+      fail(`${btn}: zaman aşımı`);
+    };
+    // 12 Eylül gerçek verisi (A27 / A30 çift kopyaları dahil), TrLR "Sil"; SPREAD + Synchronize bu panelde yapılmış sayılır
+    setupFromReport(R0912);
+    lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": "sil" }));
+    lsStore.set("spread.steps.v1", JSON.stringify({ "guid-main-edit": { spread: { kind: "ok", text: "58 klip kendi track'ine dağıtıldı.", at: "2026-09-26T10:00:00Z" } } }));
+    mockGen++;
+    await startHelper();
+    els["btn-helper"].click();
+    await sleep(1800);
+    shot("01-hazir");
+    hooks.beforeTx = (name) => name === "TOPLA: park" && shot("03-topla-ilerleme");
+    await run("btn-collect", "02-topla-onay", /✓ TOPLA tamam|✗ TOPLA DURDU/);
+    shot("04-topla-tamam");
+    hooks.beforeTx = (name) => name === "BAĞLA: kalibrasyon SetInPoint" && shot("06-bagla-olcum");
+    await run("btn-bind", "05-bagla-onay", /✓ BAĞLA tamam|⚠ BAĞLA bitti|✗ BAĞLA DURDU|✓ KES tamam/);
+    hooks.beforeTx = null;
+    await sleep(1600);
+    shot("07-bagla-tamam");
+    // hata örneği: set action'lar hiçbir şey yapmıyor → kalibrasyon kural vermez → DUR (tek cümle + Ayrıntı)
+    await collectThen(smallSpec());
+    lsStore.set("spread.steps.v1", JSON.stringify({ "guid-main-edit": { spread: { kind: "ok", text: "6 klip kendi track'ine dağıtıldı.", at: "2026-09-26T10:00:00Z" }, topla: { kind: "ok", text: "1 oturum toplandı.", at: "2026-09-26T10:05:00Z" } } }));
+    M.setSem = "noop";
+    await run("btn-bind", null, /✗ BAĞLA DURDU/);
+    await sleep(1600);
+    shot("08-hata");
+    els["result-more-toggle"].click();
+    shot("09-hata-ayrinti");
+    els["result-more-toggle"].click();
+    els["btn-issue"].click();
+    await sleep(1500);
+    els["adv-toggle"].click();
+    shot("10-gelismis-sorun-bildir");
+    els["adv-toggle"].click();
+    await stopHelper();
+    els["btn-helper"].click();
+    await sleep(400);
+    shot("11-yardimci-kapali");
+  };
 
 // ------------------------------------------------------------ çalıştır
 (async () => {

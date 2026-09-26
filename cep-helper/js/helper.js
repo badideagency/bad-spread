@@ -27,7 +27,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "0.3.4";
+  var VERSION = "1.0.0";
   var PORT = 47731;
   var MAX_BODY = 1024 * 1024;
   // Panelle AYNI sınırlar (spread/src/linker.ts LINK_LIMITS) — panel BAĞLA planında kesmeden ÖNCE denetler
@@ -542,6 +542,34 @@
         listeners.push(fn);
       },
       readPlan: readPlan,
+      /**
+       * Arayüz için (v1.0.0, yalnız görünüm): KES planı var mı, Spread "yardımcı panelinden bağla" dedi mi (plan.handoff === "panel")
+       * ve bu plan panelde başarıyla bağlandı mı (link-result.json). Hiçbir şeyi değiştirmez.
+       */
+      planStatus: function () {
+        var raw = null;
+        try {
+          raw = JSON.parse(deps.fs.readFileSync(planFile, "utf8"));
+        } catch (e) {
+          return { exists: false, waiting: false, linked: false, sequence: "", groups: 0, createdAt: "" };
+        }
+        var res = null;
+        try {
+          res = JSON.parse(deps.fs.readFileSync(resultFile, "utf8"));
+        } catch (e) {
+          res = null;
+        }
+        var at = raw && typeof raw.createdAt === "string" ? raw.createdAt : "";
+        var linked = !!(res && res.ok === true && res.planCreatedAt === at);
+        return {
+          exists: true,
+          waiting: !!raw && raw.handoff === "panel" && !linked,
+          linked: linked,
+          sequence: raw && raw.sequence && typeof raw.sequence.name === "string" ? raw.sequence.name.slice(0, 256) : "",
+          groups: raw && Array.isArray(raw.groups) ? raw.groups.length : 0,
+          createdAt: at,
+        };
+      },
       bindFromPlan: bindFromPlan,
       stop: function () {
         state.listening = false;

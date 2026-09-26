@@ -290,7 +290,7 @@ var SpreadCore = (function(exports) {
 		return out;
 	}
 	//#endregion
-	exports.CORE_VERSION = "0.3.4";
+	exports.CORE_VERSION = "1.0.0";
 	exports.classify = classify;
 	exports.compareLinkGroups = compareLinkGroups;
 	exports.groupsFromLayout = groupsFromLayout;

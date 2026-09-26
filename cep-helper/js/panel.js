@@ -1,6 +1,7 @@
 /*
- * Spread Helper paneli — yalnız ARAYÜZ. Sunucu, plan okuma ve BAĞLA mantığı js/helper.js'te (Node testleri aynı kodu çalıştırır).
- * Dosyadan / planından gelen metinler yalnız textContent ile yazılır (HTML olarak yorumlanmaz).
+ * Spread Helper paneli v1.0.0 — yalnız ARAYÜZ. Sunucu, plan okuma ve BAĞLA mantığı js/helper.js'te (Node testleri aynı kodu çalıştırır).
+ * Görünen: tek durum satırı. Köprüsüz BAĞLA bölümü YALNIZ Spread "yardımcı panelinden bağla" dediğinde (plan.handoff === "panel",
+ * henüz bağlanmamış). Gerisi "Ayrıntı ▸" altında. Dosyadan / planından gelen metinler yalnız textContent ile yazılır.
  */
 (function () {
   "use strict";
@@ -17,14 +18,33 @@
   var hhmmss = function (iso) {
     return iso ? String(iso).slice(11, 19) : "—";
   };
+  // bu panelde son BAĞLA: hangi plan (createdAt; yapıştırılan plan → "yapıştır"), o an dosyadaki plan (seen) ve sonucu. Sonuç, plan
+  // dosyası değişene (Spread yeni bir plan yazana) kadar görünür; sonra yeni plan gösterilir.
+  var last = null; // { at: string, seen: string, ok: boolean|null }
+  var busy = false;
 
   function renderStatus() {
-    if (!app) return set("srv", "✗ yardımcı çekirdeği (js/helper.js) yüklenmedi", "row bad");
-    if (!app.helper) return set("srv", "✗ " + (app.error || "sunucu kurulamadı"), "row bad");
+    if (!app) {
+      set("dot", "", "dot bad");
+      return set("srv", "Spread Helper çalışmıyor: çekirdek (js/helper.js) yüklenmedi — yeniden kur", "bad");
+    }
+    if (app.helper) set("ver", app.helper.state().version);
+    if (!app.helper) {
+      set("dot", "", "dot bad");
+      return set("srv", "Spread Helper çalışmıyor: " + (app.error || "sunucu kurulamadı"), "bad");
+    }
     var st = app.helper.state();
-    if (st.listening) set("srv", "● dinliyor: localhost:" + st.port + " (" + st.addresses.join(", ") + (st.v6 && st.v6 !== "dinliyor" ? "; ::1 " + st.v6 : "") + ")", "row ok");
-    else if (st.error) set("srv", "✗ SUNUCU BAŞLAMADI: " + st.error, "row bad");
-    else set("srv", "… başlatılıyor", "row warn");
+    if (st.listening) {
+      set("dot", "", "dot ok");
+      set("srv", "Spread Helper çalışıyor", "");
+    } else if (st.error) {
+      set("dot", "", "dot bad");
+      set("srv", "Spread Helper çalışmıyor: " + st.error, "bad");
+    } else {
+      set("dot", "", "dot warn");
+      set("srv", "Spread Helper başlatılıyor…", "");
+    }
+    set("listen", st.listening ? "dinliyor: localhost:" + st.port + " (" + st.addresses.join(", ") + (st.v6 && st.v6 !== "dinliyor" ? "; ::1 " + st.v6 : "") + ")" : "sunucu kapalı");
     set("env", "Premiere " + (st.premiere || "?") + " · yardımcı " + st.version + " · Node " + st.node + " · ortak modül " + (st.core || "YOK"));
     set("info", st.infoFile);
     var r = st.lastRequest;
@@ -32,8 +52,34 @@
       "req",
       r
         ? hhmmss(r.at) + " " + r.method + " " + r.url + " → " + r.status + " (" + r.ms + " ms) · toplam " + st.requests
-        : "henüz istek gelmedi — Spread paneli \"bağlı değil\" diyorsa isteği buraya hiç ulaşmıyor demektir"
+        : "henüz istek gelmedi — Spread paneli \"yardımcı kapalı\" diyorsa isteği buraya hiç ulaşmıyor demektir"
     );
+  }
+
+  /** Köprüsüz BAĞLA bölümü: yalnız plan panel yolunu beklerken (ya da bu panelde az önce bağlandıysa sonucu için). */
+  function renderBindBox() {
+    if (!app || !app.helper || typeof app.helper.planStatus !== "function") return;
+    var p = app.helper.planStatus();
+    var box = $("bindbox");
+    if (last !== null && last.ok !== null && String(p.createdAt || "") !== last.seen) {
+      last = null; // yeni plan geldi → eski sonuç onun değil
+      set("summary", "", "row");
+      var rs = $("results");
+      while (rs && rs.firstChild) rs.removeChild(rs.firstChild);
+    }
+    var mine = last !== null;
+    var visible = p.waiting || mine;
+    if (box) box.style.display = visible ? "block" : "none";
+    if (mine && last.ok === true) {
+      set("bind-msg", "✓ " + (last.at === "yapıştır" ? "Yapıştırılan plan" : "\"" + p.sequence + "\" planı") + " bu panelde bağlandı.", "ok");
+      $("btn-bind").style.display = "none";
+    } else if (mine && last.ok === false) {
+      set("bind-msg", "Bağlama tamamlanmadı — nedeni aşağıda. Düzeltip yeniden BAĞLA'ya bas.", "bad");
+      $("btn-bind").style.display = "";
+    } else if (p.waiting) {
+      set("bind-msg", "Spread bağlamayı bekliyor: \"" + p.sequence + "\" · " + p.groups + " grup. Premiere'de o sequence açıkken BAĞLA'ya bas.", "");
+      $("btn-bind").style.display = "";
+    }
   }
 
   function renderPlan() {
@@ -44,6 +90,7 @@
     } catch (e) {
       set("plan", (e && e.message) || String(e), "warn");
     }
+    renderBindBox();
   }
 
   function renderLog() {
@@ -68,26 +115,48 @@
       add("• " + l, "bad");
     });
     out.rows.forEach(function (x) {
-      add((x.status === "tamam" ? "✓ " : x.status === "doğrulanamadı" ? "⚠ " : "✗ ") + x.label + (x.detail ? " — " + x.detail : ""), x.status === "tamam" ? "ok" : x.status === "doğrulanamadı" ? "warn" : "bad");
-    });
-    out.ignored.forEach(function (l) {
-      add("· " + l, "dim");
+      if (x.status === "tamam") return; // başarılı gruplar tek tek listelenmez (özet yeter; ayrıntı günlükte)
+      add((x.status === "doğrulanamadı" ? "⚠ " : "✗ ") + x.label + (x.detail ? " — " + x.detail : ""), x.status === "doğrulanamadı" ? "warn" : "bad");
     });
   }
 
   function onBind() {
-    if (!app || !app.helper) return;
-    var btn = $("btn-bind");
-    btn.disabled = true;
+    if (!app || !app.helper || busy) return;
+    busy = true;
+    var pasted = $("paste") && $("paste").value.trim() !== "";
+    var p = typeof app.helper.planStatus === "function" ? app.helper.planStatus() : null;
+    var seen = String((p && p.createdAt) || "");
+    last = { at: pasted || !seen ? "yapıştır" : seen, seen: seen, ok: null };
+    var b1 = $("btn-bind");
+    var b2 = $("btn-bind2");
+    b1.disabled = b2.disabled = true;
+    $("bindbox").style.display = "block";
     set("summary", "… bağlanıyor", "row warn");
     app.helper
       .bindFromPlan({ text: $("paste") ? $("paste").value : "" })
-      .then(renderResult, function (e) {
-        renderResult({ ok: false, summary: "✗ " + ((e && e.message) || e), rows: [], ignored: [], lines: [] });
-      })
+      .then(
+        function (out) {
+          last.ok = !!out.ok;
+          renderResult(out);
+        },
+        function (e) {
+          last.ok = false;
+          renderResult({ ok: false, summary: "✗ " + ((e && e.message) || e), rows: [], ignored: [], lines: [] });
+        }
+      )
       .then(function () {
-        btn.disabled = false;
+        b1.disabled = b2.disabled = false;
+        busy = false;
+        renderBindBox();
       });
+  }
+
+  function toggleMore() {
+    var m = $("more");
+    var open = m.style.display !== "block";
+    m.style.display = open ? "block" : "none";
+    set("more-toggle", open ? "Ayrıntı ▾" : "Ayrıntı ▸");
+    if (open) renderPlan();
   }
 
   if (app) {
@@ -95,9 +164,15 @@
     if (app.helper) app.helper.subscribe(renderStatus);
   }
   $("btn-bind").addEventListener("click", onBind);
+  $("btn-bind2").addEventListener("click", onBind);
   $("btn-plan").addEventListener("click", renderPlan);
+  $("more-toggle").addEventListener("click", toggleMore);
   if ($("paste")) $("paste").addEventListener("change", renderPlan);
   renderStatus();
-  renderPlan();
+  renderBindBox();
   renderLog();
+  // Spread planı yazınca bölüm kendiliğinden görünsün (dosya okuma; sunucuya dokunmaz)
+  setInterval(function () {
+    if (!busy) renderBindBox();
+  }, 2000);
 })();

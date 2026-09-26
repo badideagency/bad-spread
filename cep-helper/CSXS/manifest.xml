@@ -17,10 +17,10 @@
      https://github.com/Adobe-CEP/CEP-Resources/blob/master/CEP_12.x/Documentation/CEP%2012%20HTML%20Extension%20Cookbook.md
    - RangedVersion (XSD): "[25.0,99.9]" = 25.0 ve üstü
 -->
-<ExtensionManifest Version="12.0" ExtensionBundleId="com.badideagency.spread.helper" ExtensionBundleVersion="0.3.4"
+<ExtensionManifest Version="12.0" ExtensionBundleId="com.badideagency.spread.helper" ExtensionBundleVersion="1.0.0"
     ExtensionBundleName="Spread Helper" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <ExtensionList>
-    <Extension Id="com.badideagency.spread.helper.panel" Version="0.3.4" />
+    <Extension Id="com.badideagency.spread.helper.panel" Version="1.0.0" />
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>
@@ -52,12 +52,12 @@
           <Menu>Spread Helper</Menu>
           <Geometry>
             <Size>
-              <Height>460</Height>
-              <Width>340</Width>
+              <Height>140</Height>
+              <Width>300</Width>
             </Size>
             <MinSize>
-              <Height>220</Height>
-              <Width>240</Width>
+              <Height>60</Height>
+              <Width>200</Width>
             </MinSize>
           </Geometry>
         </UI>

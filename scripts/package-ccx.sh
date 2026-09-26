@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Kullanım: scripts/package-ccx.sh [probe|spread]   (varsayılan: probe)
-#   probe : dist/        → release/spread-probe.ccx
+# Kullanım: scripts/package-ccx.sh [spread|probe]   (varsayılan: spread)
+#   probe : dist/        → dist/spread-probe.ccx (arşiv; v1.0.0'dan beri release/ dışında)
 #   spread: spread/dist/ → release/spread.ccx
 #  - manifest.json ZIP'in KÖKÜNDE (alt klasör yok)
 #  - dosyalar 644, klasörler 755 (000 izin / kökte manifest yok → kurulumda "UPI status -160")
@@ -8,16 +8,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-TARGET="${1:-probe}"
+TARGET="${1:-spread}"
 case "$TARGET" in
-  probe)  BUILD="npm run build";        DIST="dist";        OUT="$PWD/release/spread-probe.ccx" ;;
+  probe)  BUILD="npm run build";        DIST="dist";        OUT="$PWD/dist-probe/spread-probe.ccx" ;;
   spread) BUILD="npm run build:spread"; DIST="spread/dist"; OUT="$PWD/release/spread.ccx" ;;
   *) echo "bilinmeyen hedef: $TARGET (probe|spread)"; exit 2 ;;
 esac
 
 $BUILD
 
-mkdir -p release
+mkdir -p "$(dirname "$OUT")"
 rm -f "$OUT"
 
 STAGE="$(mktemp -d)"

@@ -50,7 +50,7 @@ import {
 import { bindState, frameFromRecord, itemKey, itemOf, layoutState, misplacedAgainst, parkedFromRecord } from "./collect";
 import { analyze, compareLinkGroups, groupsFromLayout, partlyParked, type LayoutFrame } from "./sessions";
 import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
-import { getLinker, HELPER_VERSION, writeLinkPlan, type LinkGroupResult, type PingResult } from "./linker";
+import { getLinker, HELPER_VERSION, readPanelLinkResult, writeLinkPlan, type LinkGroupResult, type PingResult } from "./linker";
 import { big, fmtClip, relocate, secOf, settle, sleep, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
 import { assertSameSequence, requireActive, type SeqContext } from "./session";
 import {
@@ -67,7 +67,7 @@ import {
   type LinkItemRec,
 } from "./settings";
 import { describeCal, fmtRule, planTrim, type TrimCal } from "./trimcal";
-import { log, setHelperStatus, setReportText } from "./ui";
+import { done, log, progress, setHelperStatus, setReportText } from "./ui";
 
 const LINK_UNDO_NOTE =
   "Not: bağlama adımı (yardımcı) Premiere'in geri alma geçmişine ayrıca kayıt ekleyebilir (ölçülmedi); en güvenli dönüş yedek sequence'tır.";
@@ -199,10 +199,13 @@ function layoutMismatch(clips: ClipInfo[], lf: LayoutFrame, groups: LinkSpec[]):
   return [...lay.errors, ...compareLinkGroups(groups, lay.groups)];
 }
 
-/** Yardımcı panelin okuduğu KES planı (JSON). */
-function planText(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame): string {
+/**
+ * Yardımcı panelin okuduğu KES planı (JSON).
+ * @param handoff v1.0.0 (yalnız görünüm): "panel" → yardımcı panel köprüsüz BAĞLA bölümünü gösterir; "bridge" → köprü bağlayacak
+ */
+function planText(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame, handoff: "panel" | "bridge"): string {
   return JSON.stringify(
-    { v: 1, kind: "spread-link-plan", panel: HELPER_VERSION, sequence: { name: ctx.name, guid: ctx.guid }, createdAt: bind.at, frame: lf, groups: bind.groups },
+    { v: 1, kind: "spread-link-plan", panel: HELPER_VERSION, handoff, sequence: { name: ctx.name, guid: ctx.guid }, createdAt: bind.at, frame: lf, groups: bind.groups },
     null,
     1
   );
@@ -213,7 +216,7 @@ function planText(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame): string {
  * @param bridge köprü yok (why) → "yardımcı paneldeki BAĞLA'ya bas"; varsa (null) yalnız dosyayı yaz (panel yolu da hazır dursun)
  */
 async function handToPanel(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame, why: string | null, cutNow: boolean): Promise<void> {
-  const text = planText(ctx, bind, lf);
+  const text = planText(ctx, bind, lf, why === null ? "bridge" : "panel");
   const w = await writeLinkPlan(text);
   if (why === null) {
     if (w.ok) log(`   KES planı: ${w.path}`, "dim");
@@ -225,15 +228,34 @@ async function handToPanel(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame, w
     return;
   }
   setReportText(text);
-  log(`${cutNow ? "✓ KES tamam: kesme/silme tick düzeyinde doğrulandı" : "✓ KES tamam (daha önce yapılmış, bütün öğeler yerinde)"} — ${bind.groups.length} grup bağlanmayı bekliyor.`, "ok");
+  // bu plan (aynı createdAt) Spread Helper panelinde zaten bağlandıysa (yardımcının doğrulayıp yazdığı sonuç dosyası) — yalnız görünüm
+  const pr = readPanelLinkResult();
+  const linkedInPanel = !!(pr && pr.ok && pr.planCreatedAt === bind.at);
+  log(
+    `${cutNow ? "✓ KES tamam: kesme/silme tick düzeyinde doğrulandı" : "✓ KES tamam (daha önce yapılmış, bütün öğeler yerinde)"} — ` +
+      (linkedInPanel ? `${bind.groups.length} grup Spread Helper panelinde zaten bağlanmış (${pr?.at ?? "?"}).` : `${bind.groups.length} grup bağlanmayı bekliyor.`),
+    "ok"
+  );
   log(`Yardımcıya köprü yok: ${why}`, "warn");
   if (w.ok) {
     log(`KES planı yazıldı: ${w.path}`, "dim");
-    log("→ Premiere'de Window → Extensions (Legacy) → Spread Helper panelini aç ve oradaki BAĞLA'ya bas.", "head");
+    if (!linkedInPanel) log("→ Premiere'de Window → Extensions (Legacy) → Spread Helper panelini aç ve oradaki BAĞLA'ya bas.", "head");
   } else {
     log(`KES planı dosyaya YAZILAMADI (${w.path}): ${w.detail}`, "warn");
-    log("→ Plan aşağıdaki rapor kutusunda: 'Raporu kopyala' → Spread Helper panelinde 'Planı yapıştır' → BAĞLA.", "head");
+    if (!linkedInPanel) log("→ Plan aşağıdaki rapor kutusunda: 'Raporu kopyala' → Spread Helper panelinde 'Planı yapıştır' → BAĞLA.", "head");
   }
+  if (linkedInPanel) {
+    done("bagla", "ok", "Gruplar Spread Helper panelinde zaten bağlandı.", "Yapılacak bir şey yok.");
+    return;
+  }
+  done(
+    "bagla",
+    "warn",
+    `Kesim tamam; ${bind.groups.length} grup bağlanmayı bekliyor.`,
+    w.ok
+      ? "Spread Helper panelinde BAĞLA'ya bas (Window → Extensions (Legacy) → Spread Helper)."
+      : "Plan dosyası yazılamadı: Gelişmiş → 'Raporu kopyala' → Spread Helper'da 'Planı yapıştır' → BAĞLA."
+  );
 }
 
 /**
@@ -245,11 +267,14 @@ async function linkGroups(ctx: SeqContext, groups: LinkSpec[], sF: Snapshot, edi
   const again = "Yardımcıyı düzelt ve BAĞLA'ya tekrar bas (kesilecek bir şey kalmadığı için yalnız bağlama yapılır) ya da Spread Helper panelindeki BAĞLA'ya bas.";
   await assertSameSequence(ctx);
   log(`Bağlama: ${groups.length} grup yardımcıya gönderiliyor (${linker.name}).`);
+  progress(0.9, `${groups.length} grup bağlanıyor…`);
   let out: Awaited<ReturnType<typeof linker.link>>;
   try {
     out = await linker.link(ctx.name, groups.map((t) => ({ id: t.id, items: t.items })));
   } catch (e) {
-    throw new SpreadStop(`${edits ? "Kesme/silme doğrulandı ve yerinde; " : ""}bağlama isteği başarısız: ${e instanceof Error ? e.message : String(e)}. ${again}`);
+    const stop = new SpreadStop(`${edits ? "Kesme/silme doğrulandı ve yerinde; " : ""}bağlama isteği başarısız: ${e instanceof Error ? e.message : String(e)}. ${again}`);
+    stop.retryLink = true; // yalnız arayüz ipucu
+    throw stop;
   }
   await settle();
   const sAfter = await snapshot(ctx);
@@ -266,7 +291,11 @@ async function linkGroups(ctx: SeqContext, groups: LinkSpec[], sF: Snapshot, edi
     else if (r.verified === null) unverified.push(`${t.label}: ${r.detail}`);
     else log(`   ✓ ${t.label}: bulundu ${r.found}/${r.total}, bağlandı, doğrulandı`, "dim");
   }
-  if (bad.length) throw new SpreadStop(`${bad.length}/${groups.length} grup bağlanamadı${edits ? " (kesme/silme doğru ve yerinde)" : ""}. ${again}`, bad);
+  if (bad.length) {
+    const stop = new SpreadStop(`${bad.length}/${groups.length} grup bağlanamadı${edits ? " (kesme/silme doğru ve yerinde)" : ""}. ${again}`, bad);
+    stop.retryLink = true; // yalnız arayüz ipucu
+    throw stop;
+  }
   return unverified;
 }
 
@@ -276,12 +305,20 @@ function reportLinked(n: number, unverified: string[], executed: string[]): void
     log(`⚠ BAĞLA bitti ama ${unverified.length}/${n} grubun bağı DOĞRULANAMADI (Premiere "bağlandı" dedi; okuyarak teyit edilemedi):`, "warn");
     for (const u of unverified) log(`   • ${u}`, "warn");
     log("Kontrol et: timeline'da bir kamera klibine tıkla — grubun kameraları ve ses parçaları birlikte seçilmeli (Linked Selection açık).", "head");
-  } else
+    done(
+      "bagla",
+      "warn",
+      `${n} grup bağlandı; ${unverified.length} grubun bağı okunarak doğrulanamadı.`,
+      "Timeline'da bir kamera klibine tıkla: grubun kameraları ve sesleri birlikte seçilmeli."
+    );
+  } else {
     log(
       `✓ BAĞLA tamam: ${n} grup bağlandı ve getLinkedItems ile doğrulandı; klip zamanları bağlamada değişmedi.` +
         `${executed.length ? ` (${executed.length} adım: ${executed.join(", ")})` : ""}`,
       "ok"
     );
+    done("bagla", "ok", `${n} grup bağlandı.`, executed.length ? "Beğenmezsen yedek sequence'ı kullan (ya da Ctrl+Z)." : "");
+  }
 }
 
 /** Kesme/silme önceden yapılıp doğrulanmış (kayıtta) ve bütün öğeler yerinde → YALNIZ bağlama. Düzenleme yok, yedek yok. */
@@ -479,7 +516,36 @@ export async function runBind(): Promise<void> {
             ? `Kırpma: bu sequence'ta ölçülmüş kural (${fmtRule(cached.rule)}; ${cached.at}). `
             : "Kırpma: bu sequence'ta ilk kesim → önce KALİBRASYON (set action'lar park alanındaki geçici kopyalarda AYRI adımlarda tek tek, sonra seçilen kural baş + kuyruk birlikte ölçülür; 7 adım, düzeni değiştirmez, kopyalar sonra silinir). "
           : "") +
-        `${edits ? "Önce yedek sequence oluşturulacak." : "Kesme/silme yok → yalnız bağlama (yedek alınmaz)."} Devam?`
+        `${edits ? "Önce yedek sequence oluşturulacak." : "Kesme/silme yok → yalnız bağlama (yedek alınmaz)."} Devam?`,
+      // özet (yalnız görünüm; tam metin "Ayrıntı ▸" altında)
+      [
+        `${plan.groups.length} grup bağlanacak; ${extCuts.length} harici ses ${nPieces} parçaya kesilecek (yalnız kendi oturumunda).`,
+        ...(deletes.length
+          ? [
+              `Silinecek: ${[
+                plan.deleteGuides.length ? `${plan.deleteGuides.length} kamera kılavuz sesi` : "",
+                plan.deleteSil.length ? `${plan.deleteSil.length} "Sil" kaynağı klibi` : "",
+                plan.deleteOutside.length ? `${plan.deleteOutside.length} çapa dışı ses` : "",
+              ]
+                .filter(Boolean)
+                .join(", ")}.`,
+            ]
+          : []),
+        ...(plan.keptCamera.length ? [`KAMERA SESİ KORUNACAK: ${plan.keptCamera.length} aralıkta (harici ses parçası olmayan yerler).`] : []),
+        ...(plan.silent.length
+          ? [`SESSİZ KALACAK: ${plan.silent[0]}${plan.silent.length > 1 ? ` (+${plan.silent.length - 1} aralık daha, Ayrıntı)` : ""}`]
+          : []),
+        ...((): string[] => {
+          const n = [
+            plan.cuts.length && !cached ? "ilk kesimde kırpma komutları önce geçici kopyalarda ölçülür (7 adım, düzen değişmez)" : "",
+            ping.ok ? "" : "yardımcı kapalı: kesimden sonra Spread Helper panelinde BAĞLA'ya basacaksın",
+            plan.camless.length ? `${plan.camless.length} kamerasız oturumun seslerine dokunulmaz` : "",
+            plan.warnings.length ? `${plan.warnings.length} uyarı (Ayrıntı)` : "",
+          ].filter(Boolean);
+          return n.length ? [`Not: ${n.join("; ")}.`] : [];
+        })(),
+        edits ? `Önce yedek sequence alınır ("${ctx.name}" kopyası). Devam?` : "Kesme/silme yok; yalnız bağlanacak. Devam?",
+      ]
     );
     if (ans !== "Evet") {
       log("İptal edildi — hiçbir şey değişmedi.", "warn");
@@ -488,6 +554,7 @@ export async function runBind(): Promise<void> {
 
     let sF: Snapshot;
     if (edits) {
+      progress(0.05, "Yedek sequence alınıyor…");
       const backup = await makeBackup(ctx, "BAĞLA");
       backupName = backup.name;
       let s1 = await snapshot(ctx);
@@ -535,6 +602,7 @@ export async function runBind(): Promise<void> {
         srcOf.set(cut.src, f);
       }
       log(`TX-1 (kesim hazırlığı): ${slots.length} park kopyası (${secOf(P)} sn sonrası) → ${so.readCount} klip siliniyor (ripple=false).`);
+      progress(0.42, "Kesim hazırlanıyor (kılavuz sesler siliniyor)…");
       await runTx(ctx, executed, "kesim hazırlığı", "BAĞLA: kesim hazırlığı", (ops) => {
         for (const sl of slots) ops.clone(srcOf.get(sl.piece.src)!, ticks(sl.offset), 0, 0);
         ops.remove(so.sel);
@@ -567,11 +635,13 @@ export async function runBind(): Promise<void> {
             `(${fmtRule(cal.rule)}; kenar başına tek action, farkı 0 olan kenara action yok).`
         );
         prev = s;
+        progress(0.5, "İlk ses parçası kesiliyor (ölçüm)…");
         s = await trimTx(ctx, executed, "ilk parça", s0, plan, slots, new Set(), [first], cal);
         const rest = slots.filter((x) => x !== first);
         if (rest.length) {
           await expectState(ctx, s, prev, executed);
           log(`TX-3 (parçalar): ${rest.length} parça kırpılıyor.`);
+          progress(0.6, `${rest.length} ses parçası kesiliyor…`);
           prev = s;
           s = await trimTx(ctx, executed, "parçalar", s0, plan, slots, new Set([first]), rest, cal);
         }
@@ -587,6 +657,7 @@ export async function runBind(): Promise<void> {
           return { sl: p.sl, c: f };
         });
         log(`TX-4 (yerleştir): ${work.length} parça asıl yerine (korunan kamera sesi kendi track'ine) → park kopyaları siliniyor.`);
+        progress(0.75, `${work.length} parça yerine konuyor…`);
         await runTx(ctx, executed, "yerleştir", "BAĞLA: yerleştir", (ops) => {
           for (const { sl, c } of work) ops.clone(c, ticks(-sl.offset), 0, sl.piece.track - c.track);
           ops.remove(so4.sel);

@@ -1,4 +1,158 @@
-# handoff — Spread (ADIM 3.4: BAĞLA kırpması kalibre edilir, çift kopya silinir, v0.3.4) + geçmiş (ADIM 3.3, 3.2, 3.1, 3, 2, 1)
+# handoff — Spread v1.0.0 (ürünleştirme) + geçmiş (ADIM 3.4, 3.3, 3.2, 3.1, 3, 2, 1)
+
+## v1.0.0 ürünleştirme — mantık değişmedi
+
+> **v1.0.0 ürünleştirme — mantık değişmedi; açık risk: kırpma kalibrasyonu gerçek Premiere'de ilk BAĞLA'da ölçülecek.**
+
+Ölçüm "KALİBRASYON SONUCU" bloğu olarak ayrıntılı günlüğe ve Sorun bildir raporuna yazılır; ADIM 3.4'teki tabloya işlenecek.
+Tutarlı kural çıkmazsa BAĞLA hiçbir şey kesmeden durur.
+
+| | |
+|---|---|
+| Sürüm | **Spread 1.0.0** + **Spread Helper 1.0.0**; kurulum: `release/Spread_Kurulum_v1.0.0.zip` (+ ayrıca `release/spread.ccx`). Probe yayından çıktı (repoda). |
+| Kullanıcı isteği | Günlük kullanılacak tam eklenti. Yeni özellik YOK; bütün kilitler, doğrulamalar, kalibrasyon ve yedek aynen. Yalnız arayüz, kurulum, paketleme. |
+| Doğrulama | Bütün mock senaryoları DEĞİŞMEDEN geçer; regresyon (v0.3.3 kırpması düşer / yeni geçer); `scripts/test-kurulum-wine.sh` (KUR / KALDIR, Wine); ekran görüntüleri `docs/ekran` (mock + jsdom + Chromium); bağımsız alt ajan incelemesi #7 |
+
+### Ne değişti (yalnız görünüm)
+
+- **Spread paneli** (`spread/public/index.html`, `spread/index.ts`, `spread/src/ui.ts`):
+  - Üst satır: sequence adı + yardımcı ● (hazır / kapalı: "Window → Extensions (Legacy) → Spread Helper'ı aç").
+  - Numaralı üç adım (1 SPREAD → Synchronize hatırlatması → 2 TOPLA → 3 BAĞLA). Biten adımda ✓ + kısa sonuç; sıradaki vurgulu.
+    Kaynağı `spread/src/steps.ts`: panelin sequence başına hatırladığı sonuçlar + TOPLA/BAĞLA kaydı. Timeline okunmaz; elle geri
+    alınan işlemin ✓'ü kalabilir, işlemler yine kendi denetimlerini yapar.
+  - İlerleme çubuğu + tek satır. Sonuç: tek cümle + ne yapılacağı + "Ayrıntı ▸" (bu işlemin günlüğü).
+  - Onay: en çok 5 satırlık özet (`ui.capSummary`: ilk satır + soru kalır, aradan önce dikkat satırları; sığmayan "+N satır
+    Ayrıntı'da") + dikkat satırları (sarı) + "Ayrıntı ▸" (tam, eski metin — değişmedi).
+  - "Gelişmiş ▸": kaynak eşleme, eşik, boşluk, yardımcı ayrıntısı, Durum raporu, günlük.
+  - UXP sınırları gözetildi (inceleme: flex `gap`, `font` kısaltması, animasyon, `<details>` yok) → margin + JS katlama.
+- **Runner'lara eklenenler** (`spread.ts`, `topla.ts`, `bagla.ts`, `calibrate.ts`) — karar mantığına dokunulmadı:
+  - `progress(…)` / `done(…)` çağrıları;
+  - `askUser(q, özet)`: `q` aynı, özet ek;
+  - `reportStop` sonuç kutusuna tek cümle yazar (`ui.humanize`).
+  - KES planına `handoff: "panel" | "bridge"` alanı: yardımcı panel bölümünü göstermek için; yardımcının plan doğrulaması bu alanı
+    okumaz.
+- **Arka plan günlüğü** (`spread/src/journal.ts`): bellek (son 4000 satır) + dosya
+  `%APPDATA%\BadIdeaAgency\Spread\spread-gunluk.txt`. Dosya önceki panel oturumlarını da tutar (son 4000 satırı; her açılış bir
+  "==== yeni panel oturumu ====" ayracıyla eklenir); önceki oturumların son 1500 satırı Sorun bildir raporuna girer. Premiere çöküp
+  birkaç kez boş açılsa da son TOPLA / BAĞLA günlüğü kalır (sınırı: aradaki oturumlar 4000 satırı doldurursa). Yazma tek hatlı
+  (zamanlayıcı ile Sorun bildir çakışmaz).
+- **Sorun bildir** (`spread/src/report.ts`): sürümler, yardımcı durumu, son hata + ayrıntısı, kalibrasyon sonucu, son SPREAD /
+  TOPLA / BAĞLA günlükleri, Durum raporu (işlem sürerken atlanır), ayrıntılı günlüğün sonu, önceki oturumun günlüğü.
+  - Rapor panoya kopyalanır ve `Desktop\SpreadRapor_<tarih>.txt` olarak kaydedilir. Kopyalama olmazsa metin panelde bir kutuda görünür.
+  - Denenen yollar sırayla: `<home>\Desktop`, `<home>\OneDrive\Desktop`, `<home>\OneDrive\Masaüstü`, `<home>/Desktop` ("/" ayraçlı),
+    veri klasörü. Önce "\\" ayraç (linker.ts'teki yardımcı dosyalarıyla aynı, çalıştığı bilinen biçim).
+  - Düğme hiç kapanmaz: işlem sürerken (ör. onay beklerken) de çalışır; o sırada Spread timeline'ı ve aktif sequence'ı okumaz
+    (Durum raporu ve saklı kalibrasyon atlanır; kalibrasyon satırları günlükten gelir). Yalnız yardımcıya ping gider (yardımcı
+    ExtendScript'le Premiere sürümünü ve aktif sequence adını okur — yalnız okuma).
+  - Rapor `#report` kutusuna yazılmaz (orada yardımcıya yapıştırılacak KES planı durabilir); kendi kutusu `#issue-text`.
+- **Spread Helper** (`cep-helper/index.html`, `js/panel.js`):
+  - Tek durum satırı.
+  - BAĞLA bölümü yalnız `planStatus().waiting` iken görünür: plan `handoff:"panel"` ve henüz bağlanmamış. Bu panelde yapılan son
+    BAĞLA'nın sonucu (başarılı ya da değil) yeni bir plan gelene kadar görünür kalır; yeşil "bağlandı" yalnız sonuç başarılıysa.
+  - Geri kalan her şey "Ayrıntı ▸" altında; Spread'in mesajlarıyla aynı adlar: "Planı yapıştır" kutusu + altındaki "BAĞLA".
+  - Varsayılan boyut 300×140. `helper.js`'e yalnız okuma yapan `planStatus()` eklendi.
+- **Sürüm**: `spread/src/version.ts` (SPREAD_VERSION = yardımcıdan beklenen sürüm); manifest'ler, host.jsx, çekirdek 1.0.0.
+
+### Kurulum paketi (`scripts/package-kurulum.sh`, `scripts/kurulum/`)
+
+- **KUR.cmd** (ASCII, CRLF):
+  - Yönetici olarak çalıştırılırsa DURUR (`net session` başarılıysa). Nedeni: HKCU başka kullanıcınınki olabilir; Adobe'nin
+    UPIA'sı yönetici modunda çalışmaz.
+  - İlk kurulumda önceki PlayerDebugMode değerlerini (tür + değer ya da YOK) `%APPDATA%\BadIdeaAgency\SpreadKurulum\onceki.txt`'ye
+    saklar.
+  - `HKCU\Software\Adobe\CSXS.12` / `CSXS.11` altında PlayerDebugMode = "1" yapar.
+  - Yardımcıyı `%APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper`'a kopyalar.
+  - UPIA `/install spread.ccx` çalıştırır. Yol ve sözdizimi: developer.adobe.com/premiere-pro/uxp/plugins/distribution/install/;
+    exe `C:\Program Files\Common Files\Adobe\Adobe Desktop Common\RemoteComponents\UPI\UnifiedPluginInstallerAgent\`.
+  - PlayerDebugMode ve yardımcı için sonuç çıkış kodlarına değil okunan değerlere ve dosyalara göre raporlanır. UPIA için okunacak bir
+    şey belgeli değil: özet yalnız "Adobe kurucusu kurduğunu **bildirdi**" der ve UPIA'nın kendi çıktısı ekranda kalır (`cls` yok).
+    Özet her durumda "Menüde Spread yoksa: spread.ccx'e çift tıkla" satırını gösterir.
+  - `onceki.txt` yazılamazsa kayıt defterine dokunmadan durur (KALDIR geri yükleyemeyeceği bir değişiklik yapılmaz).
+  - Özet satırları blok (`( … )`) içinde değil, tek satırlık `if`'lerle: `%APPDATA%` ")" içerse de (ör. kullanıcı "Ali (Kurgu)")
+    cmd'nin ayrıştırması bozulmaz.
+- **KALDIR.cmd**:
+  - UPIA `/remove "Spread"` (belgede ad alır).
+  - Yardımcı klasörünü siler.
+  - PlayerDebugMode'u `onceki.txt`'ye göre geri yükler: YOK idiyse değeri siler, varsa türü ve değeriyle yazar.
+  - Veri klasörlerini (`BadIdeaAgency\Spread`, `\SpreadHelper`, `\SpreadKurulum`) ve `%TEMP%\spread-helper.log`'u siler.
+  - Masaüstündeki raporlara dokunmaz.
+- **Sınama** (`scripts/test-kurulum-wine.sh`, Wine):
+  - ilk kurulum, ikinci kurulum (saklanan değer bozulmaz), kaldırma (CSXS.11 "0"a, CSXS.12 YOK'a döner; klasörler silinir);
+  - kurulum klasörü adında boşluk + parantez ("Spread Kurulum (1)");
+  - Adobe kurucusu: yok → "bulunamadı / çift tıkla"; sahte UPIA çıkış 0 (Wine'ın whoami.exe'si) → "bildirdi"; çıkış 1 (hostname.exe)
+    → "kurulamadı"; KALDIR'da `/remove` → "kaldırdığını bildirdi";
+  - `%APPDATA%` içinde ")" (sarmalayıcı .cmd ile): kurulum ve kaldırma tam;
+  - zip açılmadan çalıştırma; yönetici reddi.
+  - Wine'ın `net session`'ı 0 döndürdüğü için sınamada o satır değiştirilir. Wine'ın `cmd /c`'si parantezli yolu açamadığı için betik
+    `cmd /c call "…"` ile çağrılır (Windows'ta çift tıklama bundan etkilenmez).
+  - Wine'ın `findstr /b /c:`'si eşleşmeyi kaçırdı → KUR.cmd'de bu kontrol `for /f` ile yapılıyor (`:has12`); Windows'ta da aynı çalışır.
+- **Sınanamayan:**
+  - UPIA'nın gerçek davranışı: Market dışı .ccx'te onay istiyor mu, çıkış kodları. Başarısızsa özet "spread.ccx'e çift tıkla" der.
+  - Gerçek Windows cmd'si. Wine'da `reg` / `xcopy` başarılıyken de sıfır dışı döndü; bu yüzden sonuç okunarak doğrulanıyor.
+
+### Belirsizlikler (v1.0.0)
+
+1. Kalibrasyonun gerçek ölçümü (yukarıda, açık risk).
+2. UPIA'nın komut satırından Market dışı .ccx kurarken ne yaptığı ve çıkış kodları belgesiz. Başarısızken 0 döndürürse özet yanlışlıkla
+   "bildirdi" der; bu yüzden özet UPIA'nın çıktısını ekranda bırakır ve "Menüde Spread yoksa: spread.ccx'e çift tıkla" satırı her zaman
+   görünür. `/list all` ile doğrulama çıktı biçimi belgesiz olduğu için eklenmedi (tahmin olurdu).
+3. UXP'de `sp-button`'ın `variant` özniteliğini çalışırken değiştirmek (vurgulu adım) ölçülmedi. Değişmezse yalnız vurgu kaybolur.
+4. Masaüstü yolu: OneDrive yönlendirmesi ve Türkçe klasör adı denenir; olmazsa veri klasörüne yazılır ve yol gösterilir.
+5. UXP'de `:root` CSS değişkenleri gerçek panelde ölçülmedi (ekran görüntüleri Chromium). Çalışmazsa renkler varsayılana düşer;
+   düzen ve düğmeler etkilenmez.
+6. Bilerek değiştirilmeyenler: yardımcıda `.debug` (uzak hata ayıklama, port 8098) 0.3.x'teki gibi pakette; KALDIR, KUR'un açtığı boş
+   `CSXS.11/12` anahtarlarını ve boş `CEP\extensions` klasörünü bırakır (içleri boş, zararsız); 0.3.x'in `.reg` dosyasıyla
+   PlayerDebugMode'u elle "1" yapan kullanıcıda `onceki.txt` "1" kaydeder ve KALDIR onu "1"e döndürür (doğru ama beklenmedik olabilir).
+
+### İnceleme #7 (bağımsız alt ajan, 7864351..9ce1dd8) ve düzeltmeler
+
+BLOCKER yok. Denetim 1 (mantık dosyalarında davranış farkı yok), 2 (kurulum yalnız HKCU / `%APPDATA%` / `%TEMP%`'e yazar),
+3 (KALDIR, KUR'u geri alır) → **PASS**. `npm run check` PASS (79 senaryo), regresyon PASS, zip bayt bayt yeniden üretilebilir.
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| M1 | Günlük dosyası her açılışta eziliyordu → çökme sonrası Sorun bildir'de son TOPLA / BAĞLA yok | #8'de son hâli: dosya önceki oturumları tutar (son 4000 satır), rapor onların son 1500 satırını içerir; yazma tek hatlı |
+| M2 | Yardımcı paneli başarısız bağlamadan sonra yeşil "bağlandı" gösterebiliyordu; yapıştırılan planda sonuç kutusu hemen kayboluyordu | son BAĞLA (plan `createdAt` ya da "yapıştır") + sonucu tutulur; yeşil yalnız `ok`; başarısızsa kırmızı "Bağlama tamamlanmadı — nedeni aşağıda"; kutu plan dosyası değişene (yeni plan) kadar görünür, sonra yeni plan gösterilir (#8). İncelemecinin jsdom repro'ları (5 + 2 durum) doğru |
+| m1 | Sorun bildir işlem boyunca (onay beklerken de) kapalıydı | düğme hiç kapanmaz; işlem sürerken Spread timeline'ı / sequence'ı okumaz (#8; yalnız yardımcıya ping), `reporting` kilidi çift tıklamayı engeller |
+| m2 | Arayüz çağrıları istisna güvenli değildi | `opStart` / `progress` / `opEnd` / `done` / `opFinish` try/catch içinde; `finally`'de önce `busy=false` |
+| m3 | Adım göstergesi: yeniden SPREAD'den sonra eski TOPLA ✓'ü; yardımcı panelinde bağlandıktan sonra hâlâ "bekliyor" | kayıt yalnız son SPREAD'den yeniyse kullanılır; BAĞLA ✓'ü `link-result.json` (`planCreatedAt` = kayıt, `ok`) ile; plan panelde zaten bağlandıysa BAĞLA sonucu "zaten bağlandı" gösterir (KES / plan akışı aynı) |
+| m4 | Onay özetleri 3–5 satırı aşıyordu; VETO "+N daha" yoktu; OTURUM SIRASI / ŞÜPHELİ ÜYE özetinde asıl bilgi yoktu | TOPLA / BAĞLA özetleri sıkıştırıldı (VETO / SESSİZ önce, "+N … daha (Ayrıntı)", tek "Not:" satırı: park, ŞÜPHELİ, kalibrasyon, köprü, kamerasız, uyarı sayısı); OTURUM SIRASI ve ŞÜPHELİ ÜYE için açık özet ("Hayır = oturumda kalsın" dahil). Soru metinleri (`q`) aynen |
+| m5 | Kesim bittikten sonra durunca ipucu "Ctrl+Z × N" diyordu, başlık "BAĞLA'ya tekrar bas" | #8'de son hâli: yalnız bağlama isteğinin kendisi düşünce (`SpreadStop.retryLink`, yalnız arayüz; kesme/silme doğrulanmış ve kayıtta) "Düzen yerinde ve doğrulandı; yalnız bağlama olmadı … tekrar bas (yalnız bağlar)"; diğer duruşlarda eski ipucu |
+| m6 | Eski metinler (`spread-helper-klasor.zip`, "SUNUCU BAŞLAMADI", "Planı elle bağla") | linker ipuçları → `Spread_Kurulum_v1.0.0.zip` / KUR.cmd, "Spread Helper çalışmıyor"; yardımcıdaki adlar Spread'in günlük metinlerine uyduruldu ("Planı yapıştır" + "BAĞLA") — smoke'un denetlediği günlük metinleri değişmedi |
+| m7 | KUR.cmd: `else ( … "%DEST%" … )` bloğu `%APPDATA%` ")" içerince cmd'yi bozar | özet yalnız tek satırlık `if`'ler; Wine'da ")" içeren `%APPDATA%` ile sınandı |
+| m8 | `onceki.txt` yazılamasa da kayıt defteri değişiyordu | yazılamazsa `:nostate` — hiçbir şeye dokunmadan durur |
+| m9 | UPIA sonucu çıkış kodundan "kuruldu" diyordu; `cls` UPIA çıktısını siliyordu | "Adobe kurucusu … **bildirdi** (çıktısı yukarıda)"; `cls` kaldırıldı; "Menüde Spread yoksa çift tıkla" her zaman (Belirsizlik 2) |
+| m10 | Wine sınamasında UPIA yolu hiç çalışmıyordu | sahte UPIA (çıkış 0 / 1), parantezli klasör, ")" içeren `%APPDATA%` eklendi — bu sınama ayrıca `findstr /b /c:` sorununu buldu (yukarıda) |
+| m11 | Sorun bildir dosya yolları "/" ile (denenmemiş biçim); `#report` eziliyordu | önce "\\" (linker'la aynı), sonra "/"; rapor kendi kutusunda (`#issue-text`) |
+| NIT | humanize kalıbı eşleşmiyordu; küçük harfle başlayan başlıklar; `#adv` JS'ten önce görünüyordu; açık temada koyu kart + koyu yazı | kalıp gerçek metne ("sequence yok", "proje yok"); başlığın ilk harfi büyük; CSS'te `display:none`; sabit koyu palet |
+| NIT | KALDIR veri klasörüne düşmüş raporları da siliyor | belgelendi (KURULUM_TR, OKU_BENI, KALDIR özeti) |
+| NIT | `.debug` pakette; boş anahtar / klasör kalıyor; `%APPDATA%` boşsa; `net session` Sunucu hizmeti kapalıysa "yönetici değil" der | değiştirilmedi (Belirsizlik 6); `%APPDATA%` Windows'ta etkileşimli kullanıcıda hep tanımlı |
+
+### İnceleme #8 (aynı alt ajan, düzeltmelerin denetimi: 9ce1dd8..b6bc739)
+
+BLOCKER / MAJOR yok. Denetim 1–3 yine **PASS**; Wine sınaması, `npm run check` (79 senaryo) ve zip'in bayt bayt yeniden üretimi PASS.
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| 1 | Yardımcı paneli: yapıştırılan planın sonucu, sonra gelen yeni planı gizliyordu; dosya planında eski sonuç yeni "bekliyor" mesajının altında kalıyordu | son BAĞLA, o an dosyadaki planın `createdAt`'ini (`seen`) de tutar; plan dosyası değişince sonuç ve sonuç satırları silinir, yeni plan gösterilir. İncelemecinin iki jsdom repro'su (5 + 8 durum) doğru |
+| 2 | Günlük: tek kuşak (iki boş açılışta çökme günlüğü gidiyordu) + `mkdir` beklerken iki yazma yarışı | `-onceki.txt` yerine dosya önceki oturumları tutar (son 4000 satır, oturum ayracıyla); `loaded` bayrağı `await`'ten önce; yazma tek hatlı (sürerken gelen istek bir kez daha yazdırır). Node'da sahte gecikmeli `mkdir` ile sınandı: çökme satırı 3 açılıştan sonra da raporda, oturumlar çift yazılmıyor |
+| 3 | "Tekrar bas (yalnız bağlar)" ipucu kesimden sonraki her duruşta çıkıyordu (ortak kural uyuşmazlığı, "klipler değişti", kesimsiz dal) | ipucu duruşun kendisinde: `SpreadStop.retryLink` yalnız bağlama isteği düşünce / grup bağlanamayınca (ikisi de kayıt yazıldıktan sonra); `reportStop`'un `ui` parametresi kaldırıldı. Mesajlar ve `cutsDone` mantığı aynen |
+| 4 | "Zaten dağıtılmış" SPREAD sonraki adımların ✓'ünü siliyordu | `done(…, noop = true)`: SPREAD "zaten dağıtılmış" ve TOPLA "zaten toplanmış"ta adım zamanı eski kalır, sonrakiler silinmez |
+| NIT | Köprüsüz yolda "zaten bağlandı" sonucunun üstünde "bekliyor … BAĞLA'ya bas" günlüğü | panelde bağlandıysa günlük "zaten bağlanmış (zaman)" der, "→ BAĞLA'ya bas" satırları yazılmaz (yalnız o durumda; diğer metinler aynı) |
+| NIT | İşlem sürerken Sorun bildir yine aktif sequence'ı soruyordu | işlem sürerken Spread `requireActive` çağırmaz (yardımcı ping'i kalır: yalnız okuma) |
+| NIT | Özet 6 satıra çıkabiliyordu | `capSummary`: en çok 5 satır, dikkat satırları önce |
+| NIT | KUR.cmd `%HERE%` tırnaksız | tırnaklı |
+| NIT | Wine ")" sınaması eski hatayı yakalayamazdı (Wine'ın cmd'si hoşgörülü) | not edildi; düzeltme yapı gereği doğru (blok içinde tırnaksız genişletme yok) |
+
+Denetim (#8 düzeltmeleri, 6caf269): **fixes verified** — BLOCKER / MAJOR / MINOR yok; denetim 1–3 PASS, `npm run check` PASS,
+Wine sınaması 24/24, zip ve ccx bayt bayt yeniden üretildi. Kalan (bilerek bırakılan) NIT'ler:
+- `capSummary` ortada 3 satır tutar: ÇİFT KOPYA + VETO + DİKKAT + ŞÜPHELİ içeren "Not:" birlikte gelirse (çok seyrek) "Not:" satırı
+  özette görünmez, yalnız "(+1 satır Ayrıntı'da)" kalır; tam metin "Ayrıntı ▸"da.
+- Özette çift parantez olabilir: "SESSİZ KALACAK: … (+2 aralık daha, Ayrıntı) (+1 satır Ayrıntı'da)" (görünüm).
+- Yardımcı paneli: bekleyen bir plan dosyası varken FARKLI bir plan yapıştırılıp bağlanırsa, dosyadaki plan Spread yeni bir plan
+  yazana kadar bölümde gösterilmez (Ayrıntı ▸ → BAĞLA ile yine bağlanabilir).
+
+---
 
 ## Durum (tek bakışta) — ADIM 3.4
 
