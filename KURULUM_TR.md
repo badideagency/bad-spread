@@ -65,7 +65,8 @@ Sonra:
 - Panelde **"Harici ses kaynakları → A track"** altında sequence'taki kaynaklar görünür: "Zoom Tr1", "Zoom Tr2", "Zoom TrLR", "DJI"…
   Görünmezse **Kaynakları tara**'ya bas.
 - Her kaynağa bir **A track** seç ya da **"Sil"** de (ör. TrLR'yi istemiyorsan). Panel seçimini hatırlar.
-  Bu seçimi **TOPLA'dan önce** yap. Sonradan değiştirirsen BAĞLA "önce TOPLA" der; TOPLA'ya bir kez daha basman yeter.
+  Bu seçimi **TOPLA'dan önce** yap. TOPLA kullandığı eşlemeyi ve eşiği **hatırlar**. Sonradan değiştirirsen BAĞLA hiçbir şeye
+  dokunmadan **"Ayar TOPLA'dan sonra değişti — TOPLA'ya tekrar bas"** der ve neyin değiştiğini yazar. TOPLA'ya bir kez daha basman yeter.
 - **Güçlü bağ eşiği (%)**: varsayılan 90, dokunma. İki kayıt, kısa olanın en az bu kadarı üst üste geliyorsa aynı oturum sayılır.
   12 Eylül verinde doğru eşleşmelerin en düşüğü %97.96, yanlış çakışmaların en yükseği %49 çıktı.
 - **Oturum arası boşluk (sn)**: TOPLA'da oturumların arasına konan boşluk; varsayılan 2.
@@ -85,12 +86,21 @@ Sonra:
 - **Çift kopya** varsa (aynı dosya aynı yerde iki kez) panel hiçbir şeye dokunmadan durur ve hangi track'ler olduğunu yazar.
   Fazla olanı sil, sonra tekrar bas. 12 Eylül verinde A26/A27 ve A29/A30 böyle.
 - **Sahipsiz** kayıt, hiçbir şeyle eşleşmeyen kayıttır (ör. 1 sn'lik tek kamera klibi). Silinmez: en alttaki "park" track'lerine konur, zamanı değişmez.
+  Panel park ettiklerini **hatırlar**. Sonraki TOPLA ve BAĞLA onları oturumlara karıştırmaz, yeni düzende uzun bir kaydın altına denk gelseler bile.
+- **"ŞÜPHELİ ÜYE"** sorusu: kısa bir klip (ör. 1 sn) bir oturuma yalnız çok uzun bir kaydın **içine düştüğü** için bağlı görünüyor.
+  Senkron onu eşleyememiş ve rastgele bir yere bırakmış olabilir.
+  - **Evet**: o klip park track'lerine gider, zamanı değişmez. BAĞLA ona dokunmaz.
+  - **Hayır**: oturumda kalır, BAĞLA ona da ses keser.
 - **"AYRILAMAYAN OTURUM"** sorusu: iki ilgisiz grup iç içe gelmiş ve panel hangisinin hangisi olduğunu kesin bilemiyor, tahmin de etmiyor.
   - **Hayır**: hiçbir şey değişmez. Bu grupları Premiere'de ayrı ayrı senkronlamak iyi bir çözüm.
   - **Evet**: o kayıtlar zamanı değişmeden park track'lerine gider, diğer oturumlar dizilir.
 - **"OTURUM SIRASI ÇELİŞKİLİ"** sorusu: kameraların sayaçları farklı sıra söylüyor.
   - **Hayır**: hiçbir şey değişmez.
   - **Evet**: oturumlar senkronun bıraktığı sırayla dizilir.
+- **"OTURUM SIRASI … BELİRLENEMEDİ"** sorusu: bazı oturumların ortak cihazı yok, sayaçlardan sıraları çıkmıyor.
+  Panel kullanacağı sırayı gösterir. Bu sıra, sayaçların bildiği bütün kısıtlara uyar; bilinmeyen yerde senkronun bıraktığı sıra kullanılır.
+  - **Hayır**: hiçbir şey değişmez.
+  - **Evet**: gösterilen sırayla dizilir.
 - **Evet** dersen panel önce yedek sequence alır, sonra şu sırayla ilerler:
   1. İlk oturumu **tek başına** park eder ve ölçer.
   2. Diğer oturumları park eder.
@@ -117,6 +127,9 @@ Sonra:
   - Sonra planı yazar: oturumlar, her oturumun grupları, çapalar (grubun en uzun kamera klibi) ve ses parçaları. Ardından sorar.
   - Kesim **yalnız oturum içinde**: bir Zoom/DJI kaydı sadece kendi oturumundaki kameraların çapasına göre kesilir.
   - Oturumda harici ses yoksa (ör. sadece iki kamera) kamera sesi **korunur** ve kameralarla bağlanır.
+  - Onay penceresinde **"SESSİZ KALACAK"** satırları çıkabilir. Bunlar, kamera sesinin silineceği ama Zoom/DJI sesinin 1 sn'den uzun süre
+    olmadığı yerlerdir: çapanın içindeki boşluklar ya da çapadan taşan kamera kısımları. BAĞLA'dan sonra oralarda ses kalmaz.
+    12 Eylül verinde iki yer çıktı: A038C002'de 41.8 sn, A038C001'de 2.3 sn. Kabul etmiyorsan **Hayır** de; hiçbir şey değişmez.
 - **Evet** → yedek sequence → sırasıyla:
   - **kesim hazırlığı**: kılavuz sesler (harici sesi olan gruplarda) ve "Sil" dediğin kaynaklar silinir;
   - **ilk parça**: bir ölçüm, bkz. aşağı;
@@ -127,7 +140,14 @@ Sonra:
 - Sonunda yeşil **`✓ BAĞLA tamam: N grup bağlandı …`**.
 - Sarı **`⚠ BAĞLA bitti ama … bağı DOĞRULANAMADI`** görürsen: Premiere "bağlandı" dedi ama panel bunu okuyarak teyit edemedi.
   Bu durumda aşağıdaki kontrol yeterli; bağ yoksa satırları bana getir.
-- **"düzen TOPLA düzeninde değil — önce TOPLA'ya bas"** derse: BAĞLA, TOPLA'nın dizdiği düzende çalışır. Kaynak eşlemesini TOPLA'dan sonra değiştirdiysen de bunu der. TOPLA'ya bas, sonra BAĞLA'ya.
+- **"Önce TOPLA'ya bas: bu sequence için TOPLA kaydı yok"** derse: BAĞLA yalnız TOPLA'nın bu panelde, **bu sequence'ta** tamamladığı
+  düzende çalışır. Yedek sequence'ta çalışıyorsan orada da önce TOPLA'ya bas.
+- **"düzen TOPLA düzeninde değil"** ya da **"Ayar TOPLA'dan sonra değişti"** derse: TOPLA'dan sonra bir klip yer değiştirmiş, eşleme
+  ya da eşik değişmiş. Hiçbir şey değişmedi. TOPLA'ya bas, sonra BAĞLA'ya.
+- Bağlama adımında yardımcı düşerse (**"… grup bağlanamadı (kesme/silme doğru ve yerinde)"**), yardımcıyı düzelt ve **BAĞLA'ya tekrar bas**.
+  Panel kesimi hatırlar; bu kez **yalnız bağlar**. Yeniden kesmez, yedek almaz.
+- **BAĞLA'dan sonra TOPLA** çalışmaz. Harici sesler kesildiği için oturumları bulduran tam kayıtlar artık yok; panel tahmin etmez.
+  Yeniden toplamak istersen BAĞLA öncesi yedek sequence'ı kullan ya da BAĞLA'yı Ctrl+Z ile tamamen geri al.
 - **"… YARIM hâlde"** derse: önceki bir TOPLA ya da BAĞLA durmuş ve geri alınmamış. Önce o mesajdaki kadar Ctrl+Z bas (ya da yedeği kullan).
 - Kontrol: bir kamera klibine tıkla. O grubun kameraları ve ses parçaları birlikte seçilmeli (Linked Selection açıkken). Başka oturumun sesi seçilmemeli.
 
