@@ -1,6 +1,257 @@
-# handoff — Spread (ADIM 2: SPREAD v0.2.0) + Spread Probe geçmişi
+# handoff — Spread (ADIM 3: TOPLA + BAĞLA, v0.3.0) + geçmiş (ADIM 2 SPREAD, ADIM 1 Probe)
 
 ## Durum (tek bakışta)
+
+| | |
+|---|---|
+| Sürüm | **Spread v0.3.0** (`com.badideagency.spread`, `release/spread.ccx`) + **Spread Helper v0.3.0** (görünmez CEP, `com.badideagency.spread.helper`, `release/spread-helper.zxp`) |
+| Yapılan | **TOPLA** (yalnız dikey: cihaz → V, kanal → A, kılavuz sesler altta), **BAĞLA** (grup → çapa → harici sesi çapaya göre kes → kılavuz + kapalı kanal sil → yardımcıyla bağla), **kanal ayarı** (localStorage), **yardımcı göstergesi**, durum raporuna sınıflama/gruplar |
+| Yardımcı paketi | **İMZALI**: Adobe `ZXPSignCmd` 4.1.3 x64 (CEP-Resources) Linux'ta **Wine** ile çalıştırıldı → self-signed `.p12` (10 yıl) → `ZXPSignCmd -verify`: "Signature verified successfully". Zaman damgası YOK (TSA'ya ulaşılamadı). Yedek: `release/spread-helper-klasor.zip` (aynı imzalı içerik açılmış + `KUR.cmd` + `PlayerDebugMode_CSXS12.reg` + BENIOKU). |
+| Probe / SPREAD | Probe dosyaları ve `release/spread-probe.ccx` değişmedi. SPREAD davranışı aynı; güvenlik kodu `guard.ts`'e taşındı (18 eski senaryo aynen geçiyor). |
+| Bulutta doğrulanan | `tsc --strict`, Adobe eslint, d.ts (74) + uxp.d.ts (5) satır kontrolü, host.jsx ES3 + belge kontrolü (19 DOM üyesi), Probe smoke, **Spread smoke 35 senaryo** (panel → HTTP → **gerçek** yardımcı sunucusu → **gerçek** host.jsx → sahte Premiere DOM), bağımsız alt ajan incelemesi |
+| Doğrulanamayan | Gerçek Premiere'de: set In/Out/Start/End ile GERÇEK kırpma, negatif clone ofsetleri, ExtendScript `linkSelection` ile 2 video + sesler, `getLinkedItems` anlamı, UXP ağ izninin 127.0.0.1'e izin vermesi, CEP 12'nin kendinden imzalı yardımcıyı yüklemesi |
+| Eksik girdi | Kullanıcının **gerçek senkron sonucu durum raporu** bu turda gelmedi (mesajda yer tutucu kaldı). Mock'ta onun yerine adları/sayıları gerçek düzenden alınmış **sentetik** bir senkron sonucu var (`sync`). Rapor gelince `spread/dev/fixtures/senkron-raporu.txt`'e koy → `node spread/dev/smoke.cjs report` (okuyucu hazır ve `reportparse` ile sınandı). |
+| Dal | `claude/sweet-bell-do4j75` |
+
+## KANITLANMIŞ (kullanıcı, gerçek Premiere 26.x, ADIM 2 sonrası)
+
+- **SPREAD v0.2.0 gerçek projede çalıştı** ve ardından **Clip > Synchronize, panelin programla yaptığı seçimle DOĞRUDAN çalıştı**:
+  Premiere komutları, timeline'da **görünmeyen programatik seçimi** kullanıyor (Probe T5'te "seçim görünmüyor" diye FAIL sayılan
+  davranış işlevsel olarak doğru). → Menü komutlarını tetiklemeden önce `getSelection + addItem + setSelection` yeterli.
+- (Dolaylı) SPREAD'in kullandığı yollar gerçek Premiere'de işledi: TX-A (park ofsetli clone ile ardışık track açma), TX-B (clone +
+  remove(ripple=false) + overwrite aynı transaction'da), yedek sequence.
+
+## Kullanıcının kararları (DEĞİŞTİRME)
+
+- Senkronu Premiere yapar. Elle adım YOK; tek istisna TOPLA ile BAĞLA arasında gözle kontrol.
+- Bağlama: UXP'de link API'si yok → görünmez CEP yardımcısı ExtendScript `sequence.linkSelection()` çalıştırır; kullanıcı yalnız BAĞLA'ya basar.
+- Hedef: V1 A kamera (`A038C0xx_*.MP4`), V2 B kamera (`C01xx.MP4`) — cihaz = dosya adı öneki, toplam süresi uzun cihaz V1;
+  A1 Tr1, A2 Tr2 (A3 Tr3…); kamera kılavuz sesleri YOK (BAĞLA siler); her grup (aynı anda çeken kameralar + o aralıktaki harici ses
+  parçaları) TEK bağ; gruplar senkronun bıraktığı zamanda, YATAY KAYDIRMA YOK, gruplar arası boşluk kapatılmaz.
+
+## TOPLA tasarımı (`spread/src/classify.ts`, `collect.ts`, `topla.ts`)
+
+**Sınıflama** (dosya adı = proje öğesi adı):
+- KAMERA = video + video uzantısı + ayar katmanı değil; **cihaz** = ilk rakamdan önceki kısım (`A038C001_…` → `A`, `C0112` → `C`, `DJI_0001` → `DJI`).
+  Neden harf öneki: aynı kameranın farklı kartları (A038/A039) aynı track'e düşsün; çakışırsa zaten DURUR.
+- KILAVUZ = ses, kaynağı timeline'daki bir kamera videosuyla aynı. HARİCİ = ses uzantısı; **kanal** = `_Tr…` son eki (`Tr1`, `TrLR`), yoksa `(eksiz)`.
+- BİLİNMEYEN (grafik/metin/renk/ayar katmanı, videosu olmayan kamera sesi, okunamayan) → **dokunulmaz**.
+
+**Hedef:** cihazlar toplam süreye göre V1, V2…; tutulan kanallar (Tr sayısal → alfabetik → eksiz) A1…, kapatılanlar onların altında;
+kılavuz sesler cihaz sırasıyla (cihaz başına kanal sayısı kadar track) en altta.
+**Çakışma = HATA:** son düzende aynı track'te zamanda çakışan iki klip (ör. senkron iki ilgisiz çekimi bindirmiş) ya da hedefte bir
+bilinmeyen öğe → TOPLA BAŞLAMAZ, çakışmalar tek tek (track, klipler, süre, olası neden) raporlanır. Sessizce başka track'e konmaz.
+
+**Taşıma (seçilen yol + neden):** iki transaction, ikisi de kanıtlı kalıp (clone + remove(ripple=false) aynı transaction'da):
+1. `TOPLA: park` — taşınacak her klip AYNI track'te `+P` (P = max(sequence sonu, en büyük klip sonu) + 10 sn) → asıllar silinir.
+2. `TOPLA: yerleştir` — park kopyaları `−P` zaman + dikey ofsetle hedefe → park kopyaları silinir.
+Neden doğrudan değil: hedef yerlerin çoğunda henüz taşınmamış bir asıl var (Spread sonrası A1..A22'de kılavuz sesler, Tr1 A1'e
+gelecek); bir kopyanın aynı transaction'da silinecek bir asılın üstüne yazılması KANITLANMADI (SPREAD planı da bunu yasaklar).
+Park bölgesi hiçbir klibe değmez; park kopyaları birbirine değmez (aynı track'teki asıllar zaten çakışmaz).
+**Bağlı çift kuralı:** kamera videosu ile aynı yerdeki kılavuz ses(ler)inden biri taşınıyorsa hepsi taşınır (silme seçiminde bağlı
+çiftin yalnız yarısı olmasın — bağlı partnerin de silinip silinmediği kanıtlanmadı). Sonuç: taşınan kameralar kılavuz seslerinden
+**ayrı** düşer (clone tek öğe kopyalar); BAĞLA zaten kılavuzları silip yeniden bağlar. Onay metni bunu söyler.
+Track gerekirse SPREAD'deki TX-A (kanıtlı) aynen (`guard.prepareTracks`). Ctrl+Z: 2 (+1 track hazırlığı).
+**Doğrulama:** her transaction sonrası BEKLENEN klip kümesiyle (tür, track, start, end, in, out, hız, kaynak) birebir karşılaştırma
+(`layout.compareLayout`) + son düzende track başına çakışma yok. Tutmazsa DUR + Ctrl+Z sayısı + yedek adı.
+**Bitiş:** "Kontrol et, sonra BAĞLA'ya bas."
+
+## BAĞLA tasarımı (`spread/src/bind.ts`, `bagla.ts`)
+
+1. **Önce ping** — yardımcı yoksa HİÇBİR ŞEYE dokunmadan (yedek dahil) DUR + kurulum talimatı.
+2. **Grup** = zamanda çakışan kamera klipleri (aralık grafiğinin bağlı bileşenleri; bitiş=başlangıç çakışma değil). Harici sesler grup tanımına katılmaz.
+3. **Çapa** = gruptaki en uzun kamera klibi (eşitlikte alt V track, sonra erken start).
+4. **Parça** = WAV ∩ çapa; `in = WAV.in + (parça.start − WAV.start)`, `out = in + süre`. Çapa dışı ses SİLİNİR; tamamen tek çapanın
+   içindeki ses kesilmez. Kesilecek WAV'da hız ≠ 1 ya da `end−start ≠ out−in` → plan hatası.
+5. **Silme:** tüm kılavuz sesler + kanal ayarında kapatılmış kanallar + çapa dışı sesler.
+6. **Kesme yolu (seçilen: UXP; neden aşağıda)** — hepsi aynı track'te:
+   - `BAĞLA: kesim hazırlığı` — her parça için WAV'ın tam boy kopyası sequence sonunun ötesindeki bir **park yuvasına** (clone, +ofset;
+     yuvalar arası ≥ WAV boyu + 1 sn) + silinecekler ve kesilecek asıllar tek seçimle silinir.
+   - `BAĞLA: ilk parça` — **ÖLÇÜM**: yalnız zamanda ilk parçanın park kopyası kırpılır (set **End → Start → In → Out**). Tutmazsa
+     "İLK PARÇA TUTMADI" + beklenen/okunan tick farkları → DUR (Ctrl+Z × 2).
+   - `BAĞLA: parçalar` — kalanlar kırpılır. `BAĞLA: yerleştir` — kırpılmış park kopyaları `−(yuva − WAV.start)` ofsetle asıl yerlerine,
+     park kopyaları silinir.
+   Neden park: set action'lar klibi zamanda TAŞIMAK zorunda kalmasın (yalnız kenar kırpma); taşıma kanıtlı clone ofsetiyle.
+   Neden End → Start → In → Out: "kenar kırpma" (mock varsayılanı) ve "start klibi taşır" anlamlarının İKİSİNDE de doğru sonuca
+   varır (ikisi de mock'ta sınanıyor: `sync`/`setmove`); End önce → ara durumda sağa taşma en az.
+   **Yedek plan (YAZILMADI):** CEP yardımcısında QE DOM razor — `app.enableQE(); qe.project.getActiveSequence().getAudioTrackAt(i).razor(timecode)`
+   (belgesiz; Adobe örneklerinde yok; pymiere belgesi `getVideoTrackAt(0).razor(timecode)`, timecode `Time.getFormatted(...)` ile;
+   bir 3. taraf 26.3'te QE yapısal düzenlemelerinin sessizce yok sayıldığını bildiriyor). YALNIZ UXP yolu gerçek Premiere'de ilk
+   parçada ölçülerek başarısız olursa yazılacak (kullanıcı kararı).
+7. **Doğrulama:** her transaction sonrası beklenen kümeyle birebir; sonda ek olarak: her tutulan kanalın her çapa içindeki ses süresi
+   öncekiyle aynı (hiçbir çapa içinde boşluk yok), her harici klipte `in − start` kaynağıyla aynı (kaynak kayması yok), çapa dışına
+   taşan ses / kılavuz / kapalı kanal kalmadı, track'lerde çakışma yok.
+8. **Bağlama** (en son): tekrar ping → `linkTargets` (grubun kameraları + çapasındaki parçalar, değerler taze okumadan) → yardımcı →
+   grup başına sonuç (bulundu / bağlandı / doğrulandı). Bağlamadan önce/sonra timeline birebir aynı olmalı.
+   Tek öğeli grup atlanır. Kesme/silme yoksa yedek alınmaz (yalnız bağlama) → BAĞLA'yı tekrar basmak güvenli (idempotent).
+   Ctrl+Z: kesme varsa 4 (+ yedek sayılmaz). **Bağlamanın geri alma geçmişine kaç kayıt eklediği ÖLÇÜLMEDİ** → mesajlar yedeği önerir.
+
+## CEP yardımcısı (`cep-helper/`)
+
+- **Görünmez CEP eklentisi** (Adobe CEP 12 Cookbook "Invisible HTML Extensions" + CEP 12 görünmez örneği): `Type=Custom`,
+  `AutoVisible=false`, `<Menu>` yok; `StartOn`: `com.adobe.csxs.events.ApplicationActivate` (Premiere başlangıçta gönderir — Adobe örneği),
+  `applicationActivate` (Cookbook: Premiere'de yalnız macOS), `com.adobe.csxs.events.ApplicationInitialized` (yalnız Audition örneğinde
+  görüldü; zararsız). CEF: `--enable-nodejs`, `--mixed-context`. `ScriptPath ./jsx/host.jsx`.
+- **CSXS sürümü: 12.0** — Cookbook host tablosu "Premiere Pro 25.0 (CEP 12)"; 26.x için ayrı sütun yok, CEP 13 yok (CEP-Resources
+  2026-02); PProPanel ReadMe (Kasım 2025) macOS anahtarını CSXS.12 yaptı. `Host PPRO [25.0,99.9]`, `ExtensionManifest Version="12.0"`
+  (CEP 12 örneği gibi). PlayerDebugMode anahtarı: `HKCU\Software\Adobe\CSXS.12`, `PlayerDebugMode` = "1" (string).
+  **Risk:** 3. taraf raporları CEP 12'nin bazı kurulumlarda PlayerDebugMode'u yok saydığını söylüyor → bu yüzden paket İMZALI.
+- **Sunucu** (`js/helper.js`): Node `http`, yalnız **127.0.0.1:47731** (sabit). Uzak adres 127.0.0.1 değilse / Host başlığı
+  `127.0.0.1:47731|localhost:47731` değilse 403; `X-Spread-Token` sabit zamanlı karşılaştırma (yanlış → 401); CORS başlığı YOK
+  (tarayıcı sayfası özel başlıklı istek atamaz, dosyayı okuyamaz); yalnız `POST /v1/ping`, `POST /v1/link`; gövde ≤ 1 MB; şema
+  doğrulaması (id, kind V/A, track 0..999, tick dizesi, ad ≤ 1024); ExtendScript'e yalnız host.jsx'teki iki sabit fonksiyon, değerler
+  `JSON.stringify` + ASCII dışı `\uXXXX` kaçışıyla **sabit** olarak gömülür (enjeksiyon mock'ta sınandı); ExtendScript çağrıları
+  sırayla ve zaman aşımlı (Adobe forumunda 25.6.2'de evalScript'in asılı kaldığı bildirildi). Günlük: `%TEMP%\spread-helper.log`.
+- **Token eşleşmesi:** her açılışta 256 bit token → `<ev>\AppData\Roaming\BadIdeaAgency\SpreadHelper\helper.json` (macOS:
+  `~/Library/Application Support/BadIdeaAgency/SpreadHelper/helper.json`), izin 600; kapanışta yalnız KENDİ token'ını taşıyorsa silinir.
+  Panel aynı yolu `os.homedir()` (uxp.d.ts:L9232) + sabit alt yol ile kurar ve `fs.readFileSync` (L8985) ile okur; olmazsa
+  `localFileSystem.getEntryWithUrl("file:…")` (L516). İki taraf da `%APPDATA%`'ya değil ev klasörüne dayanır → yol hep aynı
+  (UXP'de %APPDATA% veren belgeli API yok). Bu **manifest'te `localFileSystem: "fullAccess"`** gerektirir (Adobe filesystem tarifi:
+  `file:/` keyfi yol = fullAccess). Daha dar seçenek yok: yardımcı UXP'nin `plugin-data:` klasörünün yerini güvenilir biçimde bilemez.
+- **host.jsx** (ES3): JSON YOK (Adobe'den Bruce Bullis: JSON yalnız CC Libraries paneli açıkken var) → kendi küçük üreticisi; istek
+  sabit literal olarak gelir. Klip bulma (tip, track, start ticks, end ticks, kaynak adı), tek eşleşme şart (birden çok aday → bağlanmaz).
+  Seçim temizleme: ExtendScript'te toplu temizleme yok → `getSelection()` öğelerine `setSelected(false, true)`. Belge çelişkileri:
+  Collection "ilk nesne index 1" ↔ PProPanel `clips[0]` → 0..n taranır, `nodeId` ile tekilleştirilir; `setSelected` belge "Integer",
+  Adobe örneği/tip tanımı boolean → örnek izlendi. `getLinkedItems()` **kılavuzda yok** (PProPanel tip tanımı L1253; örnek sonucu
+  "aynı kaynaktan klipler" diye adlandırıyor) → bağlamadan ÖNCE ve SONRA okunur: değişmediyse doğrulama **null** ("doğrulanamadı"),
+  uydurulmaz. Her grup: temizle → seç → say → `linkSelection()` → temizle → taze bul → doğrula.
+- **Paketleme** (`scripts/package-helper.sh`): Adobe ZXPSignCmd (Linux sürümü YOK → Wine; `ZXPSIGNCMD=…exe`), self-signed sertifika
+  `.signing/` altında (git'e girmez; her temiz kurulumda yeni sertifika), `-verify` "Signature verified successfully" şartı.
+  Kurulum: aescripts ZXP/UXP Installer (UPIA kullanır) ya da `UnifiedPluginInstallerAgent.exe /install <zxp>` ya da `KUR.cmd`
+  (imzalı klasörü `%APPDATA%\Adobe\CEP\extensions`'a kopyalar, kayıt defterine dokunmaz).
+
+### ExtendScript belge tablosu (her çağrı host.jsx'te `// docs:` ile; `npm run check:jsx` doğrular)
+
+| Üye | Kaynak (github.com/docsforadobe/premiere-scripting-guide) |
+|---|---|
+| `app.project` | docs/application/application.md "### app.project" → /application/application/#appproject |
+| `app.version` | "### app.version" → /application/application/#appversion |
+| `Project.activeSequence` | docs/general/project.md → /general/project/#projectactivesequence |
+| `Sequence.name` / `.videoTracks` / `.audioTracks` / `.getSelection()` / `.linkSelection()` | docs/sequence/sequence.md → #sequencename, #sequencevideotracks, #sequenceaudiotracks, #sequencegetselection, #sequencelinkselection ("Returns a boolean; true if successful") |
+| `TrackCollection.numTracks` | docs/collection/trackcollection.md → #trackcollectionnumtracks |
+| `Track.clips` | docs/sequence/track.md → #trackclips |
+| `TrackItemCollection.numItems`, Collection `length` | docs/collection/trackitemcollection.md, collection.md |
+| `TrackItem.start` / `.end` / `.projectItem` / `.nodeId` / `.setSelected()` | docs/item/trackitem.md |
+| `Time.ticks` | docs/other/time.md → #timeticks (String) |
+| `ProjectItem.name` | docs/item/projectitem.md → #projectitemname |
+| `TrackItem.getLinkedItems()` | **kılavuzda yok** → Adobe-CEP/Samples PProPanel/jsx/PremierePro.23.0.d.ts#L1253 |
+
+### Yeni UXP (Premiere dışı) çağrılar — `uxp.d.ts` = `@adobe/cc-ext-uxp-types/uxp/index.d.ts`
+
+| satır | üye | nerede |
+|---|---|---|
+| L9198 | `OS.platform` | linker.ts (token yolu) |
+| L9232 | `OS.homedir` | linker.ts |
+| L8985 | `fs.readFileSync` | linker.ts |
+| L516 | `FileSystemProvider.getEntryWithUrl` | linker.ts (yedek okuma) |
+| L345 | `File.read` | linker.ts |
+| — | `fetch` (global) | linker.ts → yalnız `http://127.0.0.1:47731` |
+| — | `window.localStorage` | settings.ts (try/catch) |
+
+**Manifest izinleri** (`spread/public/manifest.json`): `localFileSystem: "fullAccess"` (token dosyası), `network.domains:
+["http://127.0.0.1", "http://127.0.0.1:47731"]`. **Risk:** Adobe'nin Premiere belgesi port/localhost biçimini tanımlamıyor; Photoshop'ta
+açık bir hata kaydı (uxp-photoshop#321) bu biçimlerin "Permission denied" verdiğini söylüyor; Adobe'nin kendi Premiere örneği
+(oauth-workflow-sample) `http://localhost:8000` için `"domains": "all"` kullanıyor. Kullanıcı "localhost izni" istediği için dar biçim
+seçildi. Panel "Permission denied" gösterirse düzeltme tek satır: `"domains": "all"` (kod yine yalnız 127.0.0.1'e bağlanır).
+macOS'ta Premiere `http://`'yi engelliyor (Adobe ağ tarifi) — kullanıcı Windows'ta.
+
+## Bağlama modülü ve risk notu
+
+- Bağlama **tek modülde** izole: `spread/src/linker.ts` (`Linker` arayüzü: `ping()`, `link(sequenceName, groups)`, `installHint()`).
+  BAĞLA yalnız bu arayüzü görür. Başka bir yol (FCP XML dışa/içe aktarma ya da ileride çıkacak bir UXP link API'si) geldiğinde
+  yalnız bu dosya (+ `cep-helper/`) değişir.
+- **CEP/ExtendScript emekliye ayrılıyor.** Premiere Scripting Guide ana sayfası: "As of November 2025, Premiere Pro has moved to
+  extensibility based on UXP … ExtendScript-based integrations are still supported, and the plan is for them to remain so, through
+  September 2026." PProPanel ReadMe (Kasım 2025): 25.6'dan itibaren CEP'in yerini UXP aldı, "support both CEP and UXP for a calendar
+  year". (Doğrulanamayan, yalnız arama özeti: Adobe'nin Eylül 2026 blog yazısı daha uzun bir takvim veriyor — yeni CEP gönderimleri
+  Aralık 2027'de kapanır, CEP Aralık 2028'de varsayılan kapalı, Aralık 2029'dan itibaren yeni sürümlerde yok.) → Bir Premiere
+  güncellemesi yardımcıyı her an çalışmaz hâle getirebilir: panel bunu "Yardımcı: bağlı değil" olarak gösterir ve BAĞLA hiçbir şeye
+  dokunmadan durur. Plan: UXP'ye link API'si gelince `linker.ts`'e UXP uygulaması; gelmezse XML yolu.
+- ExtendScript API'sine 23.0'dan beri yeni özellik eklenmiyor (Scripting Guide changelog).
+
+## Dosya haritası (yeni / değişen)
+
+```
+spread/src/guard.ts     ortak güvenlik: runTx (ölçülü Ctrl+Z sayısı), expectState, makeBackup(op), prepareTracks (TX-A), parkBase, reportStop
+spread/src/classify.ts  SAF: kamera/kılavuz/harici/bilinmeyen, cihaz öneki, kanal eki, cihaz sırası (toplam süre)
+spread/src/layout.ts    SAF: beklenen ↔ okunan birebir karşılaştırma (tick farklarıyla), track çakışmaları, findExp
+spread/src/collect.ts   SAF: TOPLA planı (hedefler, bağlı çift kuralı, çakışma = hata), park/son beklenen düzenler
+spread/src/topla.ts     TOPLA akışı: plan → onay → yedek → [TX-A] → park → yerleştir
+spread/src/bind.ts      SAF: gruplar, çapa, parçalar, silinecekler, park yuvaları, beklenen düzenler, içerik doğrulaması, bağ hedefleri
+spread/src/bagla.ts     BAĞLA akışı: ping → plan → onay → [yedek → kesim hazırlığı → ilk parça → parçalar → yerleştir] → bağla
+spread/src/linker.ts    BAĞLAMA MODÜLÜ (tek, izole): Linker arayüzü + CEP yardımcısı istemcisi (token dosyası, 127.0.0.1)
+spread/src/settings.ts  "Tutulacak harici kanallar" (localStorage, try/catch) + onay kutuları
+spread/src/spread.ts    SPREAD (davranış aynı; güvenlik guard.ts'ten)
+spread/src/status.ts    + SINIFLAMA bölümü (cihazlar, kanallar, dokunulmayanlar, gruplar/çapalar), rol etiketi
+spread/index.ts, public/index.html  TOPLA / BAĞLA / Yardımcıyı kontrol et / Kanalları tara, yardımcı göstergesi, kanal kutuları
+spread/public/manifest.json  0.3.0 + localFileSystem fullAccess + network 127.0.0.1
+cep-helper/CSXS/manifest.xml  görünmez CEP 12 eklentisi
+cep-helper/js/helper.js       localhost sunucusu (CEP'te kendiliğinden başlar; Node testlerinde createHelper)
+cep-helper/jsx/host.jsx       ExtendScript: spreadHelper_ping(), spreadHelper_link(req)
+scripts/check-jsx.mjs         host.jsx: ES3 ayrıştırma, yasak yapılar, ASCII dizeler, her DOM üyesine belge adresi (+ kaynaksız üye yakalama)
+scripts/check-api-refs.mjs    + uxp.d.ts satır/sınıf kontrolü
+scripts/package-helper.sh     imzalı ZXP + yedek klasör paketi;  scripts/helper-kit/  KUR.cmd, .reg, BENIOKU.txt
+spread/dev/smoke.cjs          + sahte ExtendScript DOM, gerçek yardımcı sunucusu, TOPLA/BAĞLA senaryoları, durum raporu okuyucu
+```
+
+### Komutlar
+
+```bash
+npm run check                                          # hepsi (≈3 dk)
+node spread/dev/smoke.cjs sync                         # tek senaryo
+ZXPSIGNCMD=$PWD/.signing/ZXPSignCmd.exe npm run package:helper   # Linux: apt install wine64; exe CEP-Resources/ZXPSignCMD/4.1.3/x64
+npm run package:spread
+```
+
+### Mock senaryoları (v0.3.0, `spread/dev/smoke.cjs`) — panel → HTTP → gerçek yardımcı → gerçek host.jsx → sahte DOM
+
+| Senaryo | Ne gösterir |
+|---|---|
+| `sync` | **Sentetik gerçek senkron sonucu**: 22 kamera (11 çekim × A038C0xx + C01xx, Spread sonrası her biri kendi track'inde, bağlı kılavuz sesleriyle), 12 WAV (4 kayıt × Tr1/Tr2/TrLR, her kayıt birden çok çekimi kapsıyor, kare-altı start, biri in≠0), V1'de "YAĞ SIVISI" grafiği. TOPLA onayı ve düzeni (A→V1, C→V2, Tr1/Tr2/TrLR→A1–A3, kılavuzlar A4–A5, grafik yerinde, 3 transaction, Ctrl+Z 2) → TrLR kapatılır (localStorage) → BAĞLA: 22 parça tick düzeyinde = WAV ∩ çapa, TrLR + 22 kılavuz silindi, 11 grup tek bağ (grup dışı bağ yok), 5 transaction, kameralar değişmedi, Ctrl+Z × 4 → TOPLA sonrası birebir |
+| `wav2groups` | bir WAV iki grubu kapsıyor → 2 parça, in = WAV.in + (parça.start − WAV.start), iki grup ayrı bağ |
+| `outside` | çapa dışı ses silinir; kısmen dışarıdaki kırpılır; tamamen içerideki olduğu gibi kalır |
+| `overlap` | senkron iki ilgisiz çekimi üst üste bindirmiş → TOPLA DURUR, çakışma (V1 + kılavuz A2) raporlanır, hiçbir şey değişmez (yedek bile yok) |
+| `graphic` | hedef V1'de sınıflanamayan grafik kamera klibiyle çakışıyor → TOPLA DURUR, grafiğe dokunulmaz |
+| `helperoff` | yardımcı kapalı → BAĞLA hiçbir şeye dokunmadan durur (yedek yok, transaction yok), kurulum talimatı, gösterge "bağlı değil" |
+| `setnoop` | set action'lar kırpmıyor → "İLK PARÇA TUTMADI" + tick farkları, kalanlara/bağlamaya geçmez, Ctrl+Z × 2 → TOPLA sonrası birebir |
+| `setmove` | set anlamı "start klibi taşır" → End→Start→In→Out sırası yine doğru parçalar |
+| `linkfail` | bir grubun linkSelection'ı false → hangi grup, neden; kesme yerinde; Ctrl+Z sayısı |
+| `linksource` | getLinkedItems bağ yerine aynı kaynaklıları döndürüyor → "doğrulanamadı" (uydurulmaz) |
+| `rebind` | ikinci BAĞLA: kesme/silme yok → yedek/transaction yok, yalnız bağlama |
+| `again` | ikinci TOPLA → "Zaten toplanmış" |
+| `channels` | kanal kutuları sequence'tan (Tr1, Tr2, TrLR); localStorage bozuksa panel çökmez |
+| `security` | bilgi dosyası (port, 256 bit token, 600); token yok/yanlış → 401; yabancı Host → 403; GET → 405; bilinmeyen komut → 404; bozuk JSON / şema dışı / >1 MB → 400; CORS başlığı yok; **ad alanına ExtendScript kodu enjeksiyonu çalışmaz**; başka sequence aktifken hiçbir şey yapılmaz; yalnız 127.0.0.1 dinlenir; durunca token dosyası silinir |
+| `status2` | durum raporunda cihazlar, kanallar, dokunulmayanlar, gruplar/çapalar |
+| `reportparse` | durum raporu → timeline okuyucusu birebir (kullanıcının raporu için hazır) |
+| `report` | `spread/dev/fixtures/senkron-raporu.txt` varsa gerçek rapor üzerinde TOPLA + BAĞLA; yoksa atlanır |
+
+Mock'un set In/Out/Start/End anlamı TAHMİNDİR (`M.setSem`: trim / move / noop); ExtendScript DOM'u Adobe örneklerine göre
+(0 tabanlı koleksiyonlar, `getSelection()` dizi, `linkSelection()` boolean, `getLinkedItems()` bağ partnerleri — `linksource` diğer anlamı sınar).
+
+### Belirsizlikler (gerçek Premiere'de ilk koşuda ölçülecek)
+
+1. **set In/Out/Start/End gerçek kırpma** — ilk parça ölçümü; tutmazsa QE razor yedek planı.
+2. **Negatif clone ofsetleri** (TOPLA `−P` zaman + yukarı dikey; BAĞLA `−(yuva − start)`) ilk kez kullanılıyor — API "offset from the
+   original position" diyor; tutmazsa doğrulama yakalar (DUR + Ctrl+Z).
+3. **linkSelection** ile 2 video + N ses tek bağ (kullanıcı bunu elle yapıyor → mümkün); aynı track'te iki kamera klibi olan grup (uyarı verilir).
+4. **getLinkedItems anlamı** (bağ mı, aynı kaynak mı) → null = "doğrulanamadı" olarak raporlanır.
+5. **UXP ağ izni** biçimi (127.0.0.1 + port) — "Permission denied" → `"domains": "all"`.
+6. **CEP 12 + self-signed** yükleme; olmazsa PlayerDebugMode .reg; o da olmazsa `%TEMP%\spread-helper.log`.
+7. **ExtendScript koleksiyon indeksi** (belge 1, örnek 0) — iki taban da taranıyor; `videoTracks[i]` örnekteki gibi 0 = V1 varsayıldı
+   (yanlışsa klip bulunamaz → bağlanmaz, zarar yok).
+8. Cihaz öneki kuralı: aynı harf önekli iki farklı kamera (ör. iki "C…" Sony) tek cihaz sayılır → çakışırsa TOPLA durur.
+
+### Sonraki adım
+
+Kullanıcı: yardımcıyı kur → Save As kopyasında SPREAD → Synchronize → **Durum raporu (bana getir)** → TOPLA → kontrol → BAĞLA.
+Gelecek raporlar: `spread/dev/fixtures/senkron-raporu.txt` → `node spread/dev/smoke.cjs report`. İlk parça tutmazsa: QE razor yolu
+(`cep-helper/jsx/host.jsx`'e `spreadHelper_razor`, `linker.ts`'e `cut()`), kararı buraya yaz.
+
+---
+
+## Geçmiş: ADIM 2 — SPREAD v0.2.0
+
+### Durum (tek bakışta)
 
 | | |
 |---|---|
@@ -11,7 +262,7 @@
 | Doğrulanamayan | Gerçek Premiere davranışı — kullanıcının koşusu bekleniyor ([KURULUM_TR.md](KURULUM_TR.md)) |
 | Dal | `claude/sweet-bell-do4j75` |
 
-## Yoklamanın kanıtladıkları (Premiere 26.5.1, Probe v0.1.1 gerçek raporu)
+### Yoklamanın kanıtladıkları (Premiere 26.5.1, Probe v0.1.1 gerçek raporu)
 
 - `createCloneTrackItemAction`: hedef track yoksa açıyor (V ve A). Kopya start/end/in/out/speed tick düzeyinde birebir.
   Kopya **TEK öğe**: bağlı partner gelmez, kopyalar birbirine **BAĞLI DEĞİL**.
@@ -24,7 +275,7 @@
 - Seçim: `getSelection + addItem + setSelection` programla doğru ama timeline'da **GÖRÜNMÜYOR**.
 - **Link/unlink API'si YOK.** Harici ses kameraya bağlanamaz.
 
-## SPREAD tasarımı (v0.2.0)
+### SPREAD tasarımı (v0.2.0)
 
 **Birimler** (`spread/src/plan.ts`, saf fonksiyon): KAMERA = video + aynı kaynaklı, aynı start/end/in/out'lu ses klip(ler)i (çok kanal
 olabilir); SADECE-VİDEO; SES = kamera birimine ait olmayan her ses klibi. Start'a göre sıralı (eşitlikte track, sonra ad).
@@ -84,7 +335,7 @@ Synchronize (Audio)." + geri alma bilgisi.
 eşleşmesi — her ses birimi için zamanda çakıştığı kameralar (çakışma tick/saniye/%), her kamera için çakışan sesler; makine okunur
 `CLIP;…` ve `OVERLAP;…` satırları. Kullanıcı bunu **Synchronize'dan SONRA** getirecek → RE-STACK bu veriyle tasarlanacak.
 
-### Spread dosya haritası
+#### Spread dosya haritası
 
 ```
 spread/index.ts        giriş: SPREAD / Durum raporu / Raporu kopyala, aktif sequence göstergesi, meşgul kilidi
@@ -100,7 +351,7 @@ spread/public/         manifest.json (com.badideagency.spread, 0.2.0), index.htm
 spread/dev/smoke.cjs   mock Premiere + 12 senaryo
 ```
 
-### Komutlar
+#### Komutlar
 
 ```bash
 npm run build:spread     # spread/dist
@@ -109,7 +360,7 @@ npm run package:spread   # release/spread.ccx (+ zip kontrolü)
 npm run check            # iki eklenti: typecheck + lint + check:api + Probe smoke + Spread smoke
 ```
 
-### Spread smoke (`spread/dev/smoke.cjs`) — mock yalnız KANITLANMIŞ davranışı uygular
+#### Spread smoke (`spread/dev/smoke.cjs`) — mock yalnız KANITLANMIŞ davranışı uygular
 
 Kanıtlanmamış olanlarda mock **hata verir**: clone hedefi > track sayısı ("atlamalı" açma), overwrite olmayan track'e, `createEmptySelection`,
 bayat referans. Böylece Spread'in bunlara dayanmadığı da sınanır. set In/Out/Start/End'in anlamı mock'ta TAHMİNDİR.
@@ -135,7 +386,7 @@ bayat referans. Böylece Spread'in bunlara dayanmadığı da sınanır. set In/O
 | `extrach` | proje öğesinde timeline'dakinden fazla ses kanalı → overwrite fazla kanal üretir → doğrulama "2 klip var" ile DUR |
 | `plan` | saf plan testleri: hedefte çakışan asıl → hata; hız≠1 kamera → hata; birebir olmayan kamera sesi → hata; çakışmayan kamera kaynaklı ses → uyarı; WAV hedefinde silinmemiş kamera sesi → hata; dağıtılmış düzen → iş yok |
 
-### Kullanılan Premiere API'leri (iki eklenti; `premierepro.d.ts` 26.5.0; `npm run api:table`)
+#### Kullanılan Premiere API'leri (iki eklenti; `premierepro.d.ts` 26.5.0; `npm run api:table`)
 
 | d.ts satırı | API | d.ts'teki satır |
 |---|---|---|
@@ -214,7 +465,7 @@ bayat referans. Böylece Spread'in bunlara dayanmadığı da sınanır. set In/O
 | L4692 | `Constants.MediaType` | `export enum MediaType {` |
 | L4804 | `Constants.TrackItemType` | `export enum TrackItemType {` |
 
-### Bilinen belirsizlikler (kullanıcının ilk gerçek koşusunda bakılacaklar)
+#### Bilinen belirsizlikler (kullanıcının ilk gerçek koşusunda bakılacaklar)
 
 1. **Tek transaction'da ardışık track açma** (TX-A, V 19 + A 31 yardımcı): ölçülmedi. Çalışmazsa TX-A doğrulaması DURDURUR; asıllar
    güvende (yalnız park edilmiş yardımcılar eklenmiş olur → tek Ctrl+Z). O zaman: track'leri tek tek açan yol (çok adım) ya da
@@ -226,7 +477,7 @@ bayat referans. Böylece Spread'in bunlara dayanmadığı da sınanır. set In/O
 4. **Kamera klip efektleri** overwrite'la taşınmaz (onay metninde yazıyor); ham klipler varsayıldı.
 5. **Seçim görünmüyor** (kanıtlı) → talimat Ctrl+A ile.
 
-### Bağımsız alt ajan incelemesi (v0.2.0, salt okuma; tüm spread/ kaynakları okundu, kendi mock senaryolarıyla sınandı)
+#### Bağımsız alt ajan incelemesi (v0.2.0, salt okuma; tüm spread/ kaynakları okundu, kendi mock senaryolarıyla sınandı)
 
 | İddia | Sonuç |
 |---|---|
@@ -246,20 +497,20 @@ yeniden adlandırma uyarısı; (8) okuma uyarıları doğrulamada yok sayılıyo
 `expectState`; (10) kullanılmayan `timeKey` silindi; ayrıca kopyası alınmış asılın üstüne aynı transaction'da clone (kanıtsız) → plan hatası.
 Düzeltmeler yeni mock senaryolarıyla (falsetx, subframe, badbackup, undobetween, notype, extrach) doğrulandı; ikinci inceleme turu yapılmadı.
 
-### Graphify
+#### Graphify
 
 Ortamda **kurulu değil** (PATH'te `graphify` yok, npm global'de yok, Claude skill/komut listesinde yok) → `/graphify .` **atlandı**.
 
-### Sonraki adım
+#### Sonraki adım
 
 1. Kullanıcı gerçek projenin **Save As** kopyasında, orijinal sequence'ta SPREAD'i dener; sonucu (başarı ya da DURDU satırları) getirir.
 2. Synchronize sonrası **Durum raporu**nu getirir → RE-STACK (interval packing: video V1'den, ses A1'den, zamana dokunmadan) tasarlanır.
 
 ---
 
-## Geçmiş: Spread Probe (ADIM 1 / 1b, v0.1.1)
+### Geçmiş: Spread Probe (ADIM 1 / 1b, v0.1.1)
 
-### ⚠ ADIM 1b bulgusu (Premiere 26.5.1, v0.1.0 gerçek raporu)
+#### ⚠ ADIM 1b bulgusu (Premiere 26.5.1, v0.1.0 gerçek raporu)
 
 > **TrackItem referansları transaction sonrası geçersiz olur. Spread/Re-stack bütün taşımaları TEK transaction'da yapmalı.**
 
@@ -282,7 +533,7 @@ Ortamda **kurulu değil** (PATH'te `graphify` yok, npm global'de yok, Claude ski
 önce: sequence'ı baştan oku → seçimi Adobe kalıbıyla kur → setSelection sonrası tekrar oku → o referanslarla action'ları üret. Arada
 kullanıcı etkileşimi, Ctrl+Z ya da başka bir transaction olursa her şey baştan okunur.
 
-### Durum (tek bakışta)
+#### Durum (tek bakışta)
 
 | | |
 |---|---|
@@ -293,7 +544,7 @@ kullanıcı etkileşimi, Ctrl+Z ya da başka bir transaction olursa her şey ba�
 | Doğrulanamayan | Gerçek Premiere davranışı — kullanıcının v0.1.1 raporu bekleniyor ([KURULUM_TR.md](KURULUM_TR.md)) |
 | Dal | `claude/sweet-bell-do4j75` |
 
-### Dosya haritası
+#### Dosya haritası
 
 ```
 index.ts               giriş: butonlar, PROBE_ durum çubuğu (1,5 sn'de bir), meşgul kilidi, koşu sabitleme, rapor kopyalama
@@ -309,7 +560,7 @@ dev/smoke.cjs          sahte premierepro ile dist/'i Node'da uçtan uca çalış
 release/               spread-probe.ccx
 ```
 
-### Komutlar
+#### Komutlar
 
 ```bash
 npm ci
@@ -318,7 +569,7 @@ npm run package      # build → release/spread-probe.ccx → verify-ccx.py
 npm run api:table    # kullanılan her API'nin d.ts satırı + kullanıldığı yerler
 ```
 
-### Mimari kararlar
+#### Mimari kararlar
 
 - **Tek API kaynağı:** `node_modules/@adobe/premierepro/src/premierepro.d.ts` (26.5.0). Her çağrının yanında `// d.ts:L<satır> Tip.üye`;
   `scripts/check-api-refs.mjs` satırın o üyeyi içerdiğini ve o tipin gövdesinde olduğunu kontrol eder. `tsc --strict`, `any` yok.
@@ -348,7 +599,7 @@ npm run api:table    # kullanılan her API'nin d.ts satırı + kullanıldığı 
   sonucuna (ya da kullanıcı gözlemine) verilir. Güvenlik iptalleri (seçim uygun değil → silme yapılmadı) `belirsiz`tir.
   **Yalnız `api` sınıfı engel (CEP gerekçesi) olabilir**; `kod`/`belirsiz` kararı "GEÇİCİ" yapar.
 
-### Testler — v0.1.1
+#### Testler — v0.1.1
 
 "Hepsini çalıştır" sırası: **T1, T2, T4, T3, T6, T8, T5, T7**. Her test başında sequence'ı baştan okur; önceki testten referans devralmaz.
 
@@ -369,7 +620,7 @@ T3 hedef track yokken başka klip değiştiyse belirsiz (T2'nin bulgusu iki kez 
 T1/T5/T6/T8 FAIL → workaround.
 `kod`/`belirsiz`/eksik varsa öneri "GEÇİCİ". Rapor ÖZET'inde her FAIL `[API]` / `[KOD]` / `[BELİRSİZ]` etiketlidir.
 
-### Kullanılan Premiere API'leri (hepsi `premierepro.d.ts` 26.5.0)
+#### Kullanılan Premiere API'leri (hepsi `premierepro.d.ts` 26.5.0)
 
 `npm run api:table` ile üretildi (67 benzersiz referans, 0 hata). v0.1.0'a göre **çıkanlar:** `TrackItemSelectionStatic.createEmptySelection`,
 `Application.version`. **Eklenenler:** `Sequence.clearSelection`, `SequenceEditor.createOverwriteItemAction`, `TickTimeStatic.createWithTicks`,
@@ -448,7 +699,7 @@ her iki track item tipinde `createSetInPointAction / createSetOutPointAction / c
 Premiere dışı (UXP): `navigator.clipboard.setContent / writeText` (`@adobe/cc-ext-uxp-types` 7.3.1), `require("uxp").versions.uxp`,
 `require("uxp").host.name/version` (rapordaki Premiere sürümü).
 
-### Doğrulama (bulutta yapılan)
+#### Doğrulama (bulutta yapılan)
 
 - `npm run typecheck` — strict, 0 hata. `npm run lint` — Adobe premierepro kuralları dahil 0 hata. `npm run check:api` — 67 referans, 0 hata.
 - `npm run smoke` — `dev/smoke.cjs`. Mock, 26.5.1'de ölçülen tek kesin davranışı uygular: **işlenen transaction'dan sonra eski
@@ -487,12 +738,12 @@ Premiere dışı (UXP): `navigator.clipboard.setContent / writeText` (`@adobe/cc
     kimlikleriyle (track, start, end, kaynak) karşılaştırılıyor.
   - Bu düzeltmeler yeni mock modlarıyla (linked, filter, yeniden tanımlanan grim) doğrulandı; ikinci bir alt ajan turu yapılmadı.
 
-### Önceki tur (v0.1.0) incelemesinden düzeltilenler (özet)
+#### Önceki tur (v0.1.0) incelemesinden düzeltilenler (özet)
 
 T1'in kullanıcı çıkışını geri zorlaması; "Hepsini çalıştır"ın sequence'ı sabitlememesi; önbellekli ad; kilit kontrolsüz seçim yedek yolu;
 paylaşılan canlı seçim; koşular arası kalan sonuçlar; T6'nın track açmayla karışması; `decide()` eksik sayımı — hepsi v0.1.0'da düzeltildi.
 
-### Bilinen belirsizlikler / riskler
+#### Bilinen belirsizlikler / riskler
 
 1. **d.ts'te "bağlı mı" (link) sorgusu yok.** Bağ, kullanıcının tıklaması + `getSelection`/`getIsSelected` okumasıyla ölçülür (T3, T8).
 2. **`createRemoveItemsAction` `mediaType` anlamı belgelenmemiş.** T3 video+ses birlikte silerken VIDEO veriyor (Adobe örneği); ses silinmezse
@@ -506,11 +757,11 @@ paylaşılan canlı seçim; koşular arası kalan sonuçlar; T6'nın track açma
 7. **Autosave:** panel kaydetmez; Premiere autosave'i olabilir → deneme projesi önerisi.
 8. `settle()` = 400 ms. Snapshot eski durumu görürse (rapor "(yok)" derken timeline'da varsa) artırılmalı.
 
-### Graphify
+#### Graphify
 
 Ortamda **kurulu değil** (PATH'te `graphify` yok, npm global'de yok, Claude skill/komut listesinde yok) → `/graphify .` **atlandı**.
 
-### Sonraki adım
+#### Sonraki adım
 
 1. Kullanıcı v0.1.1 raporunu getirir (önce eski sürümü kaldırıp yenisini kurar, V2+/A4+ temizler).
 2. Özellikle T3 (tek transaction'da taşı), T6 (tek Ctrl+Z), T8 (bağlı doğurma + set* anlamı) sonuçlarına göre SPREAD'in taşıma yolu seçilir:

@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Spread Helper — GÖRÜNMEZ CEP yardımcısı (Premiere Pro). Spread UXP panelinin BAĞLA adımı için ExtendScript
+  Sequence.linkSelection() çağırır. Arayüzü yok, Window > Extensions menüsünde görünmez (Menu etiketi yok).
+
+  Kaynaklar (Adobe, birincil):
+   - CEP 12 HTML Extension Cookbook, "Invisible HTML Extensions": Type=Custom, AutoVisible=false, <Menu> yok, <StartOn> olayları
+     https://github.com/Adobe-CEP/CEP-Resources/blob/master/CEP_12.x/Documentation/CEP%2012%20HTML%20Extension%20Cookbook.md
+   - Cookbook host tablosu: Premiere Pro 25.0 → CEP 12 (26.x için Adobe ayrı sütun yayımlamadı; CEP 13 yok) → CSXS 12.0
+   - CEP 12 görünmez örnek (HTTP sunucusu da kuruyor):
+     https://github.com/Adobe-CEP/CEP-Resources/blob/master/CEP_12.x/Samples/CEP_HTML_Invisible_Extension-12.0/CSXS/manifest.xml
+     "PPro dispatches this event on startup": com.adobe.csxs.events.ApplicationActivate
+   - Cookbook CEF bayrakları: --enable-nodejs (CEP 6.1+), --mixed-context (CEP 7.0+); <ScriptPath> = yüklenecek JSX
+   - RangedVersion (XSD): tek sürüm = en düşük sürüm; "[25.0,99.9]" = 25.0 ve üstü
+-->
+<ExtensionManifest Version="12.0" ExtensionBundleId="com.badideagency.spread.helper" ExtensionBundleVersion="0.3.0"
+    ExtensionBundleName="Spread Helper" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <ExtensionList>
+    <Extension Id="com.badideagency.spread.helper.bg" Version="0.3.0" />
+  </ExtensionList>
+  <ExecutionEnvironment>
+    <HostList>
+      <Host Name="PPRO" Version="[25.0,99.9]" />
+    </HostList>
+    <LocaleList>
+      <Locale Code="All" />
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="12.0" />
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+  <DispatchInfoList>
+    <Extension Id="com.badideagency.spread.helper.bg">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./index.html</MainPath>
+          <ScriptPath>./jsx/host.jsx</ScriptPath>
+          <CEFCommandLine>
+            <Parameter>--enable-nodejs</Parameter>
+            <Parameter>--mixed-context</Parameter>
+          </CEFCommandLine>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>false</AutoVisible>
+          <StartOn>
+            <!-- Premiere açılışta (ve odak kazanınca) bunu gönderir (Adobe CEP 12 görünmez örneği) -->
+            <Event>com.adobe.csxs.events.ApplicationActivate</Event>
+            <!-- Cookbook: Premiere'de yalnız macOS'ta; zararsız -->
+            <Event>applicationActivate</Event>
+            <!-- Adobe örneklerinde yalnız Audition'da görüldü; Premiere için doğrulanmadı, zararsız -->
+            <Event>com.adobe.csxs.events.ApplicationInitialized</Event>
+          </StartOn>
+        </Lifecycle>
+        <UI>
+          <Type>Custom</Type>
+          <Geometry>
+            <Size>
+              <Height>1</Height>
+              <Width>1</Width>
+            </Size>
+          </Geometry>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>

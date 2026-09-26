@@ -1,0 +1,21 @@
+﻿Spread Helper (v0.3.0) — görünmez CEP yardımcısı
+================================================
+
+Ne yapar: Premiere açılınca arka planda kendiliğinden başlar (penceresi yok). Spread panelinin BAĞLA düğmesi,
+klipleri bağlamak için ona bağlanır (yalnız bu bilgisayarın içinden: 127.0.0.1:47731). İnternete açık kapısı yoktur.
+
+1) En kolay yol: release/spread-helper.zxp dosyasını aescripts "ZXP/UXP Installer"ın penceresine sürükle-bırak.
+   (Bu zip'e gerek kalmaz.)
+
+2) ZXP Installer yoksa (bu zip):
+   - Zip'i bir klasöre çıkart.
+   - KUR.cmd'ye çift tıkla (Windows "bilinmeyen yayıncı" derse: Ek bilgi → Yine de çalıştır).
+     Yardımcıyı %APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper klasörüne kopyalar.
+   - Premiere Pro'yu kapatıp aç.
+
+3) Spread panelinde hâlâ "Yardımcı: bağlı değil" yazıyorsa:
+   - PlayerDebugMode_CSXS12.reg dosyasına çift tıkla → Evet (CEP 12'nin imza denetimini geliştirici kipine alır).
+   - Premiere Pro'yu kapatıp aç, panelde "Yardımcıyı kontrol et"e bas.
+   - Yine olmazsa: %TEMP%\spread-helper.log dosyasını bana getir.
+
+Kaldırmak: %APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper klasörünü sil.

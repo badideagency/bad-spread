@@ -3,6 +3,8 @@
 //  - o satır gerçekten o tipin (export declare type Tip = {...}) içinde mi.
 // Ayrıca kaynakta ppro/Premiere nesnesi üzerinden çağrılıp yanında d.ts yorumu OLMAYAN
 // bilinen API adlarını da uyarı olarak listeler.
+// v0.3.0: "uxp.d.ts:L<satır> Sınıf.üye" yorumları da @adobe/cc-ext-uxp-types/uxp/index.d.ts'e karşı doğrulanır
+// (satırda üye var mı, satırı çevreleyen en yakın "class" o sınıf mı).
 // Kullanım: node scripts/check-api-refs.mjs [--table]
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -41,7 +43,7 @@ const sources = [
   ...files(join(ROOT, "spread", "src")),
 ];
 
-const REF = /d\.ts:L(\d+)\s+([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)?)/g;
+const REF = /(?<!uxp\.)d\.ts:L(\d+)\s+([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)?)/g;
 let bad = 0;
 const seen = new Map();
 for (const f of sources) {
@@ -77,6 +79,41 @@ for (const f of sources) {
       const key = `${ref}@${ln}`;
       if (!seen.has(key)) seen.set(key, { ln, ref, line: (line ?? "").trim(), uses: [] });
       seen.get(key).uses.push(where);
+    }
+  });
+}
+
+// ---------------------------------------------------------------- UXP tipleri (uxp.d.ts)
+const UXP = join(ROOT, "node_modules/@adobe/cc-ext-uxp-types/uxp/index.d.ts");
+const uxp = readFileSync(UXP, "utf8").split("\n");
+const uxpOwner = new Array(uxp.length).fill(null);
+{
+  let cur = null;
+  for (let i = 0; i < uxp.length; i++) {
+    const m = uxp[i].match(/^\s*(?:export\s+)?(?:declare\s+)?(?:abstract\s+)?class\s+(\w+)/);
+    if (m) cur = m[1];
+    uxpOwner[i] = cur;
+  }
+}
+const UXPREF = /uxp\.d\.ts:L(\d+)\s+(\w+)\.(\w+)/g;
+let uxpRefs = 0;
+for (const f of sources) {
+  const lines = readFileSync(f, "utf8").split("\n");
+  lines.forEach((text, idx) => {
+    for (const m of text.matchAll(UXPREF)) {
+      uxpRefs++;
+      const ln = Number(m[1]);
+      const [cls, member] = [m[2], m[3]];
+      const line = uxp[ln - 1];
+      const where = `${relative(ROOT, f)}:${idx + 1}`;
+      let why = "";
+      if (line === undefined) why = "uxp.d.ts'te böyle bir satır yok";
+      else if (!new RegExp(`(^|\\s)(public\\s+)?${member}\\s*\\(`).test(line)) why = `satırda "${member}(" yok: ${line.trim()}`;
+      else if (uxpOwner[ln - 1] !== cls) why = `satır ${uxpOwner[ln - 1]} sınıfında, ${cls} değil`;
+      if (why) {
+        bad++;
+        console.error(`✗ ${where}  uxp.d.ts:L${ln} ${cls}.${member}  → ${why}`);
+      }
     }
   });
 }
@@ -138,5 +175,5 @@ if (short || process.argv.includes("--table")) {
   }
 }
 for (const w of warn) console.warn(`⚠ ${w}`);
-console.log(`\n${seen.size} benzersiz d.ts referansı, ${bad} hatalı, ${warn.length} yorumsuz çağrı uyarısı.`);
+console.log(`\n${seen.size} benzersiz d.ts referansı + ${uxpRefs} uxp.d.ts referansı, ${bad} hatalı, ${warn.length} yorumsuz çağrı uyarısı.`);
 process.exit(bad || warn.length ? 1 : 0);

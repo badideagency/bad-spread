@@ -76,3 +76,14 @@ export function isAsking(): boolean {
 export function byId(id: string): HTMLElement {
   return el(id);
 }
+
+/** "Yardımcı: bağlı / bağlı değil" göstergesi. */
+export function setHelperStatus(ok: boolean, detail: string): void {
+  try {
+    const e = el("helper");
+    e.textContent = ok ? `Yardımcı: bağlı — ${detail}` : `Yardımcı: bağlı değil — ${detail}`;
+    e.style.color = ok ? COLORS.ok : COLORS.warn;
+  } catch {
+    /* gösterge yoksa geç */
+  }
+}

@@ -1,13 +1,20 @@
-// Spread — giriş noktası. SPREAD ve DURUM RAPORU butonları, aktif sequence göstergesi, meşgul kilidi, rapor kopyalama.
+// Spread — giriş noktası. SPREAD / TOPLA / BAĞLA / DURUM RAPORU butonları, aktif sequence göstergesi, yardımcı göstergesi,
+// "tutulacak harici kanallar" ayarı, meşgul kilidi, rapor kopyalama.
 
-import { getActive, sequenceName } from "./src/session";
+import { getActive, requireActive, sequenceGuid, sequenceName } from "./src/session";
 import { runSpread } from "./src/spread";
+import { runCollect } from "./src/topla";
+import { runBind } from "./src/bagla";
 import { buildStatusReport } from "./src/status";
-import { errText } from "./src/model";
-import { answer, byId, clearLog, isAsking, log, setReportText } from "./src/ui";
+import { classify, channelsOf } from "./src/classify";
+import { getLinker } from "./src/linker";
+import { renderChannels } from "./src/settings";
+import { errText, snapshot } from "./src/model";
+import { answer, byId, clearLog, isAsking, log, setHelperStatus, setReportText } from "./src/ui";
 
 let busy = false;
-const ACTIONS = ["btn-spread", "btn-status"];
+const ACTIONS = ["btn-spread", "btn-collect", "btn-bind", "btn-status", "btn-channels"];
+let lastSeqGuid: string | null = null;
 
 function setDisabled(id: string, disabled: boolean): void {
   try {
@@ -29,6 +36,11 @@ async function refresh(): Promise<void> {
     else {
       s.textContent = `Aktif sequence: "${sequenceName(sequence)}"`;
       ok = true;
+      const g = sequenceGuid(sequence);
+      if (g !== lastSeqGuid && !busy) {
+        lastSeqGuid = g;
+        void scanChannels(false);
+      }
     }
     s.style.color = ok ? "#4cc27a" : "#e8b04a";
   } catch (e) {
@@ -39,6 +51,37 @@ async function refresh(): Promise<void> {
     }
   }
   for (const id of ACTIONS) setDisabled(id, busy || !ok);
+}
+
+/** Aktif sequence'taki harici kanalları bulur ve onay kutularını çizer (salt okuma). */
+async function scanChannels(verbose: boolean): Promise<void> {
+  try {
+    const ctx = await requireActive();
+    const items = classify(await snapshot(ctx));
+    const chans = channelsOf(items).map((key) => ({ key, count: items.filter((x) => x.role === "external" && x.channel === key).length }));
+    renderChannels(chans);
+    if (verbose) log(`Harici kanallar: ${chans.map((c) => `${c.key} (${c.count})`).join(", ") || "yok"}`, "dim");
+  } catch (e) {
+    if (verbose) log(`Kanallar okunamadı: ${errText(e)}`, "warn");
+  }
+}
+
+let pinging = false;
+async function checkHelper(verbose: boolean): Promise<void> {
+  if (pinging) return;
+  pinging = true;
+  try {
+    const r = await getLinker().ping();
+    setHelperStatus(r.ok, r.detail);
+    if (verbose) {
+      log(r.ok ? `✓ Yardımcı ${r.detail}` : `✗ Yardımcı bağlı değil: ${r.detail}`, r.ok ? "ok" : "warn");
+      if (!r.ok) for (const h of getLinker().installHint()) log(`   ${h}`, "warn");
+    }
+  } catch (e) {
+    setHelperStatus(false, errText(e));
+  } finally {
+    pinging = false;
+  }
 }
 
 async function exclusive(label: string, fn: () => Promise<void>): Promise<void> {
@@ -97,6 +140,15 @@ function on(id: string, fn: () => void): void {
 
 function init(): void {
   on("btn-spread", () => void exclusive("SPREAD", runSpread));
+  on("btn-collect", () =>
+    void exclusive("TOPLA", async () => {
+      await runCollect();
+      await scanChannels(false);
+    })
+  );
+  on("btn-bind", () => void exclusive("BAĞLA", runBind));
+  on("btn-channels", () => void exclusive("Kanallar", () => scanChannels(true)));
+  on("btn-helper", () => void checkHelper(true));
   on("btn-status", () =>
     void exclusive("Durum raporu", async () => {
       log("▶ Durum raporu", "head");
@@ -111,11 +163,15 @@ function init(): void {
   on("btn-clear", () => {
     if (!isAsking()) clearLog();
   });
-  log("Spread hazır. SPREAD: klipleri kendi track'lerine dağıtır (zamanlar değişmez). Önce onay ister ve yedek sequence alır.", "head");
+  log("Spread hazır. Sıra: SPREAD → Clip > Synchronize → TOPLA → kontrol → BAĞLA. Her işlem önce onay ister ve yedek sequence alır.", "head");
   void refresh();
+  void checkHelper(false);
   setInterval(() => {
     if (!busy) void refresh();
   }, 1500);
+  setInterval(() => {
+    if (!busy) void checkHelper(false);
+  }, 15000);
 }
 
 try {

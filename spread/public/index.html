@@ -38,6 +38,20 @@
     .row sp-button {
       margin: 0 6px 6px 0;
     }
+    #helper {
+      border: 1px solid #555555;
+      border-radius: 4px;
+      padding: 4px 8px;
+      margin: 0 0 8px 0;
+      color: #9a9a9a;
+    }
+    #channels {
+      margin: 2px 0 4px 0;
+    }
+    .chan {
+      display: block;
+      margin: 2px 0;
+    }
     #ask {
       display: none;
       border: 2px solid #e8b04a;
@@ -75,13 +89,26 @@
   </style>
 
   <body>
-    <h3>Spread v0.2.0</h3>
-    <div class="hint">SPREAD: aktif sequence'taki her klibi kendi track'ine dağıtır; hiçbir klibin zamanı değişmez. Önce onay ister ve yedek sequence alır.</div>
+    <h3>Spread v0.3.0</h3>
+    <div class="hint">Sıra: SPREAD → Clip &gt; Synchronize → TOPLA → gözle kontrol → BAĞLA. Hiçbir işlem klip zamanlarını kaydırmaz; her biri önce onay ister ve yedek sequence alır.</div>
     <div id="status">Durum okunuyor…</div>
+
+    <div id="helper">Yardımcı: kontrol ediliyor…</div>
 
     <div class="row">
       <sp-button id="btn-spread" variant="cta" disabled="true">SPREAD</sp-button>
+      <sp-button id="btn-collect" variant="cta" disabled="true">TOPLA</sp-button>
+      <sp-button id="btn-bind" variant="cta" disabled="true">BAĞLA</sp-button>
+    </div>
+    <div class="row">
       <sp-button id="btn-status" variant="secondary" disabled="true">Durum raporu</sp-button>
+      <sp-button id="btn-helper" variant="secondary">Yardımcıyı kontrol et</sp-button>
+    </div>
+
+    <div class="label">Tutulacak harici kanallar (kapatılan kanal BAĞLA'da silinir)</div>
+    <div id="channels">(sequence okunuyor…)</div>
+    <div class="row">
+      <sp-button id="btn-channels" variant="secondary" disabled="true">Kanalları tara</sp-button>
     </div>
 
     <div id="ask">

@@ -1,0 +1,8 @@
+Windows Registry Editor Version 5.00
+
+; Spread Helper - YALNIZ gerekirse: CEP 12 (Premiere Pro 25.x / 26.x) imza denetimini gelistirici kipinde gevsetir.
+; Adobe CEP 12 Cookbook: HKEY_CURRENT_USER\Software\Adobe\CSXS.12, PlayerDebugMode (string) = "1"
+; Geri almak icin: regedit ile bu degeri sil ya da "0" yap.
+
+[HKEY_CURRENT_USER\Software\Adobe\CSXS.12]
+"PlayerDebugMode"="1"

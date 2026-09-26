@@ -14,101 +14,15 @@
 //   5) tüm klipleri programla seç + Synchronize talimatı
 
 import { ppro } from "./ppro";
-import { selectAll, selectExactly, transact } from "./edit";
-import {
-  big,
-  errText,
-  fmtClip,
-  invalidateRefs,
-  keyFull,
-  relocate,
-  secOf,
-  settle,
-  sleep,
-  snapshot,
-  ticks,
-  trackLabel,
-  tt,
-  TICKS_PER_SECOND,
-  type ClipInfo,
-  type Snapshot,
-} from "./model";
+import { selectAll, selectExactly } from "./edit";
+import { askUser, expectState, makeBackup, multisetEqual, prepareTracks, reportStop, runTx, SpreadStop } from "./guard";
+import { errText, fmtClip, relocate, secOf, settle, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
 import { makePlan, type Plan } from "./plan";
-import { getActive, requireActive, sequenceGuid, sequenceName, SessionError, type SeqContext } from "./session";
-import { ask, log, type Answer } from "./ui";
-import { verifySpread, verifyTracks } from "./verify";
-import type { Sequence } from "./ppro";
+import { requireActive } from "./session";
+import { log } from "./ui";
+import { verifySpread } from "./verify";
 
-export class SpreadStop extends Error {
-  constructor(message: string, public details: string[] = []) {
-    super(message);
-    this.name = "SpreadStop";
-  }
-}
-
-async function askUser(q: string): Promise<Answer> {
-  const a = await ask(q);
-  invalidateRefs(); // kullanıcı timeline'da bir şey yapmış olabilir
-  return a;
-}
-
-const PARK_GAP = 10n * TICKS_PER_SECOND; // yardımcılar sequence sonundan 10 sn sonra
-
-function multisetEqual(a: Snapshot, b: Snapshot): boolean {
-  const ka = a.clips.map(keyFull).sort();
-  const kb = b.clips.map(keyFull).sort();
-  return ka.length === kb.length && ka.every((k, i) => k === kb[i]);
-}
-
-/**
- * Transaction'ı çalıştırır ve "yapılan adımlar"a yazar. Hata verirse: önce/sonra karşılaştırıp Premiere'in kısmen uygulayıp
- * uygulamadığını ÖLÇER (Ctrl+Z sayısı doğru söylensin), sonra DURUR.
- */
-async function runTx(
-  ctx: SeqContext,
-  executed: string[],
-  label: string,
-  undoName: string,
-  build: Parameters<typeof transact>[2]
-): Promise<Awaited<ReturnType<typeof transact>>> {
-  const pre = await snapshot(ctx); // yalnız karşılaştırma için değerler (kuşak değişmez)
-  const measure = async () => {
-    await settle();
-    const now = await snapshot(ctx);
-    return !multisetEqual(pre, now) || now.vCount !== pre.vCount || now.aCount !== pre.aCount;
-  };
-  let r: Awaited<ReturnType<typeof transact>>;
-  try {
-    r = await transact(ctx, undoName, build);
-  } catch (e) {
-    const changed = await measure();
-    if (changed) executed.push(`${label} (hata verdi, kısmen uygulanmış)`);
-    throw new SpreadStop(`"${label}" adımı hata verdi: ${errText(e)}${changed ? "" : " (timeline değişmedi)"}`);
-  }
-  if (!r.ok) {
-    // executeTransaction false: undo kaydı oluşmamış olabilir → ancak timeline değiştiyse say (Ctrl+Z sayısı doğru kalsın)
-    const changed = await measure();
-    if (changed) executed.push(`${label} (false döndü, kısmen uygulanmış)`);
-    throw new SpreadStop(`"${label}" adımı başarısız (executeTransaction → false)${changed ? "" : " — timeline değişmedi"}.`);
-  }
-  executed.push(label);
-  return r;
-}
-
-/**
- * İki adım arasında timeline'ın beklenen hâlde olduğunu doğrular (kullanıcı arada Ctrl+Z / düzenleme yaptıysa DUR).
- * Son adım geri alınmışsa (timeline adım öncesine dönmüş) o adım "yapılanlar"dan düşülür → Ctrl+Z sayısı doğru kalır.
- */
-async function expectState(ctx: SeqContext, expected: Snapshot, beforeLast: Snapshot | null, executed: string[]): Promise<void> {
-  const now = await snapshot(ctx);
-  const same = (a: Snapshot, b: Snapshot) => multisetEqual(a, b) && a.vCount === b.vCount && a.aCount === b.aCount;
-  if (same(expected, now)) return;
-  if (beforeLast && same(beforeLast, now)) {
-    const undone = executed.pop();
-    throw new SpreadStop(`Adımlar arasında timeline değişti: "${undone}" adımı geri alınmış görünüyor. Güvenlik için durduruldu.`);
-  }
-  throw new SpreadStop("Adımlar arasında timeline değişti (kullanıcı düzenlemesi?). Güvenlik için durduruldu.");
-}
+export { SpreadStop };
 
 function printPlan(plan: Plan, s: Snapshot): void {
   log(`Okundu: V track ${s.vCount}, A track ${s.aCount}, ${s.clips.length} klip.`, "dim");
@@ -132,46 +46,6 @@ function printPlan(plan: Plan, s: Snapshot): void {
   }
   for (const w of plan.warnings) log(`uyarı: ${w}`, "warn");
   for (const e of plan.errors) log(`HATA: ${e}`, "err");
-}
-
-// ------------------------------------------------------------------ yedek
-async function makeBackup(ctx: SeqContext): Promise<{ name: string; guid: string }> {
-  const before = await ctx.project.getSequences(); // d.ts:L2520 Project.getSequences
-  const ids = new Set(before.map(sequenceGuid));
-  const tx = await transact(ctx, "Spread: yedek sequence", (ops) => {
-    ops.cloneSequence();
-  });
-  let fresh: Sequence[] = [];
-  for (let i = 0; i < 10 && fresh.length === 0; i++) {
-    await sleep(300);
-    const after = await ctx.project.getSequences(); // d.ts:L2520 Project.getSequences
-    fresh = after.filter((s) => !ids.has(sequenceGuid(s)));
-  }
-  if (fresh.length !== 1)
-    throw new SpreadStop(`Yedek sequence oluşmadı (executeTransaction → ${tx.ok}, yeni sequence: ${fresh.length}). Spread BAŞLAMADI, timeline'a dokunulmadı.`);
-  const backup = { name: sequenceName(fresh[0]), guid: sequenceGuid(fresh[0]) };
-  // Yedeğin İÇERİĞİ aslıyla aynı mı (salt okuma) — her DUR mesajı kullanıcıyı buna yönlendiriyor
-  const orig = await snapshot(ctx);
-  const copy = await snapshot({ ...ctx, sequence: fresh[0], guid: backup.guid, name: backup.name });
-  if (!multisetEqual(orig, copy))
-    throw new SpreadStop(
-      `Yedek "${backup.name}" oluştu ama içeriği aslıyla aynı değil (asıl ${orig.clips.length} klip, yedek ${copy.clips.length}). Spread BAŞLAMADI, timeline'a dokunulmadı.`
-    );
-  log(`✓ Yedek oluştu ve içeriği aslıyla aynı: "${backup.name}" (${copy.clips.length} klip)`, "ok");
-
-  const { sequence: active } = await getActive();
-  const activeGuid = active ? sequenceGuid(active) : null;
-  if (activeGuid !== ctx.guid) {
-    if (activeGuid !== backup.guid)
-      throw new SpreadStop("Yedek alınırken aktif sequence değişti (yedek değil, başka bir sequence). Spread BAŞLAMADI.");
-    log("Yedek aktif oldu → asıl sequence'a dönülüyor…", "warn");
-    const back = await ctx.project.setActiveSequence(ctx.sequence); // d.ts:L2590 Project.setActiveSequence
-    const { sequence: now } = await getActive();
-    if (!back || !now || sequenceGuid(now) !== ctx.guid)
-      throw new SpreadStop(`Yedek aktif oldu ve asıl sequence'a dönülemedi (setActiveSequence → ${String(back)}). Spread BAŞLAMADI.`);
-    log(`✓ Asıl sequence "${ctx.name}" tekrar aktif.`, "ok");
-  }
-  return backup;
 }
 
 // ------------------------------------------------------------------ ana akış
@@ -213,7 +87,7 @@ export async function runSpread(): Promise<void> {
     }
 
     // 1) yedek
-    const backup = await makeBackup(ctx);
+    const backup = await makeBackup(ctx, "Spread");
     backupName = backup.name;
     const s1 = await snapshot(ctx);
     if (!multisetEqual(s0, s1)) throw new SpreadStop("Yedek alınırken asıl sequence'ın klipleri değişti. Durduruldu.");
@@ -223,29 +97,10 @@ export async function runSpread(): Promise<void> {
     let expected: Snapshot = s1; // bir sonraki adımdan önce timeline'ın bu hâlde olması beklenir
     let beforeLast: Snapshot | null = null;
     if (newV || newA) {
-      const hv = s1.clips.find((c) => c.kind === "V") ?? null;
-      const ha = s1.clips.find((c) => c.kind === "A") ?? null;
-      if ((newV && !hv) || (newA && !ha)) throw new SpreadStop("Track açmak için kopyalanacak klip yok.");
-      const seqEnd = big(tt(await ctx.sequence.getEndTime()).ticks); // d.ts:L3181 Sequence.getEndTime
-      const lastClip = s1.clips.reduce((m, c) => (big(c.end) > m ? big(c.end) : m), 0n);
-      const park = (seqEnd > lastClip ? seqEnd : lastClip) + PARK_GAP;
-      log(`TX-A: ${newV} video + ${newA} ses track'i clone ofsetiyle açılıyor (yardımcılar ${secOf(park)}s'ye park edilir).`);
-      const tx = await runTx(ctx, executed, "track hazırlığı", "Spread: track hazırlığı", (ops) => {
-        for (let t = s1.vCount; t < plan.neededV; t++) ops.clone(hv!, ticks(park - big(hv!.start)), t - hv!.track, 0);
-        for (let t = s1.aCount; t < plan.neededA; t++) ops.clone(ha!, ticks(park - big(ha!.start)), 0, t - ha!.track);
-      });
-      log(`   executeTransaction → ${tx.ok}; addAction ${tx.addResults.filter(Boolean).length}/${tx.addResults.length}`, "dim");
-      await settle();
-      const s2 = await snapshot(ctx);
-      const probs = verifyTracks(s1, s2, plan.neededV, plan.neededA, { V: newV, A: newA });
-      for (const w of s2.warnings) probs.push(`okuma uyarısı: ${w}`);
-      const extra = s2.clips.filter((c) => !s1.clips.some((o) => keyFull(o) === keyFull(c)));
-      for (const c of extra) if (big(c.start) < park) probs.push(`yardımcı park yerinde değil: ${fmtClip(c)}`);
-      if (probs.length) throw new SpreadStop("Track hazırlığı beklendiği gibi olmadı.", probs);
-      helpers = extra;
-      expected = s2;
+      const r = await prepareTracks(ctx, s1, plan.neededV, plan.neededA, executed, "Spread: track hazırlığı");
+      helpers = r.helpers;
+      expected = r.after;
       beforeLast = s1;
-      log(`✓ TX-A doğrulandı: V ${s1.vCount}→${s2.vCount}, A ${s1.aCount}→${s2.aCount}; asıllar birebir duruyor.`, "ok");
     }
 
     // 3) TX-B: taşı (tek transaction). Önce timeline beklenen hâlde mi; seçim + referanslar HEMEN öncesinde taze.
@@ -261,7 +116,7 @@ export async function runSpread(): Promise<void> {
     const cloneSrc = plan.clone.map((p) => ({ p, src: fresh(p.clip) }));
     const owSrc = plan.overwrite.map((u) => ({ u, src: fresh(u.video!) }));
     log(`TX-B: ${cloneSrc.length} clone → ${so.readCount} klip sil (ripple=false) → ${owSrc.length} kamera overwrite.`);
-    const txB = await runTx(ctx, executed, "dağıt", "Spread: dağıt", (ops) => {
+    await runTx(ctx, executed, "dağıt", "Spread: dağıt", (ops) => {
       for (const { p, src } of cloneSrc) {
         const off = p.target - src.track;
         ops.clone(src, ppro.TickTime.TIME_ZERO, src.kind === "V" ? off : 0, src.kind === "A" ? off : 0); // d.ts:L3929 TickTimeStatic.TIME_ZERO
@@ -269,7 +124,6 @@ export async function runSpread(): Promise<void> {
       ops.remove(so.sel);
       for (const { u, src } of owSrc) ops.overwrite(src, ticks(u.video!.start), u.vTarget!, u.aTarget!);
     });
-    log(`   executeTransaction → ${txB.ok}; addAction ${txB.addResults.filter(Boolean).length}/${txB.addResults.length}`, "dim");
     await settle();
     const sB = await snapshot(ctx);
     const vB = verifySpread(plan, sB, true);
@@ -286,7 +140,7 @@ export async function runSpread(): Promise<void> {
         if (!now) throw new SpreadStop(`eşitleme öncesi klip yeniden bulunamadı: ${fmtClip(t.now)}`);
         return { orig: t.orig, now };
       });
-      const txC = await runTx(ctx, executed, "kırpma eşitlemesi", "Spread: kırpma eşitlemesi", (ops) => {
+      await runTx(ctx, executed, "kırpma eşitlemesi", "Spread: kırpma eşitlemesi", (ops) => {
         for (const { orig, now } of fixes) {
           ops.setIn(now, ticks(orig.inPt));
           ops.setOut(now, ticks(orig.outPt));
@@ -294,7 +148,6 @@ export async function runSpread(): Promise<void> {
           ops.setEnd(now, ticks(orig.end));
         }
       });
-      log(`   executeTransaction → ${txC.ok}; addAction ${txC.addResults.filter(Boolean).length}/${txC.addResults.length}`, "dim");
       await settle();
       const sC = await snapshot(ctx);
       const vC = verifySpread(plan, sC, false);
@@ -317,21 +170,6 @@ export async function runSpread(): Promise<void> {
     log("Şimdi Clip > Synchronize'ı dene. Menü gri ise timeline'a tıkla, Ctrl+A, sağ tık > Synchronize (Audio).", "head");
     log(`Beğenmezsen: timeline'a tıkla, Ctrl+Z'ye ${executed.length} kez bas — ya da yedek sequence "${backupName}"i kullan.`, "dim");
   } catch (e) {
-    const stop = e instanceof SpreadStop ? e : null;
-    const msg = stop ? stop.message : e instanceof SessionError ? e.message : `Beklenmeyen hata: ${errText(e)}`;
-    log(`✗ SPREAD DURDU: ${msg}`, "err");
-    for (const d of stop?.details ?? []) log(`   • ${d}`, "err");
-    if (executed.length) {
-      log(`Yapılan adımlar (${executed.length}): ${executed.join(", ")}.`, "warn");
-      log(
-        `Geri almak için: timeline'a tıkla ve Ctrl+Z'ye ${executed.length} kez bas — ya da yedek sequence "${backupName ?? "?"}"i kullan. ` +
-          "Panel kendi başına düzeltme yapmaz.",
-        "warn"
-      );
-    } else if (backupName) {
-      log(`Timeline'da değişiklik yapılmadı. (Yedek "${backupName}" oluştu; silebilirsin.)`, "warn");
-    } else {
-      log("Timeline'da değişiklik yapılmadı.", "warn");
-    }
+    reportStop("SPREAD", e, executed, backupName);
   }
 }
