@@ -1,17 +1,22 @@
 // BAĞLAMA MODÜLÜ — tek ve izole. BAĞLA yalnız buradaki `Linker` arayüzünü görür.
 //
-// Neden ayrı: Premiere UXP'de link/unlink API'si YOK (Probe v0.1.1). Bu sürümde bağlama, görünmez CEP yardımcısının
-// (cep-helper/) ExtendScript `Sequence.linkSelection()` çağrısıyla yapılır. CEP/ExtendScript Adobe tarafından emekliye
+// Neden ayrı: Premiere UXP'de link/unlink API'si YOK (Probe v0.1.1). Bu sürümde bağlama, CEP yardımcı panelinin (cep-helper/,
+// Window > Extensions (Legacy) > Spread Helper) ExtendScript `Sequence.linkSelection()` çağrısıyla yapılır — köprüyle (HTTP, tek tık)
+// ya da köprüsüz (KES planı dosyası → yardımcı paneldeki BAĞLA). CEP/ExtendScript Adobe tarafından emekliye
 // ayrılıyor; ileride XML yolu ya da bir UXP link API'si geldiğinde YALNIZ bu dosya değişir.
 //
-// Güvenlik: yardımcı yalnız 127.0.0.1:HELPER_PORT'u dinler; her açılışta ürettiği rastgele token'ı kullanıcının kendi
+// Adres: http://localhost:HELPER_PORT — UXP ağ izni IP yazılı alan adlarını ("http://127.0.0.1") kabul etmiyor (Premiere 26.5 Windows'ta
+// "Permission denied … Manifest entry not found"; kaynaklar handoff.md'de). Yardımcı 127.0.0.1 ve ::1'i dinler.
+// Güvenlik: yardımcı yalnız geri döngüyü (127.0.0.1 / ::1) dinler; her açılışta ürettiği rastgele token'ı kullanıcının kendi
 // klasöründeki küçük bir dosyaya yazar (Windows: %USERPROFILE%\AppData\Roaming\BadIdeaAgency\SpreadHelper\helper.json,
 // macOS: ~/Library/Application Support/BadIdeaAgency/SpreadHelper/helper.json). Panel token'ı oradan okur ve her istekte
 // "X-Spread-Token" başlığıyla gönderir. Tarayıcıdaki bir sayfa bu dosyayı okuyamaz ve özel başlıklı istek gönderemez.
 // UXP API'leri: @adobe/cc-ext-uxp-types (uxp.d.ts) — satırlar `npm run check:api` ile doğrulanır.
 
 export const HELPER_PORT = 47731;
-export const HELPER_VERSION = "0.3.0";
+/** manifest.json requiredPermissions.network.domains ile AYNI ad (IP değil). */
+export const HELPER_URL = `http://localhost:${HELPER_PORT}`;
+export const HELPER_VERSION = "0.3.2";
 const PING_TIMEOUT_MS = 3000;
 /** Bağlama grupları yardımcıya parti parti gönderilir (uzun çekimlerde tek istek zaman aşımına uğramasın). */
 const LINK_BATCH = 8;
@@ -76,6 +81,8 @@ interface UxpOs {
 }
 interface UxpFs {
   readFileSync(path: string, options: { encoding?: string }): string | ArrayBuffer;
+  writeFileSync(path: string, data: string, options: { encoding?: string }): number;
+  mkdir(path: string, options: { recursive?: boolean }): Promise<number>;
 }
 
 /** Token dosyasının yolu (yardımcıyla AYNI kural: ev klasörü + sabit alt yol). */
@@ -84,11 +91,30 @@ export function helperInfoPath(platform: string, home: string): string {
   return `${home.replace(/\/+$/, "")}/Library/Application Support/BadIdeaAgency/SpreadHelper/helper.json`;
 }
 
+/** KES planı: bilgi dosyasıyla aynı klasörde (yardımcı: cep-helper/js/helper.js planPath ile AYNI kural). */
+export function helperPlanPath(platform: string, home: string): string {
+  return helperInfoPath(platform, home).replace(/helper\.json$/, "link-plan.json");
+}
+
 interface HelperInfo {
   port: number;
   token: string;
   version: string;
+  startedAt: string;
+  pid: string;
 }
+
+/** Teşhis adımı: hangi aşamada koptu (panelde ve günlükte yazılır). */
+class HelperError extends Error {
+  constructor(
+    readonly stage: "bilgi dosyası" | "bağlantı" | "yanıt",
+    message: string
+  ) {
+    super(message);
+  }
+}
+
+const raw = (e: unknown): string => (e instanceof Error ? `${e.name}: ${e.message}` : String(e));
 
 async function readHelperInfo(): Promise<HelperInfo> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -117,11 +143,37 @@ async function readHelperInfo(): Promise<HelperInfo> {
       errs.push(`localFileSystem: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  if (text === null) throw new Error(`yardımcı bilgi dosyası okunamadı (${path}) — ${errs.join(" | ")}`);
-  const j = JSON.parse(text) as Partial<HelperInfo>;
-  if (typeof j.token !== "string" || j.token.length < 32) throw new Error("yardımcı bilgi dosyasında token yok");
-  if (j.port !== HELPER_PORT) throw new Error(`yardımcı başka bir portta (${String(j.port)}), panel ${HELPER_PORT} bekliyor`);
-  return { port: j.port, token: j.token, version: String(j.version ?? "?") };
+  if (text === null)
+    throw new HelperError(
+      "bilgi dosyası",
+      `yardımcının bilgi dosyası okunamadı (${path}). Yardımcı hiç BAŞLAMAMIŞ olabilir: Premiere'de Window → Extensions (Legacy) → ` +
+        `Spread Helper panelini aç (sunucu panel açıkken çalışır). Panel açık ve "dinliyor" diyorsa sorun UXP'nin dosya okuma izninde. ` +
+        `Ham hata: ${errs.join(" | ")}`
+    );
+  let j: Partial<HelperInfo>;
+  try {
+    j = JSON.parse(text) as Partial<HelperInfo>;
+  } catch (e) {
+    throw new HelperError("bilgi dosyası", `bilgi dosyası JSON değil (${path}): ${raw(e)}`);
+  }
+  if (typeof j.token !== "string" || j.token.length < 32) throw new HelperError("bilgi dosyası", `bilgi dosyasında token yok (${path})`);
+  if (j.port !== HELPER_PORT) throw new HelperError("bilgi dosyası", `yardımcı başka bir portta (${String(j.port)}), panel ${HELPER_PORT} bekliyor`);
+  return { port: j.port, token: j.token, version: String(j.version ?? "?"), startedAt: String(j.startedAt ?? "?"), pid: String(j.pid ?? "?") };
+}
+
+/** fetch hatasını sınıflar: UXP izin reddi mi, sunucuya ulaşılamadı mı (ham hata HER ZAMAN yazılır). */
+function fetchProblem(e: unknown, info: HelperInfo): string {
+  const r = raw(e);
+  if (/permission|not permitted|not allowed|denied|manifest|domain|blocked/i.test(r))
+    return (
+      `UXP İZİN REDDİ: Spread paneli ${HELPER_URL} adresine istek gönderemedi (manifest'teki ağ izni ` +
+      `requiredPermissions.network.domains bu adresi kapsamıyor ya da UXP localhost'u engelliyor). Ham hata: ${r}`
+    );
+  return (
+    `yardımcının bilgi dosyası var (başlama ${info.startedAt}, süreç ${info.pid}) ama UXP bağlanamadı. Ham hata: ${r}. ` +
+    `Yardımcı paneldeki "son istek" bu anda DEĞİŞMEDİYSE istek sunucuya hiç ulaşmadı → UXP localhost'u engelliyor ya da yardımcı ` +
+    `kapandı (paneli açık tut; panel kapanınca sunucu da durur).`
+  );
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
@@ -136,24 +188,55 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
 
 async function post(path: string, body: unknown, ms: number): Promise<Record<string, unknown>> {
   const info = await readHelperInfo();
-  const res = await withTimeout(
-    fetch(`http://127.0.0.1:${HELPER_PORT}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Spread-Token": info.token },
-      body: JSON.stringify(body),
-    }),
-    ms,
-    path
-  );
+  let res: Response;
+  try {
+    res = await withTimeout(
+      fetch(`${HELPER_URL}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Spread-Token": info.token },
+        body: JSON.stringify(body),
+      }),
+      ms,
+      path
+    );
+  } catch (e) {
+    throw new HelperError("bağlantı", fetchProblem(e, info));
+  }
   const text = await res.text();
   let j: Record<string, unknown>;
   try {
     j = JSON.parse(text) as Record<string, unknown>;
   } catch {
-    throw new Error(`${path}: yanıt JSON değil (HTTP ${res.status})`);
+    throw new HelperError("yanıt", `${path}: yanıt JSON değil (HTTP ${res.status})`);
   }
-  if (!res.ok || j.ok !== true) throw new Error(`${path}: ${String(j.error ?? `HTTP ${res.status}`)}`);
+  if (!res.ok || j.ok !== true)
+    throw new HelperError("yanıt", `${path}: ${String(j.error ?? `HTTP ${res.status}`)}${res.status === 401 ? " (token eski: yardımcı yeniden başlamış olabilir, tekrar dene)" : ""}`);
   return j;
+}
+
+/**
+ * KES planını yardımcının okuyacağı dosyaya yazar (köprüsüz BAĞLA). Yazılamazsa hata metni döner; plan panelin rapor kutusuna da
+ * konur (yardımcı panelde "Planı yapıştır").
+ */
+export async function writeLinkPlan(text: string): Promise<{ ok: boolean; path: string; detail: string }> {
+  let path = "?";
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require("os") as UxpOs;
+    path = helperPlanPath(os.platform(), os.homedir()); // uxp.d.ts:L9198 OS.platform, uxp.d.ts:L9232 OS.homedir
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs") as UxpFs;
+    const dir = path.replace(/[\\/][^\\/]+$/, "");
+    try {
+      await fs.mkdir(dir, { recursive: true }); // uxp.d.ts:L9159 fs.mkdir
+    } catch {
+      /* klasör zaten var (yardımcı açıldıysa oluşturmuştur) — yazma hatası aşağıda yakalanır */
+    }
+    fs.writeFileSync(path, text, { encoding: "utf-8" }); // uxp.d.ts:L9022 fs.writeFileSync
+    return { ok: true, path, detail: "" };
+  } catch (e) {
+    return { ok: false, path, detail: raw(e) };
+  }
 }
 
 class CepLinker implements Linker {
@@ -169,7 +252,7 @@ class CepLinker implements Linker {
         return { ok: false, helper, premiere, sequence, detail: `yardımcı sürümü ${helper}, panel ${HELPER_VERSION} bekliyor — yardımcıyı güncelle` };
       return { ok: true, helper, premiere, sequence, detail: `bağlı (yardımcı ${helper}, Premiere ${premiere})` };
     } catch (e) {
-      return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+      return { ok: false, detail: e instanceof HelperError ? `[${e.stage}] ${e.message}` : raw(e) };
     }
   }
 
@@ -193,9 +276,9 @@ class CepLinker implements Linker {
 
   installHint(): string[] {
     return [
-      "Yardımcı (Spread Helper, görünmez CEP eklentisi) kurulu değil ya da çalışmıyor.",
-      "Kurulum: KURULUM_TR.md → \"Yardımcıyı kur\" (release/spread-helper paketi). Kurduktan sonra Premiere'i kapatıp aç.",
-      `Kuruluysa: Premiere'i yeniden başlat; panelde "Yardımcıyı kontrol et"e bas. (127.0.0.1:${HELPER_PORT} başka bir programca kullanılıyor olabilir.)`,
+      "Yardımcı: Premiere'de Window → Extensions (Legacy) → Spread Helper panelini aç; sunucu panel açıkken çalışır (paneli çalışma alanında açık bırak).",
+      "Menüde yoksa kurulu değil: KURULUM_TR.md → \"Yardımcıyı kur\" (release/spread-helper-klasor.zip → KUR.cmd), Premiere'i kapatıp aç.",
+      `Panel açık ama "SUNUCU BAŞLAMADI" diyorsa oradaki hatayı getir (ör. 127.0.0.1:${HELPER_PORT} kullanımda). Köprü kurulamasa da yardımcı paneldeki BAĞLA çalışır.`,
     ];
   }
 }

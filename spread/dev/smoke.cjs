@@ -26,7 +26,7 @@ const frames = (n) => BigInt(n) * FRAME25;
 const secOf = (t) => (Number(t) / Number(TPS)).toFixed(3);
 
 // ------------------------------------------------------------ mock ayarları (senaryo başına)
-const M0 = { broken: false, nonseq: false, nobackup: false, backupActive: false, falseTx: null, badBackup: false, noType: false, undoAfterTx: null, setSem: "trim", linkFailName: null, linkedSemantics: "link", cloneTimeBroken: false };
+const M0 = { broken: false, nonseq: false, nobackup: false, backupActive: false, falseTx: null, badBackup: false, noType: false, undoAfterTx: null, setSem: "trim", linkFailName: null, linkedSemantics: "link", cloneTimeBroken: false, planWriteFails: false, fetchError: null };
 const M = { ...M0 };
 let pendingUndo = 0;
 const hooks = { onCloneSeq: null, onGetActive: null, beforeRemoveApply: null };
@@ -357,6 +357,9 @@ globalThis.localStorage = {
   },
   removeItem: (k) => lsStore.delete(k),
 };
+// panelin fetch'i (Node'unki); M.fetchError → UXP'nin reddi gibi fırlatır (ör. manifest ağ izni)
+const realFetch = globalThis.fetch;
+globalThis.fetch = (...args) => (M.fetchError ? Promise.reject(new TypeError(M.fetchError)) : realFetch(...args));
 let copied = null;
 Object.defineProperty(globalThis, "navigator", { value: { clipboard: { setContent: async (d) => (copied = d["text/plain"]) } }, configurable: true });
 const fsReal = require("fs");
@@ -369,6 +372,17 @@ Module._load = ((orig) =>
     if (request === "uxp") return { versions: { uxp: "uxp-MOCK" }, host: { name: "premierepro", version: "26.5.1" } };
     // panelin os'u: ev klasörü geçici dizin (yardımcının token dosyası oraya yazılır), platform macOS yolu (Linux'ta çalışsın)
     if (request === "os" && parent && parent.filename && parent.filename.startsWith(DIST)) return { platform: () => "darwin", homedir: () => TMPHOME };
+    // panelin fs'i: UXP biçimi (mkdir geri çağrısız → Promise); M.planWriteFails → yazma reddi (izin yok gibi)
+    if (request === "fs" && parent && parent.filename && parent.filename.startsWith(DIST))
+      return {
+        readFileSync: (p, o) => fsReal.readFileSync(p, o),
+        writeFileSync: (p, d, o) => {
+          if (M.planWriteFails) throw new Error("mock UXP: Permission denied (write)");
+          fsReal.writeFileSync(p, d, o);
+          return String(d).length;
+        },
+        mkdir: (p, o) => fsReal.promises.mkdir(p, o),
+      };
     return orig.apply(this, arguments);
   })(Module._load);
 
@@ -768,7 +782,7 @@ function esItem(seq, c) {
     get end() { return T(c.end); },
     get inPoint() { return T(c.inPt); },
     get outPoint() { return T(c.outPt); },
-    get projectItem() { return { name: c.pi.name }; },
+    get projectItem() { return { name: c.pi.name, nodeId: "pn-" + c.pi.name }; },
     mediaType: c.kind === "V" ? "Video" : "Audio",
     setSelected(on) {
       if (!findClip(c.id)) throw new Error("mock ES: klip yok");
@@ -821,6 +835,8 @@ counters.links = 0;
 
 // ------------------------------------------------------------ gerçek yardımcı (cep-helper/js/helper.js) + host.jsx (vm)
 const HELPER = require(path.join(__dirname, "..", "..", "cep-helper", "js", "helper.js"));
+// yardımcı panele derlenmiş TEK modül (Spread'in kendi kodu; `npm run check:core` güncel olduğunu denetler) — panelde <script> ile yüklenir
+const CORE = new Function(fsReal.readFileSync(path.join(__dirname, "..", "..", "cep-helper", "js", "spread-core.js"), "utf8") + "\nreturn SpreadCore;")();
 const HOST_SRC = fsReal.readFileSync(path.join(__dirname, "..", "..", "cep-helper", "jsx", "host.jsx"), "utf8");
 let helper = null;
 const helperLog = [];
@@ -838,7 +854,7 @@ async function startHelper() {
       }
       cb(String(r));
     }, 1);
-  helper = HELPER.createHelper({ http, crypto: cryptoReal, fs: fsReal, path, os: osReal, evalScript, home: TMPHOME, platform: "darwin", log: (l) => helperLog.push(l) });
+  helper = HELPER.createHelper({ http, crypto: cryptoReal, fs: fsReal, path, os: osReal, evalScript, core: CORE, home: TMPHOME, platform: "darwin", log: (l) => helperLog.push(l) });
   await helper.start();
   return helper;
 }
@@ -1110,7 +1126,7 @@ function checkLinks(seq, groups, label) {
   if (!bad) ok(`${label}: ${groups.length} grup — her grubun kameraları + kendi oturumunun ses parçaları tek bağda, grup/oturum dışı bağ yok`);
 }
 
-const doneRe = /✓ SPREAD tamam|✗ SPREAD DURDU|✓ TOPLA tamam|✗ TOPLA DURDU|✓ BAĞLA tamam|⚠ BAĞLA bitti|✗ BAĞLA DURDU|İptal edildi|Zaten dağıtılmış|Zaten toplanmış|Durum raporu hazır/;
+const doneRe = /✓ SPREAD tamam|✗ SPREAD DURDU|✓ TOPLA tamam|✗ TOPLA DURDU|✓ BAĞLA tamam|⚠ BAĞLA bitti|✗ BAĞLA DURDU|✓ KES tamam|İptal edildi|Zaten dağıtılmış|Zaten toplanmış|Durum raporu hazır/;
 const txOf = (prefix) => counters.txNames.filter((n) => n.startsWith(prefix));
 const TOPLA_TX = "TOPLA: yedek sequence,TOPLA: ilk park (ölçüm),TOPLA: park,TOPLA: ilk yerleştirme (ölçüm),TOPLA: yerleştir";
 async function scan() {
@@ -1493,20 +1509,6 @@ scenarios.graphic = async () => {
   else ok("yeni düzende V1'deki 'YAĞ SIVISI' kamera klibiyle çakışacak → TOPLA DURDU, raporlandı");
   if (JSON.stringify(state.sequences, repl) !== before) fail("bir şey değişti");
   else ok("grafiğe ve hiçbir klibe dokunulmadı");
-};
-
-scenarios.helperoff = async () => {
-  await collectThen(smallSpec());
-  await stopHelper();
-  const before = JSON.stringify(state.sequences, repl);
-  const n = counters.txNames.length;
-  const out = await clickAndWait("btn-bind", yes, doneRe);
-  if (!/✗ BAĞLA DURDU: Yardımcı bağlı değil/.test(out) || !/BAĞLA BAŞLAMADI, hiçbir şeye dokunulmadı/.test(out)) fail("yardımcı yokken BAĞLA durmadı:\n" + out);
-  else ok("yardımcı kapalı → BAĞLA hiçbir şeye dokunmadan DURDU");
-  if (!/KURULUM_TR\.md/.test(out)) fail("kurulum talimatı gösterilmedi");
-  if (JSON.stringify(state.sequences, repl) !== before || counters.txNames.length !== n) fail("yardımcı yokken timeline'a dokunuldu");
-  else ok("timeline aynı, yedek yok, transaction yok");
-  if (!/bağlı değil/.test(els.helper?.textContent ?? "")) fail(`gösterge: ${els.helper?.textContent}`);
 };
 
 scenarios.setnoop = async () => {
@@ -1953,6 +1955,220 @@ scenarios.adv_nocam = async () => {
   if (!/✓ BAĞLA tamam/.test(out) || !/1 kamerasız oturumun \(O2\) seslerine dokunulmayacak/.test(q)) return fail("kamerasız oturum bildirilmedi / BAĞLA tamamlanmadı:\n" + q + "\n" + failLines(out));
   const eb = expectBagla(collected, members);
   checkExactly(seqByGuid("guid-main-edit"), eb.exp, "kamerasız oturumun Zoom + DJI sesi olduğu gibi (silinmedi), diğer oturum bağlandı");
+};
+
+// ------------------------------------------------------------ v0.3.2 — köprüden bağımsız BAĞLA (KES + yardımcı paneldeki BAĞLA)
+const PLAN_FILE = () => HELPER.planPath(path, "darwin", TMPHOME);
+const INFO_FILE = () => HELPER.infoPath(path, "darwin", TMPHOME);
+function linkPartition(seq) {
+  const m = new Map();
+  for (const x of allClips(seq)) if (x.c.linkId) m.set(x.c.linkId, [...(m.get(x.c.linkId) ?? []), [x.kind, x.track, x.c.name, x.c.start, x.c.end].join("|")]);
+  return [...m.values()].map((l) => l.sort().join(",")).sort();
+}
+const finalState = () => ({
+  clips: snapList().map((e) => [e.kind, e.track, e.name, e.start, e.end, e.inPt].join("|")).sort(),
+  links: linkPartition(seqByGuid("guid-main-edit")),
+});
+const spec2ch = () => smallSpec({ wavs: [...smallSpec().wavs, { name: "260912_101512_Tr2.WAV", start: sec(8) + 12345n, dur: sec(79), inPt: sec(3) }] });
+
+scenarios.bridgeoff = async () => {
+  // (A) köprü AÇIK → tek tık (KES + bağla)
+  await collectThen(spec2ch());
+  await startHelper();
+  const oA = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ BAĞLA tamam/.test(oA)) return fail("(A) köprülü BAĞLA tamamlanmadı:\n" + failLines(oA));
+  const A = finalState();
+  ok(`köprü açık: tek tıkla KES + bağla (${A.links.length} bağ)`);
+  // (B) köprü KAPALI → Spread yalnız KES yapar, planı yazar; kullanıcı Spread Helper panelini açıp BAĞLA'ya basar
+  const collected = await collectThen(spec2ch());
+  await stopHelper();
+  fsReal.rmSync(PLAN_FILE(), { force: true });
+  const nLinks = counters.links;
+  let q = "";
+  const oB = await clickAndWait("btn-bind", async (x) => ((q = x), yes()), doneRe);
+  if (!/Yardımcıya köprü YOK → yalnız KES yapılacak/.test(q)) fail("onayda köprü yok bilgisi yok:\n" + q);
+  if (!/✓ KES tamam: kesme\/silme tick düzeyinde doğrulandı/.test(oB) || !/Window → Extensions \(Legacy\) → Spread Helper panelini aç ve oradaki BAĞLA'ya bas/.test(oB) || counters.links !== nLinks)
+    return fail("köprü kapalıyken KES + yönlendirme olmadı:\n" + oB.split("\n").slice(-8).join("\n"));
+  ok("köprü kapalı: BAĞLA DURMADI — KES yapıldı (tick düzeyinde doğrulandı), bağlama yapılmadı, 'Spread Helper panelindeki BAĞLA'ya bas' dendi");
+  checkExactly(seqByGuid("guid-main-edit"), expectBagla(collected, SMALL).exp, "köprüsüz KES düzeni");
+  if (!/\[bilgi dosyası\].*Window → Extensions \(Legacy\) → Spread Helper/.test(els.helper.textContent)) fail(`gösterge gerçek hatayı yazmıyor: ${els.helper.textContent}`);
+  else ok("panel göstergesi gerçek hatayı yazıyor: [bilgi dosyası] … (yardımcı hiç başlamamış → Window → Extensions (Legacy) → Spread Helper)");
+  if (!fsReal.existsSync(PLAN_FILE())) return fail("KES planı dosyaya yazılmadı");
+  const h = await startHelper(); // kullanıcı Spread Helper panelini açtı
+  const r = await h.bindFromPlan({});
+  if (!r.ok || !/^✓ 2 grup bağlandı ve doğrulandı/.test(r.summary)) return fail(`yardımcı paneldeki BAĞLA: ${r.summary}\n${r.lines.join("\n")}`);
+  ok(`yardımcı paneldeki BAĞLA: ${r.summary} — ${r.rows.map((x) => x.label.split(" ")[0] + " " + x.status).join(", ")}`);
+  const B = finalState();
+  if (JSON.stringify(A) !== JSON.stringify(B)) fail(`iki yolun sonucu farklı:\nA ${JSON.stringify(A).slice(0, 300)}\nB ${JSON.stringify(B).slice(0, 300)}`);
+  else ok("köprü kapalıyken KES + yardımcı paneldeki BAĞLA = köprülü tek tıkla AYNI son düzen (tick) ve AYNI bağlar");
+  checkLinks(seqByGuid("guid-main-edit"), expectBagla(collected, SMALL).groups, "yardımcı panelden bağlar");
+  if (!h.state().lastBind || !h.state().lastBind.ok) fail("panel durumu son BAĞLA'yı göstermiyor");
+  // Spread'de tekrar BAĞLA (köprü artık açık): kayıttaki gruplarla yalnız bağlama — düzen aynı kalır
+  const n = counters.txNames.length;
+  const oC = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ BAĞLA tamam/.test(oC) || counters.txNames.length !== n || JSON.stringify(finalState()) !== JSON.stringify(B)) fail("köprü açılınca tekrar BAĞLA düzeni değiştirdi:\n" + failLines(oC));
+  else ok("köprü açılınca Spread'de tekrar BAĞLA: yalnız bağlama, düzen ve bağlar aynı");
+};
+
+scenarios.bridgeoff_real = async () => {
+  // iki yolun eşdeğerliği zengin veride: köprülü tek tık (A) ile köprüsüz KES + yardımcı paneldeki BAĞLA (B) AYNI son düzen ve bağlar
+  const topla = async () => /✓ TOPLA tamam/.test(await clickAndWait("btn-collect", yes, doneRe));
+  const cases = [
+    ["12 Eylül (gerçek rapor, TrLR 'sil')", async () => (setupFromReport(R0912, ["A27", "A30"]), await setMap("Zoom TrLR", "sil"), topla())],
+    ["23 Eylül (sentetik: DJI iki Zoom'u kapsıyor, harici sessiz oturumda kamera sesi korunur)", async () => (setupSync(sep23()), topla())],
+    [
+      "kamerasız oturum (Zoom + DJI) + normal oturum",
+      async () => (setupSync(smallSpec({ wavs: [...smallSpec().wavs, { name: "260912_120000_Tr1.WAV", start: sec(300), dur: sec(60) }, { name: "DJI_01_20260912_120100.WAV", start: sec(301), dur: sec(58) }] })), topla()),
+    ],
+  ];
+  for (const [label, prep] of cases) {
+    if (!(await prep())) {
+      fail(`${label}: TOPLA tamamlanmadı`);
+      continue;
+    }
+    await startHelper();
+    const oA = await clickAndWait("btn-bind", yes, doneRe);
+    if (!/✓ BAĞLA tamam/.test(oA)) {
+      fail(`${label}: köprülü BAĞLA tamamlanmadı:\n${failLines(oA)}`);
+      continue;
+    }
+    const A = finalState();
+    await prep();
+    await stopHelper();
+    const oB = await clickAndWait("btn-bind", yes, doneRe);
+    if (!/✓ KES tamam/.test(oB)) {
+      fail(`${label}: köprüsüz KES tamamlanmadı:\n${failLines(oB)}`);
+      continue;
+    }
+    const h = await startHelper();
+    const r = await h.bindFromPlan({});
+    const B = finalState();
+    if (!r.ok || JSON.stringify(A) !== JSON.stringify(B)) fail(`${label}: iki yol farklı (${r.summary})\n${r.lines.slice(0, 5).join("\n")}`);
+    else ok(`${label}: köprülü tek tık = KES + yardımcı paneldeki BAĞLA (${A.clips.length} klip tick düzeyinde, ${A.links.length} bağ aynı; ${r.summary})`);
+  }
+};
+
+scenarios.bridgeoff_paste = async () => {
+  // plan dosyası YAZILAMAZSA (UXP dosya izni): plan rapor kutusunda → yardımcı panelde yapıştır → BAĞLA
+  const collected = await collectThen(smallSpec());
+  await stopHelper();
+  fsReal.rmSync(PLAN_FILE(), { force: true });
+  M.planWriteFails = true;
+  const o = await clickAndWait("btn-bind", yes, doneRe);
+  M.planWriteFails = false;
+  if (!/KES planı dosyaya YAZILAMADI .*Permission denied/.test(o) || !/'Raporu kopyala' → Spread Helper panelinde 'Planı yapıştır'/.test(o) || !/"kind": "spread-link-plan"/.test(els.report.value))
+    return fail("plan yazılamayınca yapıştırma yolu gösterilmedi:\n" + o.split("\n").slice(-6).join("\n"));
+  ok("plan dosyası yazılamadı (izin) → ham hata + plan rapor kutusunda + 'Planı yapıştır' talimatı");
+  const h = await startHelper();
+  const r0 = await h.bindFromPlan({});
+  if (r0.ok || !/KES planı okunamadı/.test(r0.summary)) fail(`plan yokken panel BAĞLA: ${r0.summary}`);
+  else ok("plan dosyası yokken paneldeki BAĞLA hiçbir şey yapmadan ne yapılacağını söyledi");
+  const r = await h.bindFromPlan({ text: els.report.value });
+  if (!r.ok) return fail(`yapıştırılan planla BAĞLA: ${r.summary}\n${r.lines.join("\n")}`);
+  ok(`yapıştırılan planla paneldeki BAĞLA: ${r.summary}`);
+  checkLinks(seqByGuid("guid-main-edit"), expectBagla(collected, SMALL).groups, "yapıştırılan planla bağlar");
+};
+
+scenarios.panel_guard = async () => {
+  // paneldeki BAĞLA düzen KES planıyla BİREBİR değilse HİÇBİR ŞEY yapmaz
+  await collectThen(smallSpec());
+  await stopHelper();
+  await clickAndWait("btn-bind", yes, doneRe);
+  const h = await startHelper();
+  const S = seqByGuid("guid-main-edit");
+  const nLinks = counters.links;
+  // (a) başka sequence aktif
+  state.activeGuid = "guid-other";
+  const r1 = await h.bindFromPlan({});
+  state.activeGuid = "guid-main-edit";
+  if (r1.ok || !/aktif sequence "Müşteri Kurgusu", plan "Ana Kurgu" için/.test(r1.summary) || counters.links !== nLinks) fail(`başka sequence'ta: ${r1.summary}`);
+  else ok("başka sequence aktifken paneldeki BAĞLA hiçbir şey yapmadı");
+  // (b) KES'ten sonra bir parça 1 kare kaydırıldı
+  const w = S.a.flat().find((c) => c.name.endsWith(".WAV"));
+  w.start += FRAME25;
+  w.end += FRAME25;
+  mockGen++;
+  const r2 = await h.bindFromPlan({});
+  if (r2.ok || !/uyuşmuyor|KES sonrası hâlinde değil/.test(r2.summary) || counters.links !== nLinks) fail(`kaymış parçayla: ${r2.summary}`);
+  else ok(`KES'ten sonra 1 kare kayan parça → paneldeki BAĞLA DURDU (${r2.lines.length} satır fark), hiçbir şey bağlanmadı`);
+  w.start -= FRAME25;
+  w.end -= FRAME25;
+  mockGen++;
+  // (c0) KES'ten sonra bir parça SİLİNDİ: düzen kurala uyuyor ama plandan farklı → planla karşılaştırma durdurur (hiçbir grup bağlanmaz)
+  const snapBefore = deepCopy();
+  const piece = S.a.flat().find((c) => c.name.endsWith(".WAV"));
+  for (const tr of S.a) {
+    const k = tr.indexOf(piece);
+    if (k >= 0) tr.splice(k, 1);
+  }
+  mockGen++;
+  const r2b = await h.bindFromPlan({});
+  if (r2b.ok || !/KES planıyla uyuşmuyor/.test(r2b.summary) || !r2b.lines.some((l) => /planda var, düzende YOK/.test(l)) || counters.links !== nLinks)
+    fail(`silinen parçayla: ${r2b.summary}\n${r2b.lines.join("\n")}`);
+  else ok("KES'ten sonra bir parça silindi → planla karşılaştırma DURDURDU ('planda var, düzende YOK'), hiçbir grup bağlanmadı");
+  restore(snapBefore);
+  mockGen++;
+  // (c) KES geri alındı (Ctrl+Z): kesilmemiş sesler kameralara değiyor / kılavuzlar duruyor → DUR
+  for (let i = 0; i < 4; i++) undo();
+  const r3 = await h.bindFromPlan({});
+  if (r3.ok || !/KES sonrası hâlinde değil/.test(r3.summary) || !r3.lines.some((l) => /KES yapılmamış|KES kılavuzu silmemiş/.test(l)) || counters.links !== nLinks)
+    fail(`KES geri alınmışken: ${r3.summary}\n${r3.lines.join("\n")}`);
+  else ok("KES geri alınmışken paneldeki BAĞLA DURDU (kesilmemiş ses / kılavuz ses duruyor), hiçbir şey bağlanmadı");
+};
+
+// ortak kuralın (yardımcıya SEVK EDİLEN derlenmiş modül: cep-helper/js/spread-core.js) dalları tek tek
+scenarios.core_rules = async () => {
+  const C = (kind, track, s0, e0, name, extra = {}) => ({ kind, track, start: String(sec(s0)), end: String(sec(e0)), inPt: "0", outPt: "0", speed: 1, adjustment: false, disabled: false, name, projName: name, projId: "p-" + name, ...extra });
+  const run = (clips, frame = { vPark: 2, aPark: 4, silTracks: [3] }) => CORE.groupsFromLayout(CORE.classify({ clips }), frame);
+  const camA = C("V", 0, 10, 40, "A038C001_260912AA.MP4");
+  const camB = C("V", 1, 12, 32, "C0101.MP4");
+  const guideA = C("A", 1, 10, 40, "A038C001_260912AA.MP4");
+  const zoom = C("A", 0, 10, 40, "260912_101512_Tr1.WAV");
+  const cases = [
+    ["çapayı BİREBİR kapsayan parça + çakışan kamera → tek grup", run([camA, camB, zoom]), (r) => !r.errors.length && r.groups.length === 1 && r.groups[0].audio.length === 1 && r.groups[0].anchor === camA],
+    ["çapanın İÇİNDE kısa parça → grubun", run([camA, camB, C("A", 0, 15, 30, "260912_101512_Tr1.WAV")]), (r) => !r.errors.length && r.groups[0].audio.length === 1],
+    ["harici sesli grupta kılavuz ses → HATA (KES silmemiş)", run([camA, camB, zoom, guideA]), (r) => r.errors.some((e) => /KES kılavuzu silmemiş/.test(e))],
+    ["harici sessiz grupta kılavuz ses → korunan kamera sesi (grubun)", run([camA, camB, guideA]), (r) => !r.errors.length && r.groups[0].audio.length === 1],
+    ["çapa dışına taşan ama kameraya değen ses → HATA (KES yapılmamış)", run([camA, camB, C("A", 0, 5, 45, "260912_101512_Tr1.WAV")]), (r) => r.errors.some((e) => /KES yapılmamış/.test(e))],
+    ["hiçbir kameraya değmeyen ses (kamerasız oturum) → dokunulmaz", run([camA, camB, zoom, C("A", 2, 100, 160, "260912_120000_Tr1.WAV")]), (r) => !r.errors.length && r.ignored.length === 1 && r.groups[0].audio.length === 1],
+    ["'sil' track'inde ses → HATA", run([camA, camB, zoom, C("A", 3, 10, 40, "260912_101512_TrLR.WAV")]), (r) => r.errors.some((e) => /"sil" kaynağının track'inde/.test(e))],
+    ["park track'indeki kamera ve ses (V ≥ vPark, A ≥ aPark) → gruplara girmez", run([camA, camB, zoom, C("V", 2, 20, 21, "A041C005_260923ZT.MP4"), C("A", 4, 20, 22, "DJI_09_20260912_090000.WAV")]), (r) => !r.errors.length && r.groups.length === 1 && r.groups[0].cams.length === 2 && r.groups[0].audio.length === 1],
+  ];
+  for (const [label, r, test] of cases) test(r) ? ok(`ortak kural: ${label}`) : fail(`ortak kural: ${label} → ${JSON.stringify({ e: r.errors, i: r.ignored, g: r.groups.map((g) => [g.cams.length, g.audio.length]) })}`);
+  const lay = run([camA, camB, zoom]);
+  const items = CORE.layoutGroupItems(lay.groups[0]);
+  const same = CORE.compareLinkGroups([{ label: "G", items }], lay.groups);
+  const diff = CORE.compareLinkGroups([{ label: "G", items: items.slice(1) }], lay.groups);
+  if (same.length || diff.length !== 2) fail(`planla karşılaştırma: aynı → ${same.length}, farklı → ${diff.length}`);
+  else ok("planla karşılaştırma: aynı grup → fark yok; bir öğesi eksik plan → 'planda var, düzende YOK' + 'düzende var, planda YOK'");
+};
+
+scenarios.diag = async () => {
+  // Spread paneli "bağlı değil" yerine GERÇEK hatayı ve adımı yazar
+  setupSync(smallSpec());
+  await stopHelper();
+  fsReal.rmSync(INFO_FILE(), { force: true });
+  const hre = /✓ Yardımcı|✗ Yardımcı bağlı değil/;
+  const o1 = await clickAndWait("btn-helper", yes, hre);
+  if (!/\[bilgi dosyası\] yardımcının bilgi dosyası okunamadı .*Yardımcı hiç BAŞLAMAMIŞ olabilir: Premiere'de Window → Extensions \(Legacy\) → Spread Helper panelini aç.*Ham hata: fs: /.test(o1))
+    fail("bilgi dosyası yokken teşhis yetersiz:\n" + o1);
+  else ok("yardımcı hiç başlamamış: '[bilgi dosyası] … okunamadı (yol) … Window → Extensions (Legacy) → Spread Helper … Ham hata: …'");
+  fsReal.mkdirSync(path.dirname(INFO_FILE()), { recursive: true });
+  fsReal.writeFileSync(INFO_FILE(), JSON.stringify({ port: 47731, token: "a".repeat(64), version: "0.3.2", pid: 4242, startedAt: "2026-09-26T10:00:00Z" }));
+  const o2 = await clickAndWait("btn-helper", yes, hre);
+  if (!/\[bağlantı\] yardımcının bilgi dosyası var \(başlama 2026-09-26T10:00:00Z, süreç 4242\) ama UXP bağlanamadı\. Ham hata: TypeError: /.test(o2)) fail("sunucu yokken teşhis yetersiz:\n" + o2);
+  else ok("bilgi dosyası var ama sunucu yok: '[bağlantı] … UXP bağlanamadı. Ham hata: TypeError: …' + 'son istek' ipucu");
+  fsReal.rmSync(INFO_FILE(), { force: true });
+  const h = await startHelper();
+  M.fetchError = "Permission denied: http://127.0.0.1:47731 is not allowed by the manifest network domains";
+  const o3 = await clickAndWait("btn-helper", yes, hre);
+  M.fetchError = null;
+  if (!/\[bağlantı\] UXP İZİN REDDİ: .*Ham hata: TypeError: Permission denied/.test(o3) || h.state().requests !== 0) fail("izin reddi ayrı tespit edilmedi:\n" + o3);
+  else ok("UXP izin reddi ayrı tespit edildi ('UXP İZİN REDDİ … Ham hata …'); yardımcıya istek ULAŞMADI (son istek yok)");
+  const o4 = await clickAndWait("btn-helper", yes, hre);
+  const lr = h.state().lastRequest;
+  if (!/✓ Yardımcı bağlı \(yardımcı 0\.3\.2/.test(o4) || !lr || lr.url !== "/v1/ping" || lr.status !== 200) fail(`bağlıyken: ${o4} / ${JSON.stringify(lr)}`);
+  else ok(`bağlı: 'yardımcı 0.3.2'; yardımcı panelinde son istek POST /v1/ping → 200 (${lr.ms} ms), Premiere ${h.state().premiere}`);
 };
 
 scenarios.mapping = async () => {

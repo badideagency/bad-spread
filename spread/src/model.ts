@@ -6,6 +6,7 @@
 import { ppro } from "./ppro";
 import type { ProjectItem, TickTime, TrackItem } from "./ppro";
 import type { SeqContext } from "./session";
+import { secOf, trackLabel } from "./core";
 
 export type Kind = "V" | "A";
 
@@ -117,20 +118,7 @@ export function ticks(t: string | bigint): TickTime {
   return ppro.TickTime.createWithTicks(String(t)); // d.ts:L3887 TickTimeStatic.createWithTicks
 }
 
-export const TICKS_PER_SECOND = 254016000000n;
-
-export function big(t: string): bigint {
-  try {
-    return BigInt(t);
-  } catch {
-    return 0n;
-  }
-}
-
-export function secOf(t: string | bigint): string {
-  const b = typeof t === "bigint" ? t : big(t);
-  return (Number(b) / Number(TICKS_PER_SECOND)).toFixed(3);
-}
+export { TICKS_PER_SECOND, big, secOf, trackLabel } from "./core";
 
 async function readClip(item: TrackItem, kind: Kind, loopTrack: number, gen: number, media: boolean): Promise<ClipInfo> {
   const errs: string[] = [];
@@ -231,10 +219,6 @@ export const locKey = (c: ClipInfo) => [c.kind, c.track, c.start, c.end, c.projN
 export function relocate(s: Snapshot, c: ClipInfo): ClipInfo | null {
   const k = locKey(c);
   return s.clips.find((x) => locKey(x) === k) ?? null;
-}
-
-export function trackLabel(kind: Kind, track: number): string {
-  return `${kind}${track + 1}`;
 }
 
 export function fmtClip(c: ClipInfo): string {

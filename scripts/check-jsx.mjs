@@ -57,7 +57,7 @@ const DOCS = {
   end: [`${G}/item/trackitem/#trackitemend`], // "### TrackItem.end"
   ticks: [`${G}/other/time/#timeticks`], // "### Time.ticks"
   projectItem: [`${G}/item/trackitem/#trackitemprojectitem`], // "### TrackItem.projectItem"
-  nodeId: [`${G}/item/trackitem/#trackitemnodeid`], // "### TrackItem.nodeId"
+  nodeId: [`${G}/item/trackitem/#trackitemnodeid`, `${G}/item/projectitem/#projectitemnodeid`], // "### TrackItem.nodeId", "### ProjectItem.nodeId"
   setSelected: [`${G}/item/trackitem/#trackitemsetselected`], // "### TrackItem.setSelected()"
   getSelection: [`${G}/sequence/sequence/#sequencegetselection`], // "### Sequence.getSelection()"
   linkSelection: [`${G}/sequence/sequence/#sequencelinkselection`], // "### Sequence.linkSelection()"
@@ -88,7 +88,7 @@ const JS_AND_OURS = new Set([
   // ES3 yerleşikleri
   "push", "join", "charAt", "charCodeAt", "toString", "slice", "hasOwnProperty", "length",
   // host.jsx'in kendi veri alanları (istek / sonuç nesneleri)
-  "kind", "track", "items", "groups", "id", "sequence", "item", "count", "verified", "detail", "linked", "found", "total", "missing", "st", "en", "nm",
+  "kind", "track", "items", "groups", "id", "sequence", "item", "count", "verified", "detail", "linked", "found", "total", "missing", "st", "en", "nm", "pid",
 ]);
 for (let i = 0; i < tokens.length - 1; i++) {
   const [dot, m] = [tokens[i], tokens[i + 1]];

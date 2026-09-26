@@ -6,7 +6,10 @@
 // düzen yeniden analiz edilmez (harici sesler çapalara bölündüğü için senkron kanıtı artık yok).
 // Plan: bind.ts (saf). Bağlama: linker.ts (TEK modül). Güvenlik: guard.ts (onay → yedek → her transaction sonrası tick düzeyinde
 // doğrulama → tutmazsa DUR + Ctrl+Z sayısı + yedeğin adı; kendi başına düzeltme yok).
-// Yarım iş bırakmamak için sıra: ÖNCE yardımcıya ping (yoksa HİÇBİR ŞEYE dokunmadan dur), sonra kesme ve silme, EN SON bağlama.
+// v0.3.2 — BAĞLANTIDAN BAĞIMSIZ: iki aşama. KES (bu panel, UXP): parçalar + kılavuz / "sil" silme, doğrulanır, kayda ve KES PLANI
+// dosyasına (yardımcıyla ortak klasör) yazılır. BAĞLA: köprü (HTTP) çalışıyorsa hemen, tek tıkla; çalışmıyorsa kullanıcı Spread Helper
+// panelindeki BAĞLA'ya basar. İki yol aynı grupları kullanır: gruplar tek modülden (sessions.ts) — KES'ten ÖNCE beklenen düzende, SONRA
+// gerçek düzende "düzenden gruplar" kuralıyla (yardımcı panelin kullandığı kural) planla birebir karşılaştırılır.
 //
 // Transaction'lar (yalnız gerekenler): [yedek] → TX-1 kesim hazırlığı (park kopyaları + silme) → TX-2 ilk parça (ÖLÇÜM) →
 // TX-3 parçalar → TX-4 yerleştir → bağlama (yardımcı).
@@ -14,6 +17,7 @@
 import { selectExactly } from "./edit";
 import {
   expectBindFinal,
+  expectedFinalClips,
   expectParked,
   firstSlot,
   linkTargets,
@@ -40,13 +44,13 @@ import {
   SpreadStop,
 } from "./guard";
 import { bindState, frameFromRecord, itemKey, itemOf, layoutState, misplacedAgainst, parkedFromRecord } from "./collect";
-import { analyze, partlyParked } from "./sessions";
+import { analyze, compareLinkGroups, groupsFromLayout, partlyParked, type LayoutFrame } from "./sessions";
 import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
-import { getLinker, type LinkGroupResult } from "./linker";
+import { getLinker, HELPER_VERSION, writeLinkPlan, type LinkGroupResult, type PingResult } from "./linker";
 import { big, fmtClip, relocate, secOf, settle, sleep, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
 import { assertSameSequence, requireActive, type SeqContext } from "./session";
 import { getThreshold, loadRecord, mappingFor, recordDrift, saveBindRecord, type BindRecord, type CollectRecord, type LinkItemRec } from "./settings";
-import { log, setHelperStatus } from "./ui";
+import { log, setHelperStatus, setReportText } from "./ui";
 import type { TxOps } from "./edit";
 
 const LINK_UNDO_NOTE =
@@ -144,20 +148,58 @@ async function pingRetry(tries: number): Promise<Awaited<ReturnType<ReturnType<t
 
 type LinkSpec = { id: string; label: string; items: LinkItemRec[] };
 
+/** Kayıttaki çerçeveden yardımcıyla ortak "düzenden gruplar" kuralının çerçevesi. */
+const layoutFrameOf = (rec: CollectRecord): LayoutFrame => ({
+  vPark: rec.frame.vPark,
+  aPark: rec.frame.aPark,
+  silTracks: rec.frame.silTrack.map(([, t]) => t),
+});
+
+/** Düzenden gruplar (yardımcı panelin kuralı) bu gruplarla BİREBİR aynı mı; farklar / hatalar satır satır. */
+function layoutMismatch(clips: ClipInfo[], lf: LayoutFrame, groups: LinkSpec[]): string[] {
+  const lay = groupsFromLayout(classify({ vCount: 0, aCount: 0, clips, warnings: [], gen: 0 }), lf);
+  return [...lay.errors, ...compareLinkGroups(groups, lay.groups)];
+}
+
+/** Yardımcı panelin okuduğu KES planı (JSON). */
+function planText(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame): string {
+  return JSON.stringify(
+    { v: 1, kind: "spread-link-plan", panel: HELPER_VERSION, sequence: { name: ctx.name, guid: ctx.guid }, createdAt: bind.at, frame: lf, groups: bind.groups },
+    null,
+    1
+  );
+}
+
 /**
- * Bağlama — en son; önce tekrar ping (ağır transaction'lardan sonra gecikebilir → birkaç deneme). Klip zamanları bağlamada değişmemeli.
+ * KES planını yardımcı panele bırak: dosyaya yaz (yazılamazsa rapor kutusundan yapıştırılır) ve kullanıcıya ne yapacağını söyle.
+ * @param bridge köprü yok (why) → "yardımcı paneldeki BAĞLA'ya bas"; varsa (null) yalnız dosyayı yaz (panel yolu da hazır dursun)
+ */
+async function handToPanel(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame, why: string | null, cutNow: boolean): Promise<void> {
+  const text = planText(ctx, bind, lf);
+  const w = await writeLinkPlan(text);
+  if (why === null) {
+    log(w.ok ? `   KES planı: ${w.path}` : `   KES planı dosyaya yazılamadı (${w.path}): ${w.detail}`, "dim");
+    return;
+  }
+  setReportText(text);
+  log(`${cutNow ? "✓ KES tamam: kesme/silme tick düzeyinde doğrulandı" : "✓ KES tamam (daha önce yapılmış, bütün öğeler yerinde)"} — ${bind.groups.length} grup bağlanmayı bekliyor.`, "ok");
+  log(`Yardımcıya köprü yok: ${why}`, "warn");
+  if (w.ok) {
+    log(`KES planı yazıldı: ${w.path}`, "dim");
+    log("→ Premiere'de Window → Extensions (Legacy) → Spread Helper panelini aç ve oradaki BAĞLA'ya bas.", "head");
+  } else {
+    log(`KES planı dosyaya YAZILAMADI (${w.path}): ${w.detail}`, "warn");
+    log("→ Plan aşağıdaki rapor kutusunda: 'Raporu kopyala' → Spread Helper panelinde 'Planı yapıştır' → BAĞLA.", "head");
+  }
+}
+
+/**
+ * Bağlama (köprü) — en son. Klip zamanları bağlamada değişmemeli.
  * @returns doğrulanamayan grupların satırları (boşsa hepsi getLinkedItems ile doğrulandı)
  */
 async function linkGroups(ctx: SeqContext, groups: LinkSpec[], sF: Snapshot, edits: boolean): Promise<string[]> {
   const linker = getLinker();
-  const ping2 = await pingRetry(3);
-  setHelperStatus(ping2.ok, ping2.detail);
-  const again = "Yardımcıyı düzelt ve BAĞLA'ya tekrar bas: kesilecek bir şey kalmadığı için yalnız bağlama yapılır.";
-  if (!ping2.ok)
-    throw new SpreadStop(
-      `${edits ? "Kesme/silme BİTTİ ve doğrulandı ama y" : "Y"}ardımcı artık yanıt vermiyor (${ping2.detail}) — bağlama yapılmadı. ${again}`,
-      linker.installHint()
-    );
+  const again = "Yardımcıyı düzelt ve BAĞLA'ya tekrar bas (kesilecek bir şey kalmadığı için yalnız bağlama yapılır) ya da Spread Helper panelindeki BAĞLA'ya bas.";
   await assertSameSequence(ctx);
   log(`Bağlama: ${groups.length} grup yardımcıya gönderiliyor (${linker.name}).`);
   let out: Awaited<ReturnType<typeof linker.link>>;
@@ -200,7 +242,10 @@ function reportLinked(n: number, unverified: string[], executed: string[]): void
 }
 
 /** Kesme/silme önceden yapılıp doğrulanmış (kayıtta) ve bütün öğeler yerinde → YALNIZ bağlama. Düzenleme yok, yedek yok. */
-async function linkOnly(ctx: SeqContext, rec: CollectRecord, bind: BindRecord, s0: Snapshot): Promise<void> {
+async function linkOnly(ctx: SeqContext, rec: CollectRecord, bind: BindRecord, s0: Snapshot, ping: PingResult): Promise<void> {
+  const lf = layoutFrameOf(rec);
+  const mm = layoutMismatch(s0.clips, lf, bind.groups);
+  if (mm.length) throw new SpreadStop("Düzen, kayıttaki KES planıyla uyuşmuyor (yardımcıyla ortak kural) — BAĞLA BAŞLAMADI, hiçbir şey değişmedi.", mm);
   const count = new Map<string, number>();
   for (const c of s0.clips) count.set(itemKey(itemOf(c)), (count.get(itemKey(itemOf(c))) ?? 0) + 1);
   const dup = bind.groups.flatMap((g) => g.items).filter((i) => (count.get(itemKey(i)) ?? 0) > 1);
@@ -211,6 +256,11 @@ async function linkOnly(ctx: SeqContext, rec: CollectRecord, bind: BindRecord, s
     );
   log(`Kayıt: kesme/silme ${bind.at} tarihinde yapıldı ve doğrulandı; ${bind.groups.length} grubun bütün öğeleri yerinde.`, "dim");
   for (const g of bind.groups) log(`  ${g.label}`, "dim");
+  if (!ping.ok) {
+    await handToPanel(ctx, bind, lf, ping.detail, false);
+    forgetStopped();
+    return;
+  }
   const ans = await askUser(
     `BAĞLA: kesme/silme daha önce yapıldı ve doğrulandı (TOPLA kaydı ${rec.at}); ${bind.groups.length} grubun bütün öğeleri yerinde. ` +
       "Kesilmiş düzen yeniden analiz edilmez — kayıttaki gruplar kullanılır. Kesme/silme yok → yalnız bağlama (yedek alınmaz). Devam?"
@@ -221,6 +271,14 @@ async function linkOnly(ctx: SeqContext, rec: CollectRecord, bind: BindRecord, s
   }
   const sF = await snapshot(ctx);
   if (!multisetEqual(s0, sF)) throw new SpreadStop("Onay beklerken timeline değişti. Güvenlik için durduruldu (hiçbir şey yapılmadı).");
+  await handToPanel(ctx, bind, lf, null, false);
+  const p2 = await pingRetry(3);
+  setHelperStatus(p2.ok, p2.detail);
+  if (!p2.ok) {
+    await handToPanel(ctx, bind, lf, p2.detail, false);
+    forgetStopped();
+    return;
+  }
   const unverified = await linkGroups(ctx, bind.groups, sF, false);
   saveBindRecord(ctx.guid, { ...bind, stage: "linked", at: new Date().toISOString() });
   forgetStopped();
@@ -235,11 +293,15 @@ export async function runBind(): Promise<void> {
   const linker = getLinker();
   log("▶ BAĞLA", "head");
   try {
-    // 0) önce yardımcı — yoksa HİÇBİR ŞEYE dokunmadan dur
+    // 0) yardımcı (köprü) — yoksa KES yine yapılır; bağlama Spread Helper panelinden
     const ping = await linker.ping();
     setHelperStatus(ping.ok, ping.detail);
-    if (!ping.ok) throw new SpreadStop(`Yardımcı bağlı değil (${ping.detail}). BAĞLA BAŞLAMADI, hiçbir şeye dokunulmadı.`, linker.installHint());
-    log(`✓ Yardımcı ${ping.detail}`, "ok");
+    if (ping.ok) log(`✓ Yardımcı ${ping.detail}`, "ok");
+    else {
+      log(`Yardımcıya köprü yok: ${ping.detail}`, "warn");
+      for (const h of linker.installHint()) log(`   ${h}`, "dim");
+      log("→ KES yine yapılabilir; bağlama sonra Spread Helper panelindeki BAĞLA ile (ya da köprü düzelince burada).", "dim");
+    }
 
     ctx = await requireActive();
     log(`sequence: "${ctx.name}"`, "dim");
@@ -261,7 +323,7 @@ export async function runBind(): Promise<void> {
         "BAĞLA'dan sonra düzen değişmiş: kesilen parçaların bir kısmı yerinde, bir kısmı değil. BAĞLA BAŞLAMADI, hiçbir şey değişmedi. " +
           "BAĞLA öncesi yedek sequence'la çalış ya da BAĞLA'yı Ctrl+Z ile tamamen geri al."
       );
-    if (bs === "applied") return await linkOnly(ctx, rec, rec.bind!, s0);
+    if (bs === "applied") return await linkOnly(ctx, rec, rec.bind!, s0, ping);
 
     const items = classify(s0);
     const mapping = mappingFor(sourcesOf(items));
@@ -301,6 +363,17 @@ export async function runBind(): Promise<void> {
         if (x.start < y.end && y.start < x.end) pre.push(`${x.id} ile ${y.id} zamanda çakışıyor — önce TOPLA'ya bas (oturumları sırayla dizer)`);
       }
     plan.errors.unshift(...pre);
+    // bağlama grupları + KES'TEN ÖNCE kanıt: yardımcı panelin "düzenden gruplar" kuralı, KES'ten sonra BEKLENEN düzende AYNI grupları
+    // buluyor mu (bulamayacaksa hiçbir şeye dokunmadan dur — iki yol birbirinden sapamaz)
+    const lf = layoutFrameOf(rec);
+    const targets = linkTargets(plan);
+    const groups = targets.filter((t) => t.items.length >= 2);
+    const specs: LinkSpec[] = groups.map((t) => ({ id: t.group.id, label: t.label, items: t.items }));
+    if (!plan.errors.length) {
+      const mm = layoutMismatch(expectedFinalClips(s0, plan), lf, specs);
+      if (mm.length)
+        plan.errors.push(`yardımcıyla ortak "düzenden gruplar" kuralı KES'ten sonra bu grupları bulamayacak (iç tutarsızlık — raporu getir): ${mm.slice(0, 4).join(" | ")}`);
+    }
     // son düzendeki harici klipler (park'takiler ve kamerasız oturumlarınkiler hariç — onlara dokunulmaz) + ait oldukları oturum
     // (oturumlar zamanda ayrık)
     const camless = new Set(plan.camless.map((x) => x.id));
@@ -323,8 +396,6 @@ export async function runBind(): Promise<void> {
     const deletes = [...plan.deleteGuides, ...plan.deleteSil, ...plan.deleteOutside];
     const nPieces = plan.cuts.reduce((n, c) => n + c.pieces.length, 0);
     const edits = deletes.length + plan.cuts.length > 0;
-    const targets = linkTargets(plan);
-    const groups = targets.filter((t) => t.items.length >= 2);
 
     const ans = await askUser(
       `BAĞLA: ${plan.groups.length} grup (çapa = gruptaki en uzun kamera klibi). ` +
@@ -332,7 +403,10 @@ export async function runBind(): Promise<void> {
         `silinecek: ${plan.deleteGuides.length} kılavuz ses, ${plan.deleteSil.length} "sil" kaynağı klibi, ${plan.deleteOutside.length} çapa dışı ses; ` +
         `${[...plan.keptGuides.values()].reduce((n, g) => n + g.length, 0)} kamera sesi (grubunda harici ses yok) korunacak. ` +
         (plan.camless.length ? `${plan.camless.length} kamerasız oturumun (${plan.camless.map((x) => x.id).join(", ")}) seslerine dokunulmayacak. ` : "") +
-        `Kaynaklar: ${plan.keptSources.join(", ") || "yok"}. Kesim yalnız oturum içinde. Sonra ${groups.length} grup yardımcıyla bağlanacak. ` +
+        `Kaynaklar: ${plan.keptSources.join(", ") || "yok"}. Kesim yalnız oturum içinde. ` +
+        (ping.ok
+          ? `Sonra ${groups.length} grup yardımcıyla (köprü) bağlanacak. `
+          : `Yardımcıya köprü YOK → yalnız KES yapılacak; ${groups.length} grup sonra Spread Helper panelindeki BAĞLA ile bağlanacak. `) +
         `${plan.warnings.length ? `${plan.warnings.length} uyarı (günlükte). ` : ""}` +
         (plan.silent.length
           ? `\nSESSİZ KALACAK (kamera sesi silinecek, harici ses kapsamıyor):\n${plan.silent
@@ -438,8 +512,10 @@ export async function runBind(): Promise<void> {
       if (fin.length) throw new SpreadStop("Düzen beklenen hâlde değil.", fin);
       cutsDone = true;
     }
+    // KES'ten SONRA gerçek düzende aynı kanıt (yardımcı panel de tam bunu yapacak)
+    const mmF = layoutMismatch(sF.clips, lf, specs);
+    if (mmF.length) throw new SpreadStop("KES doğrulandı ama yardımcıyla ortak 'düzenden gruplar' kuralı planın gruplarını bulmuyor — bağlama yapılmadı (raporu getir).", mmF);
     // kesme/silme doğrulandı → bağlama grupları kayda (yeniden basınca yalnız bağlama; kesilmiş düzen yeniden analiz edilmez)
-    const specs: LinkSpec[] = groups.map((t) => ({ id: t.group.id, label: t.label, items: t.items }));
     const created: LinkItemRec[] = plan.pieces
       .filter((p) => !p.whole)
       .map((p) => ({ kind: "A", track: p.src.track, start: String(p.start), end: String(p.end), name: itemOf(p.src).name }));
@@ -448,6 +524,17 @@ export async function runBind(): Promise<void> {
     saveBindRecord(ctx.guid, bind);
 
     for (const t of targets.filter((x) => x.items.length < 2)) log(`   ${t.label}: bağlanacak ikinci öğe yok — atlandı`, "dim");
+    // köprü: başta yoksa bir kez, varsa birkaç kez yokla (ağır transaction'lardan sonra ilk yanıt gecikebilir; kullanıcı bu arada
+    // yardımcı paneli açmış olabilir). Yoksa plan yardımcı panele bırakılır — KES tamam, bu bir hata değil.
+    await handToPanel(ctx, bind, lf, null, edits);
+    const p2 = await pingRetry(ping.ok ? 3 : 1);
+    setHelperStatus(p2.ok, p2.detail);
+    if (!p2.ok) {
+      await handToPanel(ctx, bind, lf, p2.detail, edits);
+      forgetStopped();
+      if (executed.length) log(`Beğenmezsen: yedek sequence "${backupName}"i kullan (ya da Ctrl+Z × ${executed.length}).`, "dim");
+      return;
+    }
     const unverified = await linkGroups(ctx, specs, sF, edits);
     saveBindRecord(ctx.guid, { ...bind, stage: "linked" });
     forgetStopped();

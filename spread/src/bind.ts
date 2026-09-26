@@ -253,6 +253,18 @@ export function expectParked(s0: Snapshot, plan: BindPlan, slots: Slot[], trimme
   return exp;
 }
 
+/**
+ * KES'ten sonra BEKLENEN düzenin klipleri (asıl ClipInfo kopyaları; kesilen seslerin yerine parçaları) — yardımcıyla ortak "düzenden
+ * gruplar" kuralını (sessions.groupsFromLayout) KES'TEN ÖNCE, hiçbir şey değişmeden sınamak için.
+ */
+export function expectedFinalClips(s0: Snapshot, plan: BindPlan): ClipInfo[] {
+  const gone = removedSet(plan);
+  const out = s0.clips.filter((c) => !gone.has(c));
+  for (const cut of plan.cuts)
+    for (const p of cut.pieces) out.push({ ...cut.src, start: String(p.start), end: String(p.end), inPt: String(p.inPt), outPt: String(p.outPt) });
+  return out;
+}
+
 export function expectBindFinal(s0: Snapshot, plan: BindPlan): Exp[] {
   const gone = removedSet(plan);
   const exp = s0.clips.filter((c) => !gone.has(c)).map((c) => expOf(c));

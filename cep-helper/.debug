@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CEP uzaktan hata ayıklama (Adobe CEP 12 Cookbook, "Remote Debugging"): bu dosya eklenti klasörünün kökünde durur.
+  Premiere Pro'nun host kimliği PPRO. Panel açıkken Chrome/Edge'de http://localhost:8098 → "Spread Helper" → konsol.
+  (Kayıt defterinde PlayerDebugMode=1 gerekir: HKCU\Software\Adobe\CSXS.12)
+-->
+<ExtensionList>
+  <Extension Id="com.badideagency.spread.helper.panel">
+    <HostList>
+      <Host Name="PPRO" Port="8098" />
+    </HostList>
+  </Extension>
+</ExtensionList>

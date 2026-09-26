@@ -21,7 +21,8 @@
 
 import { cmpStart, fileName, type Classified } from "./classify";
 import { cmpOrder, recordingLabel, type Identity } from "./identity";
-import { big, secOf, trackLabel, type ClipInfo, type Snapshot } from "./model";
+import { big, secOf, trackLabel } from "./core";
+import type { ClipInfo, Snapshot } from "./model";
 
 export const DEFAULT_THRESHOLD = 0.9;
 /** Veto çözümünde "tek anlamlı" sayılmak için kesilen ile kalan bağlar arasındaki en küçük oran farkı. */
@@ -446,17 +447,24 @@ export const anchorLess = (a: ClipInfo, b: ClipInfo): boolean => {
   return big(a.start) < big(b.start);
 };
 
-/** Zamanda çakışan kamera klipleri → gruplar (aralık grafiğinin bağlı bileşenleri). */
-export function makeGroups(cams: ClipInfo[], session: Session, prefix: string): Group[] {
+export interface CamCluster {
+  cams: ClipInfo[];
+  anchor: ClipInfo;
+  start: bigint;
+  end: bigint;
+}
+
+/** Zamanda çakışan kamera klipleri → kümeler (aralık grafiğinin bağlı bileşenleri); çapa = en uzun (anchorLess). */
+export function clusterCams(cams: ClipInfo[]): CamCluster[] {
   const sorted = cams.slice().sort(cmpStart);
-  const groups: Group[] = [];
+  const groups: CamCluster[] = [];
   let cur: ClipInfo[] = [];
   let curEnd = -1n;
   const flush = () => {
     if (!cur.length) return;
     let anchor = cur[0];
     for (const c of cur) if (anchorLess(c, anchor)) anchor = c;
-    groups.push({ id: `${prefix}G${groups.length + 1}`, session, cams: cur, anchor, start: big(cur[0].start), end: curEnd });
+    groups.push({ cams: cur, anchor, start: big(cur[0].start), end: curEnd });
   };
   for (const c of sorted) {
     if (cur.length && big(c.start) < curEnd) {
@@ -470,6 +478,11 @@ export function makeGroups(cams: ClipInfo[], session: Session, prefix: string): 
   }
   flush();
   return groups;
+}
+
+/** Zamanda çakışan kamera klipleri → oturumun grupları. */
+export function makeGroups(cams: ClipInfo[], session: Session, prefix: string): Group[] {
+  return clusterCams(cams).map((c, i) => ({ id: `${prefix}G${i + 1}`, session, ...c }));
 }
 
 /** Oturumun grupları (yalnız o oturumun kameraları). */
@@ -504,3 +517,98 @@ export function describeLinks(a: Analysis, limit = 40): string[] {
 }
 
 export const recordingName = (r: Recording): string => (r.kind === "audio" ? r.label : fileName(r.clips.find((c) => c.kind === "V") ?? r.clips[0]));
+
+// ------------------------------------------------------------------ KES SONRASI DÜZENDEN bağlama grupları (yardımcı panelle ORTAK)
+// Bu bölüm yardımcı panele de derlenir (cep-helper/js/spread-core.js, `npm run build:core`): Spread'in BAĞLA'sı (köprüyle) ile yardımcı
+// paneldeki BAĞLA (köprüsüz) AYNI kuralla AYNI grupları bulur; ikisi de KES planındaki gruplarla birebir karşılaştırır.
+
+/** Yardımcının aradığı öğe: (tür, track, start, end, kaynak adı). */
+export interface LinkItemKey {
+  kind: "V" | "A";
+  track: number;
+  start: string;
+  end: string;
+  name: string;
+}
+
+export const linkItemKey = (i: LinkItemKey): string => [i.kind, i.track, i.start, i.end, i.name].join("|");
+export const linkItemOf = (c: ClipInfo): LinkItemKey => ({ kind: c.kind, track: c.track, start: c.start, end: c.end, name: fileName(c) });
+
+/** KES'in bıraktığı track çerçevesi: V < vPark kamera cihazları, A < aPark eşlenen kaynaklar + kılavuzlar; silTracks = "sil" kaynakları. */
+export interface LayoutFrame {
+  vPark: number;
+  aPark: number;
+  silTracks: number[];
+}
+
+export interface LayoutGroup {
+  anchor: ClipInfo;
+  cams: ClipInfo[];
+  /** harici ses parçaları ya da (grubunda harici ses yoksa) korunan kamera sesleri */
+  audio: ClipInfo[];
+}
+
+/**
+ * KES'ten SONRAKİ düzenden bağlama grupları (analiz yok, yalnız düzen):
+ *  - ana kamera videoları (V track < vPark; park'takiler hariç): zamanda çakışanlar → grup; çapa = en uzun (eşitlikte alt track).
+ *    TOPLA oturumları zamanda ayrık dizdiği için zamanda çakışan kameralar AYNI oturumdadır.
+ *  - harici ses (A track < aPark): çapanın İÇİNDE (start ≥ çapa.start ve end ≤ çapa.end) → o grubun. KES parçası = ses ∩ çapa:
+ *    ses çapayı kapsıyorsa start/end çapayla BİREBİR aynı, kapsamıyorsa çapanın içinde kısa bir parça. Hiçbir çapanın içinde değil ama
+ *    bir ana kameraya değiyorsa HATA (KES yapılmamış / düzen değişmiş); hiçbir ana kameraya değmiyorsa (kamerasız oturum) dokunulmaz.
+ *  - "sil" track'inde klip → HATA (KES silmemiş).
+ *  - kamera sesi: videosuyla aynı kaynak + aynı start/end → grubunda harici ses YOKSA grubun (korunan kamera sesi), VARSA HATA (KES
+ *    kılavuzu silmemiş). Videosuyla aynı yerde olmayan kamera sesi: harici sesli bir grubun çapasına değiyorsa HATA, değilse dokunulmaz.
+ */
+export function groupsFromLayout(items: Classified[], frame: LayoutFrame): { groups: LayoutGroup[]; errors: string[]; ignored: string[] } {
+  const errors: string[] = [];
+  const ignored: string[] = [];
+  const at = (c: ClipInfo) => `${trackLabel(c.kind, c.track)} "${c.name}" [${secOf(c.start)}s–${secOf(c.end)}s]`;
+  const mainCams = items.filter((x) => x.role === "camera" && x.clip.track < frame.vPark).map((x) => x.clip);
+  const groups: LayoutGroup[] = clusterCams(mainCams).map((k) => ({ anchor: k.anchor, cams: k.cams, audio: [] }));
+  const inside = (c: ClipInfo, g: LayoutGroup) => big(c.start) >= big(g.anchor.start) && big(c.end) <= big(g.anchor.end);
+  const touches = (c: ClipInfo, v: ClipInfo) => big(c.start) < big(v.end) && big(v.start) < big(c.end);
+  const sil = new Set(frame.silTracks);
+  for (const x of items.filter((i) => i.role === "external" && i.clip.track < frame.aPark)) {
+    const c = x.clip;
+    if (sil.has(c.track)) {
+      errors.push(`${at(c)}: "sil" kaynağının track'inde — KES silmemiş`);
+      continue;
+    }
+    const g = groups.find((q) => inside(c, q));
+    if (g) g.audio.push(c);
+    else if (mainCams.some((v) => touches(c, v))) errors.push(`${at(c)}: hiçbir çapanın içinde değil ama bir kameraya değiyor — KES yapılmamış ya da düzen değişmiş`);
+    else ignored.push(`${at(c)}: hiçbir kameraya değmiyor (kamerasız oturum) — dokunulmaz`);
+  }
+  const hasExt = new Set(groups.filter((g) => g.audio.length).map((g) => g.anchor));
+  for (const x of items.filter((i) => i.role === "guide" && i.clip.track < frame.aPark)) {
+    const c = x.clip;
+    const g = groups.find((q) => q.cams.some((v) => v.projId === c.projId && v.start === c.start && v.end === c.end));
+    if (g) {
+      if (hasExt.has(g.anchor)) errors.push(`${at(c)}: kamera sesi, grubunda harici ses varken duruyor — KES kılavuzu silmemiş`);
+      else g.audio.push(c);
+    } else if (groups.some((q) => hasExt.has(q.anchor) && touches(c, q.anchor))) errors.push(`${at(c)}: videosuyla aynı yerde olmayan kamera sesi harici sesli bir grupta — KES silmemiş`);
+    else ignored.push(`${at(c)}: videosuyla aynı yerde olmayan kamera sesi — dokunulmaz`);
+  }
+  return { groups: groups.sort((a, b) => cmpStart(a.anchor, b.anchor)), errors, ignored };
+}
+
+/** Grubun öğeleri (bağlama isteği için). */
+export const layoutGroupItems = (g: LayoutGroup): LinkItemKey[] => [...g.cams.slice().sort(cmpStart), ...g.audio.slice().sort(cmpStart)].map(linkItemOf);
+
+/**
+ * KES planındaki gruplar ile düzenden bulunan gruplar BİREBİR aynı mı (öğe kümeleri; sıra önemsiz). Yalnız ≥ 2 öğeli gruplar
+ * bağlanır (tek öğeli grup iki tarafta da atlanır). Farklar satır satır; boşsa aynı.
+ */
+export function compareLinkGroups(planned: { label: string; items: LinkItemKey[] }[], found: LayoutGroup[]): string[] {
+  const sig = (items: LinkItemKey[]) => items.map(linkItemKey).sort().join("\n");
+  const want = new Map(planned.filter((g) => g.items.length >= 2).map((g) => [sig(g.items), g.label]));
+  const got = new Map<string, string>();
+  for (const g of found) {
+    const items = layoutGroupItems(g);
+    if (items.length >= 2) got.set(sig(items), `çapa "${fileName(g.anchor)}" (${items.length} öğe)`);
+  }
+  const out: string[] = [];
+  for (const [k, label] of want) if (!got.has(k)) out.push(`planda var, düzende YOK: ${label}`);
+  for (const [k, label] of got) if (!want.has(k)) out.push(`düzende var, planda YOK: ${label}`);
+  return out;
+}

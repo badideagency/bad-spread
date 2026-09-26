@@ -1,5 +1,6 @@
 // Spread Helper — ExtendScript tarafı (Premiere Pro). ES3: JSON / Array.indexOf / forEach YOK (bu dosya `npm run check:jsx` ile
-// ES3 olarak ayrıştırılır). Yalnız iki fonksiyon dışarıya açık: spreadHelper_ping(), spreadHelper_link(req).
+// ES3 olarak ayrıştırılır). Yalnız üç fonksiyon dışarıya açık: spreadHelper_ping(), spreadHelper_read() (salt okuma: aktif sequence'ın
+// klipleri — yardımcı paneldeki BAĞLA grupları düzenden bulur), spreadHelper_link(req).
 // Her Premiere DOM çağrısının yanında "docs:" yorumu = Premiere Pro Scripting Guide (https://ppro-scripting.docsforadobe.dev/,
 // kaynağı github.com/docsforadobe/premiere-scripting-guide) sayfası; kılavuzda OLMAYAN tek üye getLinkedItems() için Adobe'nin
 // PProPanel örneğindeki tip tanımı. `npm run check:jsx` her DOM üyesinin yanında bu yorumun olduğunu denetler.
@@ -12,7 +13,7 @@
 // Bağlama: seçimi temizle → grubun kliplerini setSelected(true, true) → seçimi say → Sequence.linkSelection() → seçimi temizle →
 // her klibin getLinkedItems() sonucu gruptaki diğer bütün klipleri içeriyor mu (doğrulama).
 
-var SPREAD_HELPER_JSX = "0.3.0";
+var SPREAD_HELPER_JSX = "0.3.2";
 
 function spreadHelper_q(s) {
   var out = "\"";
@@ -111,7 +112,8 @@ function spreadHelper_index(seq, kind, track, cache) {
         item: c,
         st: String(c.start.ticks), // docs: https://ppro-scripting.docsforadobe.dev/item/trackitem/#trackitemstart , https://ppro-scripting.docsforadobe.dev/other/time/#timeticks
         en: String(c.end.ticks), // docs: https://ppro-scripting.docsforadobe.dev/item/trackitem/#trackitemend
-        nm: pi ? String(pi.name) : null // docs: https://ppro-scripting.docsforadobe.dev/item/projectitem/#projectitemname
+        nm: pi ? String(pi.name) : null, // docs: https://ppro-scripting.docsforadobe.dev/item/projectitem/#projectitemname
+        pid: pi ? String(pi.nodeId) : null // docs: https://ppro-scripting.docsforadobe.dev/item/projectitem/#projectitemnodeid
       });
     }
   }
@@ -131,6 +133,31 @@ function spreadHelper_find(seq, it, cache) {
     }
   }
   return { item: n === 1 ? hit : null, count: n };
+}
+
+/**
+ * SALT OKUMA: aktif sequence'ın bütün klipleri { kind, track, start, end, name (kaynak adı), pid (proje öğesi nodeId) }.
+ * Yardımcı paneldeki BAĞLA bunlardan grupları Spread'in AYNI kuralıyla bulur (js/spread-core.js) ve KES planıyla karşılaştırır.
+ */
+function spreadHelper_read() {
+  try {
+    var seq = spreadHelper_activeSequence();
+    if (!seq) return spreadHelper_err("aktif sequence yok");
+    var seqName = String(seq.name); // docs: https://ppro-scripting.docsforadobe.dev/sequence/sequence/#sequencename
+    var out = [];
+    var cache = {};
+    var kinds = ["V", "A"];
+    for (var k = 0; k < kinds.length; k++) {
+      var n = spreadHelper_tracks(seq, kinds[k]).numTracks; // docs: https://ppro-scripting.docsforadobe.dev/collection/trackcollection/#trackcollectionnumtracks
+      for (var t = 0; t < n; t++) {
+        var rows = spreadHelper_index(seq, kinds[k], t, cache);
+        for (var i = 0; i < rows.length; i++) out.push({ kind: kinds[k], track: t, start: rows[i].st, end: rows[i].en, name: rows[i].nm, pid: rows[i].pid });
+      }
+    }
+    return spreadHelper_json({ ok: true, sequence: seqName, clips: out });
+  } catch (e) {
+    return spreadHelper_err(e);
+  }
 }
 
 function spreadHelper_selection(seq) {

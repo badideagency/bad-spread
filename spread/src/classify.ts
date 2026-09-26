@@ -7,7 +7,8 @@
 //   BİLİNMEYEN: geri kalan her şey (grafik, metin, renk, ayar katmanı, videosu timeline'da olmayan kamera sesi…) → DOKUNULMAZ.
 
 import { identify, sourceCompare, sourceKey, type Identity } from "./identity";
-import { big, trackLabel, type ClipInfo, type Snapshot } from "./model";
+import { big, trackLabel } from "./core";
+import type { ClipInfo, Snapshot } from "./model";
 
 export type Role = "camera" | "guide" | "external" | "unknown";
 

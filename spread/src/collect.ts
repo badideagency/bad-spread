@@ -11,11 +11,11 @@
 //   Bilinmeyen öğeler (grafik…) YERİNDE kalır; hedef yerle çakışırsa plan HATASI.
 // Taşıma (topla.ts): park (+P) → yerleştir (Δ − P, dikey). İlk oturum hem park'ta hem yerleştirmede TEK BAŞINA (ölçüm).
 
-import { devicesOf, fileName, sourcesOf, where, type Classified, type DeviceInfo } from "./classify";
+import { devicesOf, sourcesOf, where, type Classified, type DeviceInfo } from "./classify";
 import { ceilTo } from "./guard";
 import { expOf, overlapsIn, type Exp, type OvItem } from "./layout";
 import { big, secOf, trackLabel, type ClipInfo, type Kind, type Snapshot } from "./model";
-import type { Analysis, Recording, Session } from "./sessions";
+import { linkItemKey, linkItemOf, type Analysis, type Recording, type Session } from "./sessions";
 import type { CollectRecord, LinkItemRec, Target } from "./settings";
 
 // ------------------------------------------------------------------ track çerçevesi
@@ -128,9 +128,9 @@ export function misplacedAgainst(f: Frame, items: Classified[], parked: Set<Clip
   return items.filter((x) => x.role !== "unknown" && !parked.has(x.clip) && frameTrack(f, x, ch) !== x.clip.track);
 }
 
-/** Yardımcının arama anahtarı (tür, track, start, end, kaynak adı). */
-export const itemKey = (i: LinkItemRec): string => [i.kind, i.track, i.start, i.end, i.name].join("|");
-export const itemOf = (c: ClipInfo): LinkItemRec => ({ kind: c.kind, track: c.track, start: c.start, end: c.end, name: fileName(c) });
+/** Yardımcının arama anahtarı (tür, track, start, end, kaynak adı) — tek tanım sessions.ts'te (yardımcı panelle ortak). */
+export const itemKey = (i: LinkItemRec): string => linkItemKey(i);
+export const itemOf = (c: ClipInfo): LinkItemRec => linkItemOf(c);
 
 /**
  * Kayıttaki BAĞLA aşaması okunan düzende geçerli mi:

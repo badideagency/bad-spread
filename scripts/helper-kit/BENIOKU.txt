@@ -1,24 +1,35 @@
-﻿Spread Helper (v0.3.0) — görünmez CEP yardımcısı
-================================================
+﻿Spread Helper (v0.3.2) — Premiere Pro için GÖRÜNÜR CEP paneli
+===========================================================
 
-Ne yapar: Premiere açılınca arka planda kendiliğinden başlar (penceresi yok). Spread panelinin BAĞLA düğmesi,
-klipleri bağlamak için ona bağlanır (yalnız bu bilgisayarın içinden: 127.0.0.1:47731). İnternete açık kapısı yoktur.
+Ne yapar: Window → Extensions (Legacy) → Spread Helper menüsünden açılan küçük bir panel. Açık olduğu sürece:
+  - Spread panelinin BAĞLA düğmesi ona bağlanır (yalnız bu bilgisayarın içinden: localhost:47731) ve klipleri tek tıkla bağlar;
+  - bağlanamazsa, Spread KES'ten sonra planı dosyaya yazar ve bu paneldeki BAĞLA düğmesi bağlar (bağlantı gerekmez).
+Panel kapanınca sunucusu da durur: paneli çalışma alanında (workspace) açık bırak, Premiere onu hatırlar.
 
-1) En kolay yol: release/spread-helper.zxp dosyasını aescripts "ZXP/UXP Installer"ın penceresine sürükle-bırak.
-   (Bu zip'e gerek kalmaz.)
-
-2) ZXP Installer yoksa (bu zip):
+1) Kurulum (bu zip — ANA YOL):
    - Zip'i bir klasöre çıkart.
-   - KUR.cmd'ye çift tıkla (Windows "bilinmeyen yayıncı" derse: Ek bilgi → Yine de çalıştır).
-     Yardımcıyı %APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper klasörüne kopyalar.
-   - Premiere Pro'yu kapatıp aç.
+   - PlayerDebugMode_CSXS12.reg dosyasına çift tıkla → Evet. (GEREKLİ: yardımcı imzasızdır; Premiere imzasız CEP panellerini
+     yalnız bu geliştirici kipinde yükler. DİKKAT: bu, senin kullanıcı hesabındaki TÜM CEP 12 eklentileri için imza denetimini
+     gevşetir. Geri almak: regedit → HKEY_CURRENT_USER\Software\Adobe\CSXS.12 → PlayerDebugMode değerini sil ya da "0" yap.)
+   - KUR.cmd'ye çift tıkla (Windows "bilinmeyen yayıncı" derse: Ek bilgi → Yine de çalıştır). Yardımcıyı
+     %APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper klasörüne kopyalar ve PlayerDebugMode'u kontrol eder.
+   - Premiere Pro'yu KAPATIP aç.
 
-3) Spread panelinde hâlâ "Yardımcı: bağlı değil" yazıyorsa:
-   - PlayerDebugMode_CSXS12.reg dosyasına çift tıkla → Evet (CEP 12'nin imza denetimini geliştirici kipine alır).
-     DİKKAT: bu, senin kullanıcı hesabındaki TÜM CEP 12 eklentileri için imza denetimini gevşetir (imzasız eklenti de yüklenir).
-     Yardımcı imzalı olduğu için çoğu durumda gerekmez. Geri almak: regedit → HKEY_CURRENT_USER\Software\Adobe\CSXS.12 →
-     PlayerDebugMode değerini sil ya da "0" yap (yardımcı yalnız bu ayarla çalışıyorsa o zaman "bağlı değil" olur).
-   - Premiere Pro'yu kapatıp aç, panelde "Yardımcıyı kontrol et"e bas.
-   - Yine olmazsa: %TEMP%\spread-helper.log dosyasını bana getir.
+2) Aç: Window → Extensions (Legacy) → Spread Helper. Panelde:
+   - "● dinliyor: localhost:47731" → sunucu çalışıyor.
+   - Premiere sürümü, yardımcı sürümü, "son istek" (Spread panelinden gelen son istek).
+
+3) Spread panelinde "Yardımcıyı kontrol et"e bas → "Yardımcı: bağlı". Bağlı değilse panel GERÇEK hatayı yazar:
+   - "[bilgi dosyası] …"  → yardımcı hiç başlamamış (panel açık değil ya da yüklenmedi, adım 4).
+   - "[bağlantı] UXP İZİN REDDİ …" → Spread'in ağ izni sorunu: satırı aynen getir.
+   - "[bağlantı] … Ham hata …" → yardımcı paneldeki "son istek" değişmediyse istek hiç ulaşmadı: satırı getir.
+   Köprü çalışmasa da olur: Spread'de BAĞLA → KES yapılır → bu paneldeki BAĞLA'ya bas.
+
+4) Menüde Spread Helper yoksa ya da panel boş / "Node.js kapalı" diyorsa:
+   - PlayerDebugMode ayarlı mı (adım 1)? Premiere'i tamamen kapatıp açtın mı?
+   - CEP_GUNLUK_AC.reg'e çift tıkla → Evet, Premiere'i kapatıp aç, tekrar dene; sonra %TEMP% klasöründeki CEP12-PPRO.log
+     dosyasını bana getir (yardımcının neden yüklenmediğini yazar).
+   - Uzaktan konsol: panel açıkken Chrome ya da Edge'de http://localhost:8098 adresini aç → "Spread Helper" → Console.
+   - %TEMP%\spread-helper.log varsa onu da getir (yardımcı başladıysa oluşur).
 
 Kaldırmak: %APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper klasörünü sil.

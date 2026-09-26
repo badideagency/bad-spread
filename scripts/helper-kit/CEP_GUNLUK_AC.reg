@@ -1,0 +1,9 @@
+Windows Registry Editor Version 5.00
+
+; Spread Helper - TESHIS: CEP 12 ayrintili gunlugu (Adobe CEP 12 "Debugging Handbook": LogLevel 6).
+; Premiere'i yeniden baslatinca gunluk %TEMP% klasorunde: CEP12-PPRO.log (ve CEPHtmlEngine12-PPRO-*.log).
+; "Signature verification failed" / "filtered out" gibi satirlar yardimcinin neden yuklenmedigini soyler.
+; Geri almak icin: regedit ile LogLevel degerini sil.
+
+[HKEY_CURRENT_USER\Software\Adobe\CSXS.12]
+"LogLevel"="6"
