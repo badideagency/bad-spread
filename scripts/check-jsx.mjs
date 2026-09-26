@@ -88,7 +88,7 @@ const JS_AND_OURS = new Set([
   // ES3 yerleşikleri
   "push", "join", "charAt", "charCodeAt", "toString", "slice", "hasOwnProperty", "length",
   // host.jsx'in kendi veri alanları (istek / sonuç nesneleri)
-  "kind", "track", "items", "groups", "id", "sequence", "item", "count", "verified", "detail", "linked", "found", "total", "missing",
+  "kind", "track", "items", "groups", "id", "sequence", "item", "count", "verified", "detail", "linked", "found", "total", "missing", "st", "en", "nm",
 ]);
 for (let i = 0; i < tokens.length - 1; i++) {
   const [dot, m] = [tokens[i], tokens[i + 1]];

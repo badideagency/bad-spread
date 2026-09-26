@@ -13,7 +13,11 @@
 export const HELPER_PORT = 47731;
 export const HELPER_VERSION = "0.3.0";
 const PING_TIMEOUT_MS = 3000;
-const LINK_TIMEOUT_MS = 180000;
+/** Bağlama grupları yardımcıya parti parti gönderilir (uzun çekimlerde tek istek zaman aşımına uğramasın). */
+const LINK_BATCH = 8;
+const LINK_TIMEOUT_MS = 90000;
+/** Yardımcının (cep-helper/js/helper.js) kabul ettiği sınırlar — iki dosyada AYNI olmalı. BAĞLA planı kesmeden ÖNCE denetler. */
+export const LINK_LIMITS = { groupItems: 256, groupsPerRequest: 64, name: 1024, sequenceName: 512 };
 
 export interface LinkItem {
   kind: "V" | "A";
@@ -104,7 +108,9 @@ async function readHelperInfo(): Promise<HelperInfo> {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const uxp = require("uxp") as { storage: { localFileSystem: { getEntryWithUrl(u: string): Promise<{ read(o?: object): Promise<unknown> }> } } };
-      const entry = await uxp.storage.localFileSystem.getEntryWithUrl("file:" + path.replace(/\\/g, "/")); // uxp.d.ts:L516 FileSystemProvider.getEntryWithUrl
+      const fwd = path.replace(/\\/g, "/");
+      // Adobe dosya sistemi tarifi: Windows'ta "file:/C:/Users/…", macOS'ta "file:/Users/…"
+      const entry = await uxp.storage.localFileSystem.getEntryWithUrl(fwd.startsWith("/") ? "file:" + fwd : "file:/" + fwd); // uxp.d.ts:L516 FileSystemProvider.getEntryWithUrl
       const r = await entry.read(); // uxp.d.ts:L345 File.read
       if (typeof r === "string") text = r;
     } catch (e) {
@@ -168,9 +174,21 @@ class CepLinker implements Linker {
   }
 
   async link(sequenceName: string, groups: LinkGroup[]): Promise<LinkOutcome> {
-    const j = await post("/v1/link", { sequence: sequenceName, groups }, LINK_TIMEOUT_MS);
-    const results = Array.isArray(j.results) ? (j.results as LinkGroupResult[]) : [];
-    return { ok: true, sequence: String(j.sequence ?? "?"), results, detail: String(j.detail ?? "") };
+    const results: LinkGroupResult[] = [];
+    let sequence = "?";
+    for (let i = 0; i < groups.length; i += LINK_BATCH) {
+      const batch = groups.slice(i, i + LINK_BATCH);
+      try {
+        const j = await post("/v1/link", { sequence: sequenceName, groups: batch }, LINK_TIMEOUT_MS);
+        sequence = String(j.sequence ?? sequence);
+        if (Array.isArray(j.results)) results.push(...(j.results as LinkGroupResult[]));
+      } catch (e) {
+        // bu parti ve sonrakiler gönderilmedi / yanıt yok → sonuçsuz kalır (BAĞLA hangi grupların bağlanmadığını raporlar)
+        const why = e instanceof Error ? e.message : String(e);
+        return { ok: false, sequence, results, detail: `${i / LINK_BATCH + 1}. parti (${batch.map((g) => g.id).join(", ")}) başarısız: ${why}` };
+      }
+    }
+    return { ok: true, sequence, results, detail: "" };
   }
 
   installHint(): string[] {

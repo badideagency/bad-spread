@@ -47,13 +47,19 @@ export function deviceOf(name: string): string {
   return head || "#";
 }
 
-/** "260912_101512_Tr1.WAV" → "Tr1"; "…_TrLR.WAV" → "TrLR"; eki yoksa NO_CHANNEL */
+/**
+ * "260912_101512_Tr1.WAV" → "Tr1"; "…_TrLR.WAV" → "TrLR"; Zoom H serisi "…_LR.WAV" / "…_MS.WAV" → "LR" / "MS"; eki yoksa NO_CHANNEL.
+ * Yalnız bilinen biçimler (Tr + sayı | LR | MS | MIX | L | R): "_trim" gibi rastgele ekler kanal sayılmaz.
+ */
 export function channelOf(name: string): string {
-  const m = /_tr([A-Za-z0-9]+)$/i.exec(baseOf(name));
-  return m ? `Tr${m[1].toUpperCase()}` : NO_CHANNEL;
+  const b = baseOf(name);
+  const tr = /_tr(\d+|lr|ms|mix|l|r)$/i.exec(b);
+  if (tr) return `Tr${tr[1].toUpperCase()}`;
+  const zoom = /_(lr|ms)$/i.exec(b);
+  return zoom ? zoom[1].toUpperCase() : NO_CHANNEL;
 }
 
-/** Kanal sırası: Tr1, Tr2, … (sayısal) → TrLR, TrMS … (alfabetik) → (eksiz) */
+/** Kanal sırası: Tr1, Tr2, … (sayısal) → TrLR, TrMS, LR … (alfabetik) → (eksiz) */
 export function channelCompare(a: string, b: string): number {
   const rank = (c: string) => (c === NO_CHANNEL ? 2 : /^Tr\d+$/.test(c) ? 0 : 1);
   const ra = rank(a);

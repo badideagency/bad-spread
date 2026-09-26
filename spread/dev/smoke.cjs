@@ -29,7 +29,7 @@ const M0 = { broken: false, nonseq: false, nobackup: false, backupActive: false,
 const M = { ...M0 };
 let pendingUndo = 0;
 const hooks = { onCloneSeq: null, onGetActive: null, beforeRemoveApply: null };
-const counters = { setActions: new Map(), overwrites: 0, clones: 0, txNames: [] };
+const counters = { setActions: new Map(), overwrites: 0, clones: 0, txNames: [], cloneOffsets: [] };
 
 // ------------------------------------------------------------ model
 let nextId = 1;
@@ -118,7 +118,14 @@ function wrapItem(id) {
     stale(w);
     need(id);
     counters.setActions.set(id, [...(counters.setActions.get(id) ?? []), name]);
-    return { apply: () => fn(need(id), BigInt(t.ticks)) };
+    return {
+      apply: () => {
+        const f = need(id);
+        fn(f, BigInt(t.ticks));
+        // en kötü durum: set sonrası aynı track'te çakışan klip EZİLİR (Premiere'in davranışı ölçülmedi)
+        f.grp[f.t] = f.grp[f.t].filter((x) => x.id === id || x.end <= f.c.start || x.start >= f.c.end);
+      },
+    };
   };
   Object.assign(w, {
     getStartTime: g((f) => mkTT(f.c.start)),
@@ -142,7 +149,14 @@ function wrapItem(id) {
         c.end = t + d;
       } else (c.inPt += t - c.start), (c.start = t); // "baş kırpma" anlamı
     }),
-    createSetEndAction: act("end", ({ c }, t) => M.setSem !== "noop" && ((c.outPt += t - c.end), (c.end = t))),
+    createSetEndAction: act("end", ({ c }, t) => {
+      if (M.setSem === "noop") return;
+      if (M.setSem === "endmove") {
+        const d = c.end - c.start; // "end taşır" anlamı: süre ve in/out aynı, klip sola/sağa kayar
+        c.end = t;
+        c.start = t - d;
+      } else (c.outPt += t - c.end), (c.end = t); // "son kırpma" anlamı
+    }),
   });
   return w;
 }
@@ -171,6 +185,7 @@ function wrapSequence(guid) {
       return s().v.length;
     },
     getAudioTrackCount: async () => s().a.length,
+    getTimebase: async () => String(FRAME25), // kare başına tick (25 fps)
     getVideoTrack: async (i) => wrapTrack(guid, "V", i),
     getAudioTrack: async (i) => wrapTrack(guid, "A", i),
     getEndTime: async () => {
@@ -209,6 +224,7 @@ const editorFor = (seqW) => {
           const grp = f.c.kind === "V" ? seq().v : seq().a;
           const t = cloneTarget(grp, f.t + (f.c.kind === "V" ? vOff : aOff), f.c.kind);
           const o = BigInt(off.ticks);
+          counters.cloneOffsets.push(o);
           place(grp, t, { ...f.c, id: nextId++, start: f.c.start + o, end: f.c.end + o, linkId: null });
           counters.clones++;
         },
@@ -866,6 +882,7 @@ function setupSync(spec) {
   undoStack.length = 0;
   counters.txNames = [];
   counters.links = 0;
+  counters.cloneOffsets = [];
   counters.setActions.clear();
   hostile.quit = false;
   lsStore.clear();
@@ -993,21 +1010,22 @@ function checkLinks(seq, groups, pieces, label) {
   if (!bad) ok(`${label}: ${groups.length} grup — her grubun kameraları + ses parçaları tek bağda, grup dışı bağ yok`);
 }
 
-const doneRe = /✓ SPREAD tamam|✗ SPREAD DURDU|✓ TOPLA tamam|✗ TOPLA DURDU|✓ BAĞLA tamam|✗ BAĞLA DURDU|İptal edildi|Zaten dağıtılmış|Zaten toplanmış|Durum raporu hazır/;
+const doneRe = /✓ SPREAD tamam|✗ SPREAD DURDU|✓ TOPLA tamam|✗ TOPLA DURDU|✓ BAĞLA tamam|⚠ BAĞLA bitti|✗ BAĞLA DURDU|İptal edildi|Zaten dağıtılmış|Zaten toplanmış|Durum raporu hazır/;
 const txOf = (prefix) => counters.txNames.filter((n) => n.startsWith(prefix));
-function uncheck(ch) {
+function setChan(ch, on) {
   const box = els.channels;
   const labels = box?.children ?? [];
   for (const l of labels) {
     const cb = l.children?.[0];
     if (cb && cb.id === `chan-${ch}`) {
-      cb.checked = false;
+      cb.checked = on;
       cb.fire("change");
       return true;
     }
   }
   return false;
 }
+const uncheck = (ch) => setChan(ch, false);
 async function scan() {
   markLog();
   els["btn-channels"].click();
@@ -1032,6 +1050,9 @@ scenarios.sync = async () => {
   checkExactly(S(), ec.exp, "TOPLA (sentetik gerçek senkron: 22 kamera + 12 WAV + grafik)");
   if (ser(S().v[0].filter((c) => c.name === "YAĞ SIVISI")) !== ser(JSON.parse(graphicBefore, rev).filter((c) => c.name === "YAĞ SIVISI"))) fail("grafik değişti");
   else ok('V1\'deki "YAĞ SIVISI" grafiğine dokunulmadı (V1\'de, zamanı aynı)');
+  const parkOffs = counters.cloneOffsets.filter((o) => o > 0n);
+  if (!parkOffs.length || parkOffs.some((o) => o % FRAME25 !== 0n)) fail(`TOPLA park ofseti kare hizalı değil: ${parkOffs.slice(0, 3)}`);
+  else ok(`TOPLA park ofseti kare hizalı (${parkOffs[0]} tick = ${parkOffs[0] / FRAME25} kare)`);
   if (txOf("TOPLA").join(",") !== "TOPLA: yedek sequence,TOPLA: park,TOPLA: yerleştir") fail(`TOPLA transaction'ları: ${counters.txNames.join(", ")}`);
   else ok("TOPLA transaction'ları: yedek → park → yerleştir");
   if (!/Kontrol et, sonra BAĞLA'ya bas\./.test(out)) fail("'Kontrol et, sonra BAĞLA'ya bas' mesajı yok");
@@ -1222,8 +1243,9 @@ scenarios.linksource = async () => {
   await startHelper();
   M.linkedSemantics = "source"; // getLinkedItems bağ yerine aynı kaynaklı klipleri döndürüyor
   const out = await clickAndWait("btn-bind", yes, doneRe);
-  if (!/✓ BAĞLA tamam: 2 grup bağlandı \(2 grubun bağı doğrulanamadı\)/.test(out)) fail("getLinkedItems belirsizken 'doğrulanamadı' denmedi:\n" + out);
-  else ok("getLinkedItems bağlamayla değişmiyorsa 'doğrulandı' UYDURULMAZ → 'doğrulanamadı'");
+  if (!/⚠ BAĞLA bitti ama 2\/2 grubun bağı DOĞRULANAMADI/.test(out) || /✓ BAĞLA tamam/.test(out) || !/bir kamera klibine tıkla/.test(out))
+    fail("getLinkedItems belirsizken 'doğrulanamadı' denmedi:\n" + out);
+  else ok("getLinkedItems bağlamayla değişmiyorsa 'tamam' DENMEZ → '⚠ bağ doğrulanamadı' + kullanıcıya kontrol talimatı");
 };
 
 scenarios.rebind = async () => {
@@ -1259,6 +1281,8 @@ scenarios.channels = async () => {
   if (!/Ayar kaydedilemedi/.test(newLog() + els.log.children.map((c) => c.textContent).join("\n"))) fail("localStorage hatası yakalanmadı");
   else ok("localStorage erişilemezse panel çökmez; ayar bu oturumda geçerli");
   lsBroken = false;
+  setChan("Tr2", true); // oturum ayarını geri aç (sonraki senaryolar etkilenmesin)
+  if (lsStore.get("spread.disabledChannels.v1") !== "[]") fail(`ayar geri açılmadı: ${lsStore.get("spread.disabledChannels.v1")}`);
 };
 
 scenarios.security = async () => {
@@ -1314,6 +1338,105 @@ scenarios.security = async () => {
   await stopHelper();
   if (fsReal.existsSync(info && h.infoFile)) fail("durdurunca bilgi dosyası silinmedi");
   else ok("durdurunca token dosyası silindi");
+};
+
+scenarios.endmove = async () => {
+  // set anlamı "end klibi taşır" + set sonrası çakışan klip EZİLİR (en kötü durum): yuvaların iki yanındaki boşluk sayesinde
+  // hiçbir gerçek klibe / komşu yuvaya değmemeli ve parçalar doğru çıkmalı
+  const spec = smallSpec({
+    wavs: [
+      { name: "260912_101512_Tr1.WAV", start: sec(8) + 12345n, dur: sec(80), inPt: sec(3) }, // iki grup → 2 parça
+      { name: "260912_101512_Tr2.WAV", start: sec(9), dur: sec(79) },
+    ],
+  });
+  const collected = await collectThen(spec);
+  await startHelper();
+  M.setSem = "endmove";
+  const out = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ BAĞLA tamam/.test(out)) fail("'end taşır' anlamında BAĞLA tamamlanmadı:\n" + out.split("\n").filter((l) => /DURDU|•/.test(l)).join("\n"));
+  const eb = expectBind(collected, spec, []);
+  checkExactly(seqByGuid("guid-main-edit"), eb.exp, "set anlamı 'end taşır' + ezme: gerçek kliplere dokunulmadı, parçalar doğru");
+};
+
+scenarios.undomid = async () => {
+  const spec = smallSpec();
+  setupSync(spec);
+  const tracksOf = () => ser(seqByGuid("guid-main-edit").v) + ser(seqByGuid("guid-main-edit").a);
+  const before = tracksOf();
+  M.undoAfterTx = "TOPLA: park"; // kullanıcı park'tan sonra Ctrl+Z basar
+  const out = await clickAndWait("btn-collect", yes, doneRe);
+  if (!/"park" adımı geri alınmış görünüyor/.test(out) || !/Timeline'da değişiklik yapılmadı/.test(out)) fail("adımlar arası Ctrl+Z yanlış sayıldı:\n" + out);
+  else ok("TOPLA: kullanıcı park'ı geri aldı → DURDU, adım düşüldü, ek Ctrl+Z istenmedi");
+  if (tracksOf() !== before) fail("asıl düzen değişmiş kaldı");
+  else ok("timeline asıl hâlinde");
+};
+
+scenarios.stale = async () => {
+  const spec = smallSpec();
+  await collectThen(spec);
+  const afterCollect = ser(seqByGuid("guid-main-edit"));
+  await startHelper();
+  M.setSem = "noop";
+  await clickAndWait("btn-bind", yes, doneRe); // ilk parçada DURUR (2 adım uygulanmış)
+  M.setSem = "trim";
+  const n = counters.txNames.length;
+  const out = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/YARIM hâlde/.test(out) || counters.txNames.length !== n) fail("yarım kalmış düzende BAĞLA yeniden başladı:\n" + out);
+  else ok("geri alınmamış yarım düzende BAĞLA BAŞLAMADI (park kopyaları 'çapa dışı' sanılıp silinmedi)");
+  undo();
+  undo();
+  if (ser(seqByGuid("guid-main-edit")) !== afterCollect) fail("Ctrl+Z × 2 geri getirmedi");
+  const out2 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ BAĞLA tamam/.test(out2)) fail("geri aldıktan sonra BAĞLA çalışmadı:\n" + out2);
+  else ok("Ctrl+Z × 2 sonrası BAĞLA normal çalıştı");
+};
+
+scenarios.notcollected = async () => {
+  setupSync(smallSpec()); // SPREAD + senkron sonrası, TOPLA YOK (kılavuzlar hâlâ kameralara bağlı)
+  await startHelper();
+  const before = JSON.stringify(state.sequences, repl);
+  const out = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/düzen TOPLA düzeninde değil/.test(out) || !/önce TOPLA'ya bas/.test(out) || JSON.stringify(state.sequences, repl) !== before)
+    fail("TOPLA'sız BAĞLA durmadı:\n" + out);
+  else ok("TOPLA yapılmadan BAĞLA → plan hatası 'önce TOPLA', hiçbir şey değişmedi (bağlı kılavuz silinmedi)");
+};
+
+scenarios.limits = async () => {
+  // tek grupta yardımcının sınırından (256) fazla bağlanacak öğe → kesmeden ÖNCE plan hatası
+  const cams = [{ name: "A038C001_1.MP4", start: sec(10), dur: sec(700) }];
+  const wavs = Array.from({ length: 270 }, (_, i) => ({ name: `R${String(i).padStart(3, "0")}_Tr1.WAV`, start: sec(12 + 2 * i), dur: sec(1.5) }));
+  setupSync({ cams, wavs, others: [] });
+  // TOPLA düzenine getir (tümü A1, kılavuz A2) — mock'ta doğrudan
+  const S = seqByGuid("guid-main-edit");
+  const all = S.a.flat();
+  S.a = [all.filter((c) => c.name.endsWith(".WAV")), all.filter((c) => !c.name.endsWith(".WAV"))];
+  for (const c of S.a[1]) c.linkId = null;
+  mockGen++;
+  await startHelper();
+  const before = JSON.stringify(state.sequences, repl);
+  const out = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/G1: bağlanacak 271 öğe var, yardımcı en çok 256 kabul ediyor/.test(out) || JSON.stringify(state.sequences, repl) !== before)
+    fail("grup boyutu sınırı kesmeden önce yakalanmadı:\n" + out.split("\n").slice(-6).join("\n"));
+  else ok("grup yardımcının sınırını aşıyor → kesmeden ÖNCE plan hatası, hiçbir şey değişmedi");
+};
+
+scenarios.names = async () => {
+  const { channelOf, deviceOf } = require(path.join(__dirname, "..", "dist", "src", "classify.js"));
+  const cases = [
+    [channelOf, "260912_101512_Tr1.WAV", "Tr1"],
+    [channelOf, "260912_101512_TrLR.WAV", "TrLR"],
+    [channelOf, "ZOOM0001_LR.WAV", "LR"],
+    [channelOf, "ZOOM0001_MS.WAV", "MS"],
+    [channelOf, "take_trim.wav", "(eksiz)"],
+    [channelOf, "room.wav", "(eksiz)"],
+    [deviceOf, "A038C001_260912100.MP4", "A"],
+    [deviceOf, "C0112.MP4", "C"],
+    [deviceOf, "DJI_0001.MP4", "DJI"],
+    [deviceOf, "20230101_1.mp4", "#"],
+  ];
+  const bad = cases.filter(([f, x, want]) => f(x) !== want);
+  if (bad.length) fail(`ad kuralları: ${bad.map(([f, x, w]) => `${x} → ${f(x)} (beklenen ${w})`).join("; ")}`);
+  else ok("ad kuralları: _Tr1/_TrLR/_LR/_MS kanal, '_trim' kanal DEĞİL; cihaz öneki A / C / DJI / #");
 };
 
 scenarios.status2 = async () => {
@@ -1441,7 +1564,7 @@ scenarios.plan = async () => {
   setupReal({ nCams: 2, nWavSessions: 1 });
   require(path.join(__dirname, "..", "dist", "index.js"));
   await sleep(1700);
-  const which = process.argv[2] && process.argv[2] !== "all" ? [process.argv[2]] : Object.keys(scenarios);
+  const which = process.argv[2] && process.argv[2] !== "all" ? process.argv[2].split(",") : Object.keys(scenarios);
   for (const name of which) {
     console.log(`▶ ${name}`);
     try {

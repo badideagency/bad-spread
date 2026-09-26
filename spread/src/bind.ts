@@ -16,10 +16,12 @@
 //   TX-3 "parçalar"       : kalan park kopyaları kırpılır
 //   TX-4 "yerleştir"      : kırpılmış park kopyaları −(yuva − WAV.start) zaman ofsetiyle asıl yerlerine kopyalanır + park kopyaları silinir
 // Neden park: set action'lar klibi zamanda TAŞIMAK zorunda kalmasın (yalnız kenar kırpma; taşıma kanıtlı clone ofsetiyle).
-// Kırpma sırası End → Start → In → Out: "baş/son kırpma" anlamında da "start taşır" anlamında da aynı sonuca varır; yuvalar arası
-// boşluk (≥ WAV boyu) ara durumda komşu yuvaya taşmayı önler. Hangi anlamda olursa olsun her parça tick düzeyinde doğrulanır.
+// Kırpma sırası End → Start → In → Out: "kenar kırpma", "start taşır" ve "end taşır" anlamlarının üçünde de aynı sonuca varır;
+// her yuvanın iki yanındaki boşluk (≥ WAV boyu) ara durumda gerçek kliplere / komşu yuvaya taşmayı önler. Hangi anlamda olursa
+// olsun her parça tick düzeyinde doğrulanır.
 
 import { classify, cmpStart, fileName, where, type Classified } from "./classify";
+import { LINK_LIMITS } from "./linker";
 import { expOf, type Exp } from "./layout";
 import { big, TICKS_PER_SECOND, trackLabel, type ClipInfo, type Snapshot } from "./model";
 
@@ -176,6 +178,20 @@ export function makeBindPlan(s: Snapshot, kept: (channel: string) => boolean): B
       coverage.set(`${g.id}|${ch}`, unionLength(iv));
     }
 
+  // grubunda tutulan kanaldan hiç ses olmayan grup: kılavuz sesi silinince grubun sesi kalmaz → uyarı
+  if (keptSet.size)
+    for (const g of groups)
+      if ([...keptSet].every((ch) => (coverage.get(`${g.id}|${ch}`) ?? 0n) === 0n))
+        warnings.push(`${g.id} (çapa "${g.anchor.name}"): bu grupta tutulan kanallardan hiç harici ses yok — kılavuz sesi silinince grubun sesi kalmaz`);
+
+  // yardımcının sınırları (bağlama isteği bunları aşarsa kesmeden SONRA reddedilirdi → şimdi, hiçbir şey değişmeden)
+  for (const g of groups) {
+    const n = g.cams.length + pieces.filter((p) => p.group === g).length;
+    if (n > LINK_LIMITS.groupItems) errors.push(`${g.id}: bağlanacak ${n} öğe var, yardımcı en çok ${LINK_LIMITS.groupItems} kabul ediyor`);
+  }
+  for (const c of [...cams, ...pieces.map((p) => p.src)])
+    if (fileName(c).length > LINK_LIMITS.name) errors.push(`kaynak adı çok uzun (${fileName(c).length} > ${LINK_LIMITS.name}): ${where(c)}`);
+
   const unknown = items.filter((x) => x.role === "unknown");
   for (const u of unknown) warnings.push(`dokunulmayacak: ${where(u.clip)} (${u.why})`);
   for (const g of groups)
@@ -210,14 +226,21 @@ export interface Slot {
 
 const SLOT_GAP = TICKS_PER_SECOND;
 
-/** Her parça için WAV'ın AYNI track'inde, P'den başlayan ardışık park yuvaları (aralarında ≥ WAV boyu boşluk). */
-export function makeSlots(plan: BindPlan, P: bigint): Slot[] {
-  const cursor = new Map<number, bigint>();
+const ceil = (x: bigint, frame: bigint | null) => (!frame || x % frame === 0n ? x : x + (frame - (x % frame)));
+
+/**
+ * Her parça için WAV'ın AYNI track'inde, P'den sonra ardışık park yuvaları. Her yuvanın İKİ yanında da ≥ WAV boyu boşluk bırakılır
+ * (ilk yuvanın önünde de): set action'ların anlamı ölçülmedi — "end klibi taşır" ise kopya sola, "start klibi taşır" ise sağa en
+ * çok bir WAV boyu kayabilir; boşluk bu durumda da gerçek kliplere ve komşu yuvaya değmemesini sağlar.
+ * frame: yuva başlangıçları kare sınırına yukarı yuvarlanır (null → yuvarlama yok).
+ */
+export function makeSlots(plan: BindPlan, P: bigint, frame: bigint | null = null): Slot[] {
+  const cursor = new Map<number, bigint>(); // track → bir sonraki yuvanın en erken sol kenarı (önündeki boşluk dahil)
   const slots: Slot[] = [];
   for (const cut of plan.cuts.slice().sort((a, b) => a.src.track - b.src.track || cmpStart(a.src, b.src))) {
     const L = big(cut.src.end) - big(cut.src.start);
     for (const p of cut.pieces) {
-      const q = cursor.get(cut.src.track) ?? P;
+      const q = ceil((cursor.get(cut.src.track) ?? P) + L, frame);
       cursor.set(cut.src.track, q + 2n * L + SLOT_GAP);
       slots.push({ piece: p, q, offset: q - big(cut.src.start) });
     }

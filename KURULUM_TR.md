@@ -38,6 +38,8 @@ Sonra:
 - Spread panelinin üstünde yeşil **"Yardımcı: bağlı — (yardımcı 0.3.0, Premiere …)"** yazmalı. Yazmıyorsa **Yardımcıyı kontrol et**'e bas.
 - Hâlâ **"bağlı değil"** diyorsa:
   - Zip'teki **`PlayerDebugMode_CSXS12.reg`**'e çift tıkla → **Evet**. Premiere'i kapatıp aç.
+    Bu ayar, senin hesabındaki **bütün** CEP eklentilerinin imza denetimini gevşetir (BENIOKU.txt'te nasıl geri alınacağı yazıyor).
+    Yardımcı imzalı olduğu için büyük ihtimalle gerekmez.
   - Yine olmazsa panelde yazan satırı ve `%TEMP%\spread-helper.log` dosyasını bana getir.
 
 ## 3) Testi GÜVENLİ yerde yap
@@ -86,6 +88,10 @@ Sonra:
   - **bağla**.
 - **"İLK PARÇA TUTMADI"** yazarsa: Premiere kırpmayı beklenen biçimde yapmamıştır ve panel orada durmuştur. **Ctrl+Z × 2** (ya da yedek sequence) ile geri dön ve raporu bana getir. Kesme için yedek yöntem hazırlanacak.
 - Sonunda yeşil **`✓ BAĞLA tamam: N grup bağlandı …`**.
+- Sarı **`⚠ BAĞLA bitti ama … bağı DOĞRULANAMADI`** görürsen: Premiere "bağlandı" dedi ama panel bunu okuyarak teyit edemedi.
+  Bu durumda aşağıdaki kontrol yeterli; bağ yoksa satırları bana getir.
+- **"düzen TOPLA düzeninde değil — önce TOPLA'ya bas"** derse: BAĞLA, TOPLA'nın dizdiği düzende çalışır. Önce TOPLA'ya bas.
+- **"… YARIM hâlde"** derse: önceki bir TOPLA ya da BAĞLA durmuş ve geri alınmamış. Önce o mesajdaki kadar Ctrl+Z bas (ya da yedeği kullan).
 - Kontrol: bir kamera klibine tıkla. O grubun iki kamerası ve ses parçaları birlikte seçilmeli (Linked Selection açıkken).
 
 ## 4) DURUM RAPORU — bana getir

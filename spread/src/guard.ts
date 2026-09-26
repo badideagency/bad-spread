@@ -28,6 +28,8 @@ import { verifyTracks } from "./verify";
 import type { Sequence } from "./ppro";
 
 export class SpreadStop extends Error {
+  /** true → kullanıcı adımlar arasında timeline'ı değiştirdi; "Ctrl+Z × N" söylenmez, yedek önerilir */
+  public unreliableCount = false;
   constructor(message: string, public details: string[] = []) {
     super(message);
     this.name = "SpreadStop";
@@ -43,10 +45,32 @@ export async function askUser(q: string): Promise<Answer> {
 /** Park yeri: sequence sonunun (getEndTime ve en büyük klip sonu) 10 sn ötesi. */
 export const PARK_GAP = 10n * TICKS_PER_SECOND;
 
+/**
+ * Sequence'ın kare süresi (tick). getTimebase Probe'da sınanmadı → okunamazsa / anlamsızsa null (hizalama atlanır).
+ * (ExtendScript'teki karşılığı Sequence.timebase = "kare başına tick" dizesi.)
+ */
+export async function frameTicks(ctx: SeqContext): Promise<bigint | null> {
+  try {
+    const tb = await ctx.sequence.getTimebase(); // d.ts:L3231 Sequence.getTimebase
+    const n = big(String(tb).trim());
+    return n > 0n && n <= TICKS_PER_SECOND ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/** x'i kare sınırına YUKARI yuvarlar (frame null → olduğu gibi). */
+export function ceilTo(x: bigint, frame: bigint | null): bigint {
+  if (!frame) return x;
+  const r = x % frame;
+  return r === 0n ? x : x + (frame - r);
+}
+
 export async function parkBase(ctx: SeqContext, s: Snapshot): Promise<bigint> {
   const seqEnd = big(tt(await ctx.sequence.getEndTime()).ticks); // d.ts:L3181 Sequence.getEndTime
   const lastClip = s.clips.reduce((m, c) => (big(c.end) > m ? big(c.end) : m), 0n);
-  return (seqEnd > lastClip ? seqEnd : lastClip) + PARK_GAP;
+  // kare hizalı: kare hizalı klipler (kameralar) park yerinde de kare sınırında kalsın
+  return ceilTo((seqEnd > lastClip ? seqEnd : lastClip) + PARK_GAP, await frameTicks(ctx));
 }
 
 export function multisetEqual(a: Snapshot, b: Snapshot): boolean {
@@ -100,7 +124,9 @@ export async function expectState(ctx: SeqContext, expected: Snapshot, beforeLas
     const undone = executed.pop();
     throw new SpreadStop(`Adımlar arasında timeline değişti: "${undone}" adımı geri alınmış görünüyor. Güvenlik için durduruldu.`);
   }
-  throw new SpreadStop("Adımlar arasında timeline değişti (kullanıcı düzenlemesi?). Güvenlik için durduruldu.");
+  const stop = new SpreadStop("Adımlar arasında timeline değişti (kullanıcı düzenlemesi?). Güvenlik için durduruldu.");
+  stop.unreliableCount = true;
+  throw stop;
 }
 
 // ------------------------------------------------------------------ yedek
@@ -187,7 +213,14 @@ export function reportStop(op: string, e: unknown, executed: string[], backupNam
   const msg = stop ? stop.message : e instanceof SessionError ? e.message : `Beklenmeyen hata: ${errText(e)}`;
   log(`✗ ${op} DURDU: ${msg}`, "err");
   for (const d of stop?.details ?? []) log(`   • ${d}`, "err");
-  if (executed.length) {
+  if (executed.length && stop?.unreliableCount) {
+    log(`Yapılan adımlar (${executed.length}): ${executed.join(", ")}.`, "warn");
+    log(
+      `Timeline arada başka biçimde de değiştiği için Ctrl+Z sayısı GÜVENİLİR DEĞİL — yedek sequence "${backupName ?? "?"}"i kullan. ` +
+        "Panel kendi başına düzeltme yapmaz.",
+      "warn"
+    );
+  } else if (executed.length) {
     log(`Yapılan adımlar (${executed.length}): ${executed.join(", ")}.`, "warn");
     log(
       `Geri almak için: timeline'a tıkla ve Ctrl+Z'ye ${executed.length} kez bas — ya da yedek sequence "${backupName ?? "?"}"i kullan. ` +
@@ -200,4 +233,60 @@ export function reportStop(op: string, e: unknown, executed: string[], backupNam
     log("Timeline'da değişiklik yapılmadı.", "warn");
   }
   for (const x of extra) log(x, "warn");
+}
+
+// ------------------------------------------------------------------ yarım kalmış iş koruması
+// TOPLA / BAĞLA bir adımdan sonra DURURSA timeline'ın o anki hâli (klip kümesinin özeti) localStorage'da saklanır. Kullanıcı geri
+// almadan tekrar basarsa (timeline hâlâ birebir o hâlde) işlem BAŞLAMAZ: aksi hâlde park kopyaları "çapa dışı ses" sanılıp silinebilir,
+// ya da yarım düzen yeni bir yedeğe kopyalanır. localStorage yoksa koruma sessizce devre dışıdır (panel çökmez).
+const STOP_KEY = "spread.stoppedState.v1";
+
+function digest(s: Snapshot): string {
+  const text = s.clips.map(keyFull).sort().join("\n") + `|${s.vCount}|${s.aCount}`;
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 + c, 0x5bd1e995) >>> 0;
+  }
+  return `${text.length}:${h1.toString(16)}:${h2.toString(16)}`;
+}
+
+export async function rememberStopped(ctx: SeqContext, op: string): Promise<void> {
+  try {
+    const s = await snapshot(ctx);
+    window.localStorage.setItem(STOP_KEY, JSON.stringify({ guid: ctx.guid, op, digest: digest(s) }));
+  } catch {
+    /* koruma yok */
+  }
+}
+
+export function forgetStopped(): void {
+  try {
+    window.localStorage.removeItem(STOP_KEY);
+  } catch {
+    /* yoksa geç */
+  }
+}
+
+/** Timeline, önceki bir DURDU'nun bıraktığı hâlde mi → öyleyse SpreadStop. */
+export function assertNotStopped(ctx: SeqContext, s: Snapshot, op: string): void {
+  interface Rec {
+    guid?: string;
+    op?: string;
+    digest?: string;
+  }
+  let rec: Rec | null;
+  try {
+    const raw = window.localStorage.getItem(STOP_KEY);
+    rec = raw ? (JSON.parse(raw) as Rec) : null;
+  } catch {
+    return;
+  }
+  if (rec && rec.guid === ctx.guid && rec.digest === digest(s))
+    throw new SpreadStop(
+      `Timeline, önceki ${rec.op ?? "işlem"} durduğunda kalan YARIM hâlde (geri alınmamış). ${op} BAŞLAMADI, hiçbir şey değişmedi. ` +
+        "Önce geri al (DURDU mesajındaki kadar Ctrl+Z) ya da yedek sequence'ı kullan, sonra tekrar bas."
+    );
 }

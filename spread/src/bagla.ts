@@ -21,10 +21,24 @@ import {
   type Slot,
 } from "./bind";
 import { where } from "./classify";
-import { askUser, expectState, makeBackup, multisetEqual, parkBase, reportStop, runTx, SpreadStop } from "./guard";
+import {
+  askUser,
+  assertNotStopped,
+  expectState,
+  forgetStopped,
+  frameTicks,
+  makeBackup,
+  multisetEqual,
+  parkBase,
+  rememberStopped,
+  reportStop,
+  runTx,
+  SpreadStop,
+} from "./guard";
+import { makeCollectPlan } from "./collect";
 import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
 import { getLinker, type LinkGroupResult } from "./linker";
-import { big, fmtClip, relocate, secOf, settle, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
+import { big, fmtClip, relocate, secOf, settle, sleep, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
 import { assertSameSequence, requireActive, type SeqContext } from "./session";
 import { isKept } from "./settings";
 import { log, setHelperStatus } from "./ui";
@@ -109,9 +123,22 @@ async function trimTx(
   return s;
 }
 
+/** Yardımcıya birkaç kez sor (ağır transaction'lardan hemen sonra ilk yanıt gecikebilir). */
+async function pingRetry(tries: number): Promise<Awaited<ReturnType<ReturnType<typeof getLinker>["ping"]>>> {
+  const linker = getLinker();
+  let r = await linker.ping();
+  for (let i = 1; i < tries && !r.ok; i++) {
+    await sleep(1000);
+    r = await linker.ping();
+  }
+  return r;
+}
+
 export async function runBind(): Promise<void> {
   const executed: string[] = [];
   let backupName: string | null = null;
+  let ctx: SeqContext | null = null;
+  let cutsDone = false; // kesme/silme doğrulandıysa, bağlama hatasında tekrar basmak GÜVENLİ (yarım iş sayılmaz)
   const linker = getLinker();
   log("▶ BAĞLA", "head");
   try {
@@ -121,10 +148,22 @@ export async function runBind(): Promise<void> {
     if (!ping.ok) throw new SpreadStop(`Yardımcı bağlı değil (${ping.detail}). BAĞLA BAŞLAMADI, hiçbir şeye dokunulmadı.`, linker.installHint());
     log(`✓ Yardımcı ${ping.detail}`, "ok");
 
-    const ctx = await requireActive();
+    ctx = await requireActive();
     log(`sequence: "${ctx.name}"`, "dim");
     const s0 = await snapshot(ctx);
+    assertNotStopped(ctx, s0, "BAĞLA");
     const plan = makeBindPlan(s0, isKept);
+    // BAĞLA TOPLA düzeninde çalışır: TOPLA taşıdığı kamera/kılavuz çiftlerini clone ile AYIRIR; kılavuzu hâlâ kamerasına bağlı bir
+    // düzende (ör. SPREAD'den hemen sonra) kılavuz silmek bağlı kamerayı da silebilir (kanıtlanmadı). Kanal sırası ayara bağlı
+    // olduğundan iki sıra da kabul edilir.
+    const notCollected = [makeCollectPlan(s0, isKept), makeCollectPlan(s0, () => true)].reduce((a, b) => (a.moves.length <= b.moves.length ? a : b));
+    if (notCollected.moves.length && !plan.errors.length)
+      plan.errors.push(
+        `düzen TOPLA düzeninde değil (${notCollected.moves.length} klip cihaz/kanal track'inde değil, ör. ${notCollected.moves
+          .slice(0, 3)
+          .map((m) => `${where(m.x.clip)} → ${trackLabel(m.x.clip.kind, m.target)}`)
+          .join(", ")}) — önce TOPLA'ya bas`
+      );
     printBindPlan(plan, s0);
     if (plan.errors.length) throw new SpreadStop(`Plan kurulamadı (${plan.errors.length} hata). BAĞLA BAŞLAMADI, hiçbir şey değişmedi.`);
     const deletes = [...plan.deleteGuides, ...plan.deleteUnkept, ...plan.deleteOutside];
@@ -137,6 +176,7 @@ export async function runBind(): Promise<void> {
         `${plan.cuts.length} harici ses ${nPieces} parçaya kesilecek, ${plan.pieces.filter((p) => p.whole).length} ses olduğu gibi kalacak; ` +
         `silinecek: ${plan.deleteGuides.length} kılavuz ses, ${plan.deleteUnkept.length} kapalı kanal klibi, ${plan.deleteOutside.length} çapa dışı ses. ` +
         `Tutulan kanallar: ${plan.keptChannels.join(", ") || "yok"}. Sonra ${linkable} grup yardımcıyla bağlanacak. ` +
+        `${plan.warnings.length ? `${plan.warnings.length} uyarı (günlükte). ` : ""}` +
         `${edits ? "Önce yedek sequence oluşturulacak." : "Kesme/silme yok → yalnız bağlama (yedek alınmaz)."} Devam?`
     );
     if (ans !== "Evet") {
@@ -157,7 +197,7 @@ export async function runBind(): Promise<void> {
       for (const n of so.notes) log(`   ${n}`, "dim");
       if (!so.exact) throw new SpreadStop("Silinecek klipler birebir seçilemedi — güvenlik için kesme/silme yapılmadı.");
       const P = await parkBase(ctx, so.snap);
-      const slots = makeSlots(plan, P);
+      const slots = makeSlots(plan, P, await frameTicks(ctx));
       const srcOf = new Map<ClipInfo, ClipInfo>();
       for (const cut of plan.cuts) {
         const f = relocate(so.snap, cut.src);
@@ -172,23 +212,32 @@ export async function runBind(): Promise<void> {
       await settle();
       let s = await snapshot(ctx);
       const p1 = compareLayout(expectParked(s0, plan, slots, new Set()), s);
-      if (p1.length) throw new SpreadStop("Kesim hazırlığı doğrulaması tutmadı.", p1);
+      if (p1.length) {
+        const lostCams = p1.some((x) => /beklenen klip yok: V/.test(x));
+        throw new SpreadStop(
+          "Kesim hazırlığı doğrulaması tutmadı." +
+            (lostCams ? " Bir kamera klibi de silinmiş: kılavuz sesi hâlâ kamerasına BAĞLIYDI ve silme bağlı partneri de sildi — Ctrl+Z, sonra TOPLA." : ""),
+          p1
+        );
+      }
       log(`✓ TX-1 doğrulandı: ${deletes.length + plan.cuts.length} klip silindi, ${slots.length} park kopyası yerinde.`, "ok");
 
       if (slots.length) {
-        // TX-2 ilk parça (ölçüm) → TX-3 kalanlar
+        // TX-2 ilk parça (ölçüm) → TX-3 kalanlar → TX-4 yerleştir. Her adımdan önce: timeline beklenen hâlde mi (geri alınan adım düşülür)
         const first = firstSlot(slots)!;
-        await expectState(ctx, s, null, executed);
+        let prev = s1;
+        await expectState(ctx, s, prev, executed);
         log(`TX-2 (ilk parça — ölçüm): "${first.piece.src.name}" → [${secOf(first.piece.start)}s–${secOf(first.piece.end)}s] set End → Start → In → Out.`);
+        prev = s;
         s = await trimTx(ctx, executed, "ilk parça", s0, plan, slots, new Set(), [first]);
         const rest = slots.filter((x) => x !== first);
         if (rest.length) {
-          await expectState(ctx, s, null, executed);
+          await expectState(ctx, s, prev, executed);
           log(`TX-3 (parçalar): ${rest.length} parça kırpılıyor.`);
+          prev = s;
           s = await trimTx(ctx, executed, "parçalar", s0, plan, slots, new Set([first]), rest);
         }
-        // TX-4 yerleştir: kırpılmış park kopyaları asıl yerlerine; park kopyaları silinir
-        await expectState(ctx, s, null, executed);
+        await expectState(ctx, s, prev, executed);
         const taken = new Set<ClipInfo>();
         const parked = slots.map((sl) => ({ sl, c: parkedClip(s, sl, true, taken) }));
         const so4 = await selectExactly(ctx, parked.map((p) => p.c));
@@ -209,6 +258,7 @@ export async function runBind(): Promise<void> {
       sF = await snapshot(ctx);
       const fin = [...compareLayout(expectBindFinal(s0, plan), sF), ...verifyBindContent(plan, sF), ...snapshotOverlaps(sF)];
       if (fin.length) throw new SpreadStop("Kesme doğrulaması tutmadı.", fin);
+      cutsDone = true;
       log(
         `✓ Kesme/silme doğrulandı: ${nPieces} parça tick düzeyinde doğru; her çapa içindeki ses süresi aynı (boşluk yok); ` +
           `kaynak kayması yok; kılavuz ses ve kapalı kanal kalmadı.`,
@@ -216,50 +266,65 @@ export async function runBind(): Promise<void> {
       );
     } else {
       sF = await snapshot(ctx);
+      if (!multisetEqual(s0, sF)) throw new SpreadStop("Onay beklerken timeline değişti. Güvenlik için durduruldu (hiçbir şey yapılmadı).");
       const fin = verifyBindContent(plan, sF);
       if (fin.length) throw new SpreadStop("Düzen beklenen hâlde değil.", fin);
+      cutsDone = true;
     }
 
-    // 5) bağlama — en son; önce tekrar ping
+    // bağlama — en son; önce tekrar ping (ağır transaction'lardan sonra gecikebilir → birkaç deneme)
     const targets = linkTargets(plan, sF);
     const groups = targets.filter((t) => t.items.length >= 2);
     for (const t of targets.filter((x) => x.items.length < 2)) log(`   ${t.label}: bağlanacak ikinci öğe yok — atlandı`, "dim");
-    const ping2 = await linker.ping();
+    const ping2 = await pingRetry(3);
     setHelperStatus(ping2.ok, ping2.detail);
+    const again = "Yardımcıyı düzelt ve BAĞLA'ya tekrar bas: kesilecek bir şey kalmadığı için yalnız bağlama yapılır.";
     if (!ping2.ok)
       throw new SpreadStop(
-        `Kesme/silme BİTTİ ama yardımcı artık yanıt vermiyor (${ping2.detail}) — bağlama yapılmadı. ` +
-          "Yardımcıyı çalıştır ve BAĞLA'ya tekrar bas: kesilecek bir şey kalmadığı için yalnız bağlama yapılır.",
+        `${edits ? "Kesme/silme BİTTİ ve doğrulandı ama y" : "Y"}ardımcı artık yanıt vermiyor (${ping2.detail}) — bağlama yapılmadı. ${again}`,
         linker.installHint()
       );
     await assertSameSequence(ctx);
     log(`Bağlama: ${groups.length} grup yardımcıya gönderiliyor (${linker.name}).`);
-    const out = await linker.link(ctx.name, groups.map((t) => ({ id: t.group.id, items: t.items })));
+    let out: Awaited<ReturnType<typeof linker.link>>;
+    try {
+      out = await linker.link(ctx.name, groups.map((t) => ({ id: t.group.id, items: t.items })));
+    } catch (e) {
+      throw new SpreadStop(`${edits ? "Kesme/silme doğrulandı ve yerinde; " : ""}bağlama isteği başarısız: ${e instanceof Error ? e.message : String(e)}. ${again}`);
+    }
     await settle();
     const sAfter = await snapshot(ctx);
     if (!multisetEqual(sF, sAfter)) throw new SpreadStop("Bağlama sırasında klipler değişti (beklenmiyordu).", compareLayout(sF.clips.map((c) => expOf(c)), sAfter));
     const byId = new Map<string, LinkGroupResult>(out.results.map((r) => [r.id, r]));
     const bad: string[] = [];
-    let unverified = 0;
+    const unverified: string[] = [];
     for (const t of groups) {
       const r = byId.get(t.group.id);
-      if (!r) bad.push(`${t.label}: yardımcıdan sonuç gelmedi`);
+      if (!r) bad.push(`${t.label}: yardımcıdan sonuç gelmedi${out.detail ? ` (${out.detail})` : ""}`);
       else if (r.found !== r.total) bad.push(`${t.label}: ${r.total} öğeden ${r.found} bulundu (eksik: ${r.missing.join(", ")}) — bağlanmadı`);
       else if (!r.linked) bad.push(`${t.label}: linkSelection başarısız — ${r.detail}`);
       else if (r.verified === false) bad.push(`${t.label}: bağ doğrulanamadı — ${r.detail}`);
-      else {
-        if (r.verified === null) unverified++;
-        log(`   ✓ ${t.label}: bulundu ${r.found}/${r.total}, bağlandı${r.verified ? ", doğrulandı" : " (doğrulanamadı)"}`, "dim");
-      }
+      else if (r.verified === null) unverified.push(`${t.label}: ${r.detail}`);
+      else log(`   ✓ ${t.label}: bulundu ${r.found}/${r.total}, bağlandı, doğrulandı`, "dim");
     }
-    if (bad.length) throw new SpreadStop(`${bad.length}/${groups.length} grup bağlanamadı (kesme/silme doğru ve yerinde).`, bad);
-    log(
-      `✓ BAĞLA tamam: ${groups.length} grup bağlandı${unverified ? ` (${unverified} grubun bağı doğrulanamadı)` : " ve getLinkedItems ile doğrulandı"}; ` +
-        `klip zamanları bağlamada değişmedi.${executed.length ? ` (${executed.length} adım: ${executed.join(", ")})` : ""}`,
-      "ok"
-    );
+    if (bad.length)
+      throw new SpreadStop(`${bad.length}/${groups.length} grup bağlanamadı${edits ? " (kesme/silme doğru ve yerinde)" : ""}. ${again}`, bad);
+    forgetStopped();
+    if (unverified.length) {
+      // linkSelection "true" dedi ama bağ okunarak DOĞRULANAMADI → "tamam" denmez (uydurma yok)
+      log(`⚠ BAĞLA bitti ama ${unverified.length}/${groups.length} grubun bağı DOĞRULANAMADI (Premiere "bağlandı" dedi; okuyarak teyit edilemedi):`, "warn");
+      for (const u of unverified) log(`   • ${u}`, "warn");
+      log("Kontrol et: timeline'da bir kamera klibine tıkla — grubun kameraları ve ses parçaları birlikte seçilmeli (Linked Selection açık).", "head");
+    } else
+      log(
+        `✓ BAĞLA tamam: ${groups.length} grup bağlandı ve getLinkedItems ile doğrulandı; klip zamanları bağlamada değişmedi.` +
+          `${executed.length ? ` (${executed.length} adım: ${executed.join(", ")})` : ""}`,
+        "ok"
+      );
     if (executed.length) log(`Beğenmezsen: yedek sequence "${backupName}"i kullan (ya da Ctrl+Z; ${LINK_UNDO_NOTE})`, "dim");
   } catch (e) {
+    if (executed.length && ctx && !cutsDone) await rememberStopped(ctx, "BAĞLA");
+    else if (cutsDone) forgetStopped();
     reportStop("BAĞLA", e, executed, backupName, executed.length ? [LINK_UNDO_NOTE] : []);
   }
 }

@@ -8,7 +8,7 @@
 | Yapılan | **TOPLA** (yalnız dikey: cihaz → V, kanal → A, kılavuz sesler altta), **BAĞLA** (grup → çapa → harici sesi çapaya göre kes → kılavuz + kapalı kanal sil → yardımcıyla bağla), **kanal ayarı** (localStorage), **yardımcı göstergesi**, durum raporuna sınıflama/gruplar |
 | Yardımcı paketi | **İMZALI**: Adobe `ZXPSignCmd` 4.1.3 x64 (CEP-Resources) Linux'ta **Wine** ile çalıştırıldı → self-signed `.p12` (10 yıl) → `ZXPSignCmd -verify`: "Signature verified successfully". Zaman damgası YOK (TSA'ya ulaşılamadı). Yedek: `release/spread-helper-klasor.zip` (aynı imzalı içerik açılmış + `KUR.cmd` + `PlayerDebugMode_CSXS12.reg` + BENIOKU). |
 | Probe / SPREAD | Probe dosyaları ve `release/spread-probe.ccx` değişmedi. SPREAD davranışı aynı; güvenlik kodu `guard.ts`'e taşındı (18 eski senaryo aynen geçiyor). |
-| Bulutta doğrulanan | `tsc --strict`, Adobe eslint, d.ts (74) + uxp.d.ts (5) satır kontrolü, host.jsx ES3 + belge kontrolü (19 DOM üyesi), Probe smoke, **Spread smoke 35 senaryo** (panel → HTTP → **gerçek** yardımcı sunucusu → **gerçek** host.jsx → sahte Premiere DOM), bağımsız alt ajan incelemesi |
+| Bulutta doğrulanan | `tsc --strict`, Adobe eslint, d.ts (75) + uxp.d.ts (5) satır kontrolü, host.jsx ES3 + belge kontrolü (19 DOM üyesi + kaynaksız üye yakalama), Probe smoke, **Spread smoke 41 senaryo** (panel → HTTP → **gerçek** yardımcı sunucusu → **gerçek** host.jsx → sahte Premiere DOM; `report` gerçek rapor yoksa atlanır), bağımsız alt ajan incelemesi (bulgular düzeltildi — aşağıda) |
 | Doğrulanamayan | Gerçek Premiere'de: set In/Out/Start/End ile GERÇEK kırpma, negatif clone ofsetleri, ExtendScript `linkSelection` ile 2 video + sesler, `getLinkedItems` anlamı, UXP ağ izninin 127.0.0.1'e izin vermesi, CEP 12'nin kendinden imzalı yardımcıyı yüklemesi |
 | Eksik girdi | Kullanıcının **gerçek senkron sonucu durum raporu** bu turda gelmedi (mesajda yer tutucu kaldı). Mock'ta onun yerine adları/sayıları gerçek düzenden alınmış **sentetik** bir senkron sonucu var (`sync`). Rapor gelince `spread/dev/fixtures/senkron-raporu.txt`'e koy → `node spread/dev/smoke.cjs report` (okuyucu hazır ve `reportparse` ile sınandı). |
 | Dal | `claude/sweet-bell-do4j75` |
@@ -43,7 +43,8 @@ kılavuz sesler cihaz sırasıyla (cihaz başına kanal sayısı kadar track) en
 bilinmeyen öğe → TOPLA BAŞLAMAZ, çakışmalar tek tek (track, klipler, süre, olası neden) raporlanır. Sessizce başka track'e konmaz.
 
 **Taşıma (seçilen yol + neden):** iki transaction, ikisi de kanıtlı kalıp (clone + remove(ripple=false) aynı transaction'da):
-1. `TOPLA: park` — taşınacak her klip AYNI track'te `+P` (P = max(sequence sonu, en büyük klip sonu) + 10 sn) → asıllar silinir.
+1. `TOPLA: park` — taşınacak her klip AYNI track'te `+P` (P = max(sequence sonu, en büyük klip sonu) + 10 sn, **kare sınırına yukarı
+   yuvarlanmış**: `Sequence.getTimebase()` d.ts:L3231 — okunamazsa yuvarlama atlanır) → asıllar silinir.
 2. `TOPLA: yerleştir` — park kopyaları `−P` zaman + dikey ofsetle hedefe → park kopyaları silinir.
 Neden doğrudan değil: hedef yerlerin çoğunda henüz taşınmamış bir asıl var (Spread sonrası A1..A22'de kılavuz sesler, Tr1 A1'e
 gelecek); bir kopyanın aynı transaction'da silinecek bir asılın üstüne yazılması KANITLANMADI (SPREAD planı da bunu yasaklar).
@@ -51,7 +52,10 @@ Park bölgesi hiçbir klibe değmez; park kopyaları birbirine değmez (aynı tr
 **Bağlı çift kuralı:** kamera videosu ile aynı yerdeki kılavuz ses(ler)inden biri taşınıyorsa hepsi taşınır (silme seçiminde bağlı
 çiftin yalnız yarısı olmasın — bağlı partnerin de silinip silinmediği kanıtlanmadı). Sonuç: taşınan kameralar kılavuz seslerinden
 **ayrı** düşer (clone tek öğe kopyalar); BAĞLA zaten kılavuzları silip yeniden bağlar. Onay metni bunu söyler.
-Track gerekirse SPREAD'deki TX-A (kanıtlı) aynen (`guard.prepareTracks`). Ctrl+Z: 2 (+1 track hazırlığı).
+Track gerekirse SPREAD'deki TX-A (kanıtlı) aynen (`guard.prepareTracks`). Ctrl+Z: 2 (+1 track hazırlığı). Kullanıcı adımlar arasında
+Ctrl+Z basarsa adım sayıdan düşülür; başka bir değişiklik olduysa "Ctrl+Z sayısı güvenilir değil — yedeği kullan" denir.
+**Yarım iş koruması** (TOPLA + BAĞLA): bir adımdan sonra DURULURSA timeline'ın özeti localStorage'a yazılır; timeline hâlâ birebir o
+hâldeyken tekrar basılırsa işlem BAŞLAMAZ (park kopyaları "çapa dışı ses" sanılıp silinmesin / yarım düzen yeni yedeğe kopyalanmasın).
 **Doğrulama:** her transaction sonrası BEKLENEN klip kümesiyle (tür, track, start, end, in, out, hız, kaynak) birebir karşılaştırma
 (`layout.compareLayout`) + son düzende track başına çakışma yok. Tutmazsa DUR + Ctrl+Z sayısı + yedek adı.
 **Bitiş:** "Kontrol et, sonra BAĞLA'ya bas."
@@ -59,6 +63,10 @@ Track gerekirse SPREAD'deki TX-A (kanıtlı) aynen (`guard.prepareTracks`). Ctrl
 ## BAĞLA tasarımı (`spread/src/bind.ts`, `bagla.ts`)
 
 1. **Önce ping** — yardımcı yoksa HİÇBİR ŞEYE dokunmadan (yedek dahil) DUR + kurulum talimatı.
+   **Ön koşul: TOPLA düzeni** (TOPLA planı "taşınacak klip yok" demeli; kanal sırası ayara bağlı olduğundan iki sıra da kabul) — değilse
+   plan hatası "önce TOPLA". Neden: TOPLA taşıdığı kamera/kılavuz çiftlerini clone ile AYIRIR; hâlâ kamerasına bağlı bir kılavuzu silmek
+   bağlı kamerayı da silebilir (kanıtlanmadı). Yarım iş koruması (TOPLA'daki gibi) + yardımcı sınırları (grup ≤ 256 öğe, ad ≤ 1024)
+   kesmeden ÖNCE denetlenir.
 2. **Grup** = zamanda çakışan kamera klipleri (aralık grafiğinin bağlı bileşenleri; bitiş=başlangıç çakışma değil). Harici sesler grup tanımına katılmaz.
 3. **Çapa** = gruptaki en uzun kamera klibi (eşitlikte alt V track, sonra erken start).
 4. **Parça** = WAV ∩ çapa; `in = WAV.in + (parça.start − WAV.start)`, `out = in + süre`. Çapa dışı ses SİLİNİR; tamamen tek çapanın
@@ -66,14 +74,15 @@ Track gerekirse SPREAD'deki TX-A (kanıtlı) aynen (`guard.prepareTracks`). Ctrl
 5. **Silme:** tüm kılavuz sesler + kanal ayarında kapatılmış kanallar + çapa dışı sesler.
 6. **Kesme yolu (seçilen: UXP; neden aşağıda)** — hepsi aynı track'te:
    - `BAĞLA: kesim hazırlığı` — her parça için WAV'ın tam boy kopyası sequence sonunun ötesindeki bir **park yuvasına** (clone, +ofset;
-     yuvalar arası ≥ WAV boyu + 1 sn) + silinecekler ve kesilecek asıllar tek seçimle silinir.
+     her yuvanın İKİ yanında ≥ WAV boyu boşluk — ilk yuvanın önünde de; yuva başı kare hizalı) + silinecekler ve kesilecek asıllar tek
+     seçimle silinir. Park bölgesi parça başına ≈ 3 × WAV boyu büyür (uzun kayıt × çok parça → saatler; Premiere'in üst sınırı ölçülmedi).
    - `BAĞLA: ilk parça` — **ÖLÇÜM**: yalnız zamanda ilk parçanın park kopyası kırpılır (set **End → Start → In → Out**). Tutmazsa
      "İLK PARÇA TUTMADI" + beklenen/okunan tick farkları → DUR (Ctrl+Z × 2).
    - `BAĞLA: parçalar` — kalanlar kırpılır. `BAĞLA: yerleştir` — kırpılmış park kopyaları `−(yuva − WAV.start)` ofsetle asıl yerlerine,
      park kopyaları silinir.
    Neden park: set action'lar klibi zamanda TAŞIMAK zorunda kalmasın (yalnız kenar kırpma); taşıma kanıtlı clone ofsetiyle.
-   Neden End → Start → In → Out: "kenar kırpma" (mock varsayılanı) ve "start klibi taşır" anlamlarının İKİSİNDE de doğru sonuca
-   varır (ikisi de mock'ta sınanıyor: `sync`/`setmove`); End önce → ara durumda sağa taşma en az.
+   Neden End → Start → In → Out: "kenar kırpma" (mock varsayılanı), "start klibi taşır" ve "end klibi taşır" anlamlarının ÜÇÜNDE de
+   doğru sonuca varır (mock'ta sınanıyor: `sync` / `setmove` / `endmove` — sonuncusu set sonrası çakışan klibi EZEN en kötü durumla).
    **Yedek plan (YAZILMADI):** CEP yardımcısında QE DOM razor — `app.enableQE(); qe.project.getActiveSequence().getAudioTrackAt(i).razor(timecode)`
    (belgesiz; Adobe örneklerinde yok; pymiere belgesi `getVideoTrackAt(0).razor(timecode)`, timecode `Time.getFormatted(...)` ile;
    bir 3. taraf 26.3'te QE yapısal düzenlemelerinin sessizce yok sayıldığını bildiriyor). YALNIZ UXP yolu gerçek Premiere'de ilk
@@ -81,8 +90,11 @@ Track gerekirse SPREAD'deki TX-A (kanıtlı) aynen (`guard.prepareTracks`). Ctrl
 7. **Doğrulama:** her transaction sonrası beklenen kümeyle birebir; sonda ek olarak: her tutulan kanalın her çapa içindeki ses süresi
    öncekiyle aynı (hiçbir çapa içinde boşluk yok), her harici klipte `in − start` kaynağıyla aynı (kaynak kayması yok), çapa dışına
    taşan ses / kılavuz / kapalı kanal kalmadı, track'lerde çakışma yok.
-8. **Bağlama** (en son): tekrar ping → `linkTargets` (grubun kameraları + çapasındaki parçalar, değerler taze okumadan) → yardımcı →
-   grup başına sonuç (bulundu / bağlandı / doğrulandı). Bağlamadan önce/sonra timeline birebir aynı olmalı.
+8. **Bağlama** (en son): tekrar ping (3 deneme) → `linkTargets` (grubun kameraları + çapasındaki parçalar, değerler taze okumadan) →
+   yardımcıya **8'er grupluk partiler** (istek başına 90 sn; yardımcı her track'i istek başına bir kez okur) → grup başına sonuç
+   (bulundu / bağlandı / doğrulandı). Bağlamadan önce/sonra timeline birebir aynı olmalı. `linkSelection` "true" dedi ama bağ okunarak
+   teyit edilemediyse (`getLinkedItems` yok / değişmedi) sonuç **"⚠ BAĞLA bitti ama … DOĞRULANAMADI"** + kullanıcıya tıklayarak kontrol
+   talimatı — "tamam" denmez. Bağlama hatası/zaman aşımı → "kesme doğrulandı ve yerinde, yardımcıyı düzelt ve BAĞLA'ya tekrar bas".
    Tek öğeli grup atlanır. Kesme/silme yoksa yedek alınmaz (yalnız bağlama) → BAĞLA'yı tekrar basmak güvenli (idempotent).
    Ctrl+Z: kesme varsa 4 (+ yedek sayılmaz). **Bağlamanın geri alma geçmişine kaç kayıt eklediği ÖLÇÜLMEDİ** → mesajlar yedeği önerir.
 
@@ -169,6 +181,44 @@ macOS'ta Premiere `http://`'yi engelliyor (Adobe ağ tarifi) — kullanıcı Win
   dokunmadan durur. Plan: UXP'ye link API'si gelince `linker.ts`'e UXP uygulaması; gelmezse XML yolu.
 - ExtendScript API'sine 23.0'dan beri yeni özellik eklenmiyor (Scripting Guide changelog).
 
+## Bağımsız alt ajan incelemesi (v0.3.0)
+
+İddialar (inceleme `a42b432`'ye karşı; `npm run check` iki kez geçti):
+
+| İddia | Sonuç |
+|---|---|
+| 1. TOPLA'da hiçbir klibin zamanı değişmez; BAĞLA'da yalnız kesilen parçalar | **Tutuyor** — doğrulamayı geçen her şey için. İki ölçülmemiş yolda plan dışı bir klibe DURMADAN ÖNCE dokunulabiliyordu: "end taşır" anlamında ilk park yuvası (M5) ve bağlı kılavuz silme (M6) → **düzeltildi** |
+| 2. Doğrulama atlatılamaz | **Tutuyor**; adımlar arası kullanıcı Ctrl+Z'si sayıdan düşülmüyordu (M2) ve yalnız-bağlama yolunda timeline denetimi yoktu (L1) → **düzeltildi** |
+| 3. Yardımcı yokken BAĞLA hiçbir şeye dokunmaz | **Tutuyor**; grup boyutu sınırı kesmeden SONRA fark ediliyordu (H1), bağlama hatasında mesaj genel kalıyordu (L2), yarım düzende tekrar basmak park kopyalarını silebiliyordu (L3) → **düzeltildi** |
+| 4. Localhost dışına kapı yok | **Tutuyor** (127.0.0.1, uzak adres + Host + sabit zamanlı token, CORS yok, iki komut, şema, 1 MB, enjeksiyon etkisiz, token dosyası 600). Panel izinleri gerekenden geniş (L7) → gerekçeli bırakıldı; eski token dosyası (L9) → açılışta silinir |
+| 5. Her UXP API'si d.ts'te, her ExtendScript çağrısı belgeli | **Tutuyor** (satırlar ve 18 başlık tek tek karşılaştırıldı) |
+| 6. Referans transaction sınırını aşmaz | **Tutuyor** |
+
+Bulgular ve yapılanlar:
+
+| # | Bulgu | Yapılan |
+|---|---|---|
+| H1 | Yardımcı ≤ 64 öğe/grup; BAĞLA bunu kesmeden sonra öğreniyordu, tekrar basmak da hep aynı hataya düşüyordu | Sınırlar tek yerde (`linker.LINK_LIMITS` = helper.js `LIMITS`): grup ≤ 256 öğe, ad ≤ 1024, istek başına ≤ 64 grup; BAĞLA planı kesmeden ÖNCE denetler (`limits`) |
+| H2 | Park ofseti kare hizalı değil | P ve yuva başları `getTimebase` ile kareye yukarı yuvarlanır (okunamazsa atlanır); kare-altı WAV'lar için kalan risk belirsizlik 10'da |
+| M1 | Negatif ofsetler ancak adımlar uygulandıktan sonra ölçülüyor | Kabul + gerekçe (belirsizlik 11): başarısızlık her durumda Ctrl+Z ile tam geri dönüyor |
+| M2 | `expectState(…, null, …)` → kullanıcı Ctrl+Z'si sayılmıyordu | Her adımda bir önceki hâl verilir; bilinmeyen değişiklikte "sayı güvenilir değil, yedeği kullan" (`undomid`) |
+| M3 | Teyit edilemeyen bağ "tamam" diye raporlanıyordu | "⚠ BAĞLA bitti ama … DOĞRULANAMADI" + tıklayarak kontrol talimatı (`linksource`) |
+| M4 | Uzun çekimlerde tek istek zaman aşımına uğrayabilir | 8'er grupluk partiler (90 sn); host.jsx her track'i istek başına bir kez okur (önbellek, bağlamadan sonra sıfırlanır) |
+| M5 | İlk park yuvasının önünde yalnız 10 sn | Her yuvanın iki yanında ≥ WAV boyu (`endmove`: set sonrası ezme en kötü durumuyla) |
+| M6 | BAĞLA, kamerasına bağlı kılavuzu silebilir | Ön koşul: TOPLA düzeni ("önce TOPLA", `notcollected`); kalan tek yol (TOPLA'nın taşımadığı, tesadüfen yerinde kalan çift) doğrulamayla yakalanır ve mesaj nedenini söyler |
+| L1 | Yalnız-bağlama yolunda onay sırasında değişen timeline fark edilmiyordu | `multisetEqual(s0, sF)` |
+| L2 | Bağlama isteği hatasında genel mesaj | "kesme doğrulandı ve yerinde; yardımcıyı düzelt, tekrar bas" |
+| L3 | Durmuş, geri alınmamış düzende tekrar basmak park kopyalarını silerdi | Yarım iş koruması (`stale`) |
+| L4 | Kamera = uzantı | Belgelendi (belirsizlik 9) |
+| L5 | Tutulan kanaldan sesi olmayan gruptan kılavuz silinir | Plan uyarısı |
+| L6 | Park bölgesi hızla büyür | Belgelendi (tasarım 6) |
+| L7 | `fullAccess` ve portsuz `http://127.0.0.1` | Bırakıldı: token dosyası ev klasöründe (yardımcı UXP'nin `plugin-data:` yolunu güvenilir bilemez); ağ izni biçimi belgelenmediği için iki biçim — ikisi de yalnız localhost |
+| L8 | PlayerDebugMode .reg tüm CEP 12 eklentilerinin imza denetimini gevşetir | BENIOKU + KURULUM riski ve geri almayı söylüyor; paket imzalı olduğu için büyük ihtimalle gerekmez |
+| L9 | Çökmüş oturumdan kalan token dosyası + port işgalcisi | Yardımcı açılışta eski dosyayı siler; yerel kötü amaçlı süreç zaten dosyayı okuyabilir (tehdit modeli: tarayıcılar) |
+| L10 | İkinci ping 3 sn | 3 deneme, 1 sn arayla |
+| L11 | Sequence yalnız adla; `file:C:/…` URL'si | Ad: belirsizlik 12; URL: `file:/C:/…` (Adobe tarifi) |
+| L12 | Zoom `_LR/_MS`, `_trim` sahte kanal; iki Sony gövdesi | Kanal kuralı sıkılaştı (`names`); cihaz çakışması belirsizlik 8 |
+
 ## Dosya haritası (yeni / değişen)
 
 ```
@@ -207,7 +257,7 @@ npm run package:spread
 
 | Senaryo | Ne gösterir |
 |---|---|
-| `sync` | **Sentetik gerçek senkron sonucu**: 22 kamera (11 çekim × A038C0xx + C01xx, Spread sonrası her biri kendi track'inde, bağlı kılavuz sesleriyle), 12 WAV (4 kayıt × Tr1/Tr2/TrLR, her kayıt birden çok çekimi kapsıyor, kare-altı start, biri in≠0), V1'de "YAĞ SIVISI" grafiği. TOPLA onayı ve düzeni (A→V1, C→V2, Tr1/Tr2/TrLR→A1–A3, kılavuzlar A4–A5, grafik yerinde, 3 transaction, Ctrl+Z 2) → TrLR kapatılır (localStorage) → BAĞLA: 22 parça tick düzeyinde = WAV ∩ çapa, TrLR + 22 kılavuz silindi, 11 grup tek bağ (grup dışı bağ yok), 5 transaction, kameralar değişmedi, Ctrl+Z × 4 → TOPLA sonrası birebir |
+| `sync` | (park ofseti kare hizalı da sınanır) **Sentetik gerçek senkron sonucu**: 22 kamera (11 çekim × A038C0xx + C01xx, Spread sonrası her biri kendi track'inde, bağlı kılavuz sesleriyle), 12 WAV (4 kayıt × Tr1/Tr2/TrLR, her kayıt birden çok çekimi kapsıyor, kare-altı start, biri in≠0), V1'de "YAĞ SIVISI" grafiği. TOPLA onayı ve düzeni (A→V1, C→V2, Tr1/Tr2/TrLR→A1–A3, kılavuzlar A4–A5, grafik yerinde, 3 transaction, Ctrl+Z 2) → TrLR kapatılır (localStorage) → BAĞLA: 22 parça tick düzeyinde = WAV ∩ çapa, TrLR + 22 kılavuz silindi, 11 grup tek bağ (grup dışı bağ yok), 5 transaction, kameralar değişmedi, Ctrl+Z × 4 → TOPLA sonrası birebir |
 | `wav2groups` | bir WAV iki grubu kapsıyor → 2 parça, in = WAV.in + (parça.start − WAV.start), iki grup ayrı bağ |
 | `outside` | çapa dışı ses silinir; kısmen dışarıdaki kırpılır; tamamen içerideki olduğu gibi kalır |
 | `overlap` | senkron iki ilgisiz çekimi üst üste bindirmiş → TOPLA DURUR, çakışma (V1 + kılavuz A2) raporlanır, hiçbir şey değişmez (yedek bile yok) |
@@ -216,7 +266,13 @@ npm run package:spread
 | `setnoop` | set action'lar kırpmıyor → "İLK PARÇA TUTMADI" + tick farkları, kalanlara/bağlamaya geçmez, Ctrl+Z × 2 → TOPLA sonrası birebir |
 | `setmove` | set anlamı "start klibi taşır" → End→Start→In→Out sırası yine doğru parçalar |
 | `linkfail` | bir grubun linkSelection'ı false → hangi grup, neden; kesme yerinde; Ctrl+Z sayısı |
-| `linksource` | getLinkedItems bağ yerine aynı kaynaklıları döndürüyor → "doğrulanamadı" (uydurulmaz) |
+| `linksource` | getLinkedItems bağ yerine aynı kaynaklıları döndürüyor → "⚠ … DOĞRULANAMADI" + kontrol talimatı ("tamam" denmez) |
+| `endmove` | set anlamı "end klibi taşır" + set sonrası çakışan klip EZİLİR → yuva boşlukları sayesinde gerçek kliplere dokunulmaz, parçalar doğru |
+| `undomid` | kullanıcı TOPLA'nın park adımından sonra Ctrl+Z basar → DUR, adım sayıdan düşülür, timeline asıl hâlinde |
+| `stale` | ilk parçada DURMUŞ ve geri alınmamış düzende tekrar BAĞLA → BAŞLAMAZ ("YARIM hâlde"); Ctrl+Z × 2 sonrası normal çalışır |
+| `notcollected` | TOPLA yapılmadan BAĞLA → "önce TOPLA", hiçbir şey değişmez (bağlı kılavuz silinmez) |
+| `limits` | bir grupta 271 bağlanacak öğe (> 256) → kesmeden ÖNCE plan hatası |
+| `names` | ad kuralları: `_Tr1/_TrLR/_LR/_MS` kanal, `_trim` kanal değil; cihaz A / C / DJI / # |
 | `rebind` | ikinci BAĞLA: kesme/silme yok → yedek/transaction yok, yalnız bağlama |
 | `again` | ikinci TOPLA → "Zaten toplanmış" |
 | `channels` | kanal kutuları sequence'tan (Tr1, Tr2, TrLR); localStorage bozuksa panel çökmez |
@@ -239,7 +295,17 @@ Mock'un set In/Out/Start/End anlamı TAHMİNDİR (`M.setSem`: trim / move / noop
 6. **CEP 12 + self-signed** yükleme; olmazsa PlayerDebugMode .reg; o da olmazsa `%TEMP%\spread-helper.log`.
 7. **ExtendScript koleksiyon indeksi** (belge 1, örnek 0) — iki taban da taranıyor; `videoTracks[i]` örnekteki gibi 0 = V1 varsayıldı
    (yanlışsa klip bulunamaz → bağlanmaz, zarar yok).
-8. Cihaz öneki kuralı: aynı harf önekli iki farklı kamera (ör. iki "C…" Sony) tek cihaz sayılır → çakışırsa TOPLA durur.
+8. Cihaz öneki kuralı: aynı harf önekli iki farklı kamera (ör. iki "C…" Sony) tek cihaz sayılır → çakışırsa TOPLA durur (elle
+   ayırma yolu yok — ileride medya yolundaki kart klasörü kullanılabilir).
+9. Kamera = video DOSYASI uzantısı: .mov/.mp4 bir grafik ya da logo da "kamera" sayılır (TOPLA onu bir cihaz track'ine dizer; BAĞLA'da
+   çapa olabilir). Ham senkron aşamasında kabul edildi; durum raporunun SINIFLAMA bölümü bunu gösterir.
+10. Park kopyalarının kare hizası: ofset kare hizalı, ama senkronun kare-altı bıraktığı bir WAV'ın kopyası kare-altında kalır; Premiere
+    klon başlangıcını kareye yuvarlıyorsa park doğrulaması tutmaz → DUR (Ctrl+Z × 1).
+11. Negatif ofsetler ilk transaction'larda değil: TOPLA'da 2., BAĞLA'da 4. adımda. Premiere reddederse transaction bütün olarak
+    başarısız olur (ölçülür, sayılmaz) ya da doğrulama yakalar → her durumda Ctrl+Z ile tam dönüş. Ayrı bir ölçüm transaction'ı
+    eklenmedi (her iki durumda da geri dönüş tam; kullanıcı fazladan adım istemiyor).
+12. Yardımcı sequence'ı ADIYLA tanır (ExtendScript `sequenceID` ile UXP `guid`'in aynı olduğu kanıtlanmadı); UXP tarafı hemen önce
+    guid ile aynı sequence'ta olduğunu denetler.
 
 ### Sonraki adım
 

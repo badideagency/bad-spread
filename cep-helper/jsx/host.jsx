@@ -95,23 +95,38 @@ function spreadHelper_items(coll, count) {
   return out;
 }
 
-/** Tek eşleşme → { item, count: 1 }; yok ya da birden çok → { item: null, count } */
-function spreadHelper_find(seq, it) {
-  var tracks = spreadHelper_tracks(seq, it.kind);
-  if (it.track >= tracks.numTracks) return { item: null, count: 0 }; // docs: https://ppro-scripting.docsforadobe.dev/collection/trackcollection/#trackcollectionnumtracks
-  var track = tracks[it.track]; // PProPanel örneği: activeSequence.videoTracks[0] = V1
-  if (!track) return { item: null, count: 0 };
-  var clipsColl = track.clips; // docs: https://ppro-scripting.docsforadobe.dev/sequence/track/#trackclips
-  var clips = spreadHelper_items(clipsColl, clipsColl.numItems); // docs: https://ppro-scripting.docsforadobe.dev/collection/trackitemcollection/#trackitemcollectionnumitems
+/** Bir track'in kliplerini (anahtar değerleriyle) BİR KEZ okur; aynı istekte önbellekten. */
+function spreadHelper_index(seq, kind, track, cache) {
+  var key = kind + track;
+  if (cache[key]) return cache[key];
+  var rows = [];
+  var tracks = spreadHelper_tracks(seq, kind);
+  if (track < tracks.numTracks && tracks[track]) { // docs: https://ppro-scripting.docsforadobe.dev/collection/trackcollection/#trackcollectionnumtracks
+    var clipsColl = tracks[track].clips; // docs: https://ppro-scripting.docsforadobe.dev/sequence/track/#trackclips
+    var clips = spreadHelper_items(clipsColl, clipsColl.numItems); // docs: https://ppro-scripting.docsforadobe.dev/collection/trackitemcollection/#trackitemcollectionnumitems
+    for (var i = 0; i < clips.length; i++) {
+      var c = clips[i];
+      var pi = c.projectItem; // docs: https://ppro-scripting.docsforadobe.dev/item/trackitem/#trackitemprojectitem
+      rows.push({
+        item: c,
+        st: String(c.start.ticks), // docs: https://ppro-scripting.docsforadobe.dev/item/trackitem/#trackitemstart , https://ppro-scripting.docsforadobe.dev/other/time/#timeticks
+        en: String(c.end.ticks), // docs: https://ppro-scripting.docsforadobe.dev/item/trackitem/#trackitemend
+        nm: pi ? String(pi.name) : null // docs: https://ppro-scripting.docsforadobe.dev/item/projectitem/#projectitemname
+      });
+    }
+  }
+  cache[key] = rows;
+  return rows;
+}
+
+/** Tek eşleşme → { item, count: 1 }; yok ya da birden çok → { item: null, count }. PProPanel örneği: videoTracks[0] = V1. */
+function spreadHelper_find(seq, it, cache) {
+  var rows = spreadHelper_index(seq, it.kind, it.track, cache);
   var hit = null;
   var n = 0;
-  for (var i = 0; i < clips.length; i++) {
-    var c = clips[i];
-    var st = String(c.start.ticks); // docs: https://ppro-scripting.docsforadobe.dev/item/trackitem/#trackitemstart , https://ppro-scripting.docsforadobe.dev/other/time/#timeticks
-    var en = String(c.end.ticks); // docs: https://ppro-scripting.docsforadobe.dev/item/trackitem/#trackitemend
-    var pi = c.projectItem; // docs: https://ppro-scripting.docsforadobe.dev/item/trackitem/#trackitemprojectitem
-    if (st === it.start && en === it.end && pi && String(pi.name) === it.name) { // docs: https://ppro-scripting.docsforadobe.dev/item/projectitem/#projectitemname
-      hit = c;
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].st === it.start && rows[i].en === it.end && rows[i].nm === it.name) {
+      hit = rows[i].item;
       n++;
     }
   }
@@ -194,13 +209,14 @@ function spreadHelper_link(req) {
     var seqName = String(seq.name); // docs: https://ppro-scripting.docsforadobe.dev/sequence/sequence/#sequencename
     if (seqName !== req.sequence) return spreadHelper_err("aktif sequence \"" + seqName + "\", beklenen \"" + req.sequence + "\" \u2014 hi\u00e7bir \u015fey yap\u0131lmad\u0131");
     var results = [];
+    var cache = {};
     for (var g = 0; g < req.groups.length; g++) {
       var grp = req.groups[g];
       var found = [];
       var missing = [];
       var i;
       for (i = 0; i < grp.items.length; i++) {
-        var f = spreadHelper_find(seq, grp.items[i]);
+        var f = spreadHelper_find(seq, grp.items[i], cache);
         if (f.item) found.push(f.item);
         else missing.push(spreadHelper_label(grp.items[i]) + (f.count > 1 ? " (" + f.count + " aday)" : " (yok)"));
       }
@@ -227,10 +243,11 @@ function spreadHelper_link(req) {
         r.linked = ok !== false;
         if (!r.linked) r.detail = "linkSelection false d\u00f6nd\u00fc";
         else {
-          // taze bul ve doğrula
+          // taze bul (önbellek sıfırlanır) ve doğrula
+          cache = {};
           var again = [];
           for (i = 0; i < grp.items.length; i++) {
-            var f2 = spreadHelper_find(seq, grp.items[i]);
+            var f2 = spreadHelper_find(seq, grp.items[i], cache);
             if (f2.item) again.push(f2.item);
           }
           if (again.length !== grp.items.length) {

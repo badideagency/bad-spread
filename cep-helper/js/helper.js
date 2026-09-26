@@ -23,6 +23,8 @@
   var VERSION = "0.3.0";
   var PORT = 47731;
   var MAX_BODY = 1024 * 1024;
+  // Panelle AYNI sınırlar (spread/src/linker.ts LINK_LIMITS) — panel BAĞLA planında kesmeden ÖNCE denetler
+  var LIMITS = { groupItems: 256, groupsPerRequest: 64, name: 1024, sequenceName: 512 };
 
   function infoPath(pathMod, platform, home) {
     if (/^win/i.test(platform)) return pathMod.win32.join(home, "AppData", "Roaming", "BadIdeaAgency", "SpreadHelper", "helper.json");
@@ -41,11 +43,13 @@
 
   function cleanLinkRequest(body) {
     if (!body || typeof body !== "object") throw bad("gövde nesne değil");
-    if (typeof body.sequence !== "string" || !body.sequence || body.sequence.length > 512) throw bad("sequence adı geçersiz");
-    if (!Array.isArray(body.groups) || body.groups.length < 1 || body.groups.length > 1000) throw bad("groups 1..1000 olmalı");
+    if (typeof body.sequence !== "string" || !body.sequence || body.sequence.length > LIMITS.sequenceName) throw bad("sequence adı geçersiz");
+    if (!Array.isArray(body.groups) || body.groups.length < 1 || body.groups.length > LIMITS.groupsPerRequest)
+      throw bad("groups 1.." + LIMITS.groupsPerRequest + " olmalı");
     var groups = body.groups.map(function (g, gi) {
       if (!g || typeof g !== "object" || typeof g.id !== "string" || !ID_RE.test(g.id)) throw bad("grup " + gi + ": id geçersiz");
-      if (!Array.isArray(g.items) || g.items.length < 1 || g.items.length > 64) throw bad("grup " + g.id + ": items 1..64 olmalı");
+      if (!Array.isArray(g.items) || g.items.length < 1 || g.items.length > LIMITS.groupItems)
+        throw bad("grup " + g.id + ": items 1.." + LIMITS.groupItems + " olmalı");
       var items = g.items.map(function (it, ii) {
         var where = "grup " + g.id + " öğe " + ii;
         if (!it || typeof it !== "object") throw bad(where + ": nesne değil");
@@ -53,7 +57,7 @@
         if (typeof it.track !== "number" || !Number.isInteger(it.track) || it.track < 0 || it.track > 999) throw bad(where + ": track geçersiz");
         if (typeof it.start !== "string" || !TICKS_RE.test(it.start)) throw bad(where + ": start geçersiz");
         if (typeof it.end !== "string" || !TICKS_RE.test(it.end)) throw bad(where + ": end geçersiz");
-        if (typeof it.name !== "string" || !it.name || it.name.length > 1024) throw bad(where + ": name geçersiz");
+        if (typeof it.name !== "string" || !it.name || it.name.length > LIMITS.name) throw bad(where + ": name geçersiz");
         return { kind: it.kind, track: it.track, start: it.start, end: it.end, name: it.name };
       });
       return { id: g.id, items: items };
@@ -219,6 +223,12 @@
         return server ? server.address() : null;
       },
       start: function () {
+        // önceki (çökmüş) bir oturumdan kalan bilgi dosyası: sunucu açılamazsa panel eski token'la başka bir sürece gitmesin
+        try {
+          deps.fs.unlinkSync(file);
+        } catch (e) {
+          /* yoksa geç */
+        }
         return new Promise(function (resolve, reject) {
           server = deps.http.createServer(handle);
           server.on("error", function (e) {
@@ -249,7 +259,7 @@
     };
   }
 
-  var api = { createHelper: createHelper, cleanLinkRequest: cleanLinkRequest, literal: literal, infoPath: infoPath, VERSION: VERSION, PORT: PORT };
+  var api = { createHelper: createHelper, cleanLinkRequest: cleanLinkRequest, literal: literal, infoPath: infoPath, VERSION: VERSION, PORT: PORT, LIMITS: LIMITS };
   if (typeof module === "object" && module && module.exports) module.exports = api;
 
   // ------------------------------------------------------------------ CEP içinde kendiliğinden başla

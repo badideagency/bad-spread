@@ -7,10 +7,23 @@
 import { selectExactly } from "./edit";
 import { expectAfterPark, expectFinal, makeCollectPlan, parkedOf, type CollectPlan } from "./collect";
 import { fileName, roleLabel } from "./classify";
-import { askUser, expectState, makeBackup, multisetEqual, parkBase, prepareTracks, reportStop, runTx, SpreadStop } from "./guard";
+import {
+  askUser,
+  assertNotStopped,
+  expectState,
+  forgetStopped,
+  makeBackup,
+  multisetEqual,
+  parkBase,
+  prepareTracks,
+  rememberStopped,
+  reportStop,
+  runTx,
+  SpreadStop,
+} from "./guard";
 import { compareLayout, findExp, snapshotOverlaps } from "./layout";
 import { fmtClip, relocate, secOf, settle, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
-import { requireActive } from "./session";
+import { requireActive, type SeqContext } from "./session";
 import { isKept } from "./settings";
 import { log } from "./ui";
 
@@ -33,11 +46,13 @@ function printCollectPlan(plan: CollectPlan, s: Snapshot): void {
 export async function runCollect(): Promise<void> {
   const executed: string[] = [];
   let backupName: string | null = null;
+  let ctx: SeqContext | null = null;
   log("▶ TOPLA", "head");
   try {
-    const ctx = await requireActive();
+    ctx = await requireActive();
     log(`sequence: "${ctx.name}"`, "dim");
     const s0 = await snapshot(ctx);
+    assertNotStopped(ctx, s0, "TOPLA");
     const plan = makeCollectPlan(s0, isKept);
     printCollectPlan(plan, s0);
     if (plan.errors.length) throw new SpreadStop(`Plan kurulamadı (${plan.errors.length} hata). TOPLA BAŞLAMADI, hiçbir şey değişmedi.`);
@@ -108,7 +123,7 @@ export async function runCollect(): Promise<void> {
     log(`✓ TX-1 doğrulandı: ${src1.length} klip park yerinde, diğer ${s0.clips.length - src1.length} klip birebir.`, "ok");
 
     // TX-2 yerleştir: park kopyaları −P zaman + dikey ofsetle hedefe; park kopyaları silinir
-    await expectState(ctx, sP, null, executed);
+    await expectState(ctx, sP, expected, executed); // kullanıcı park'ı geri aldıysa adım düşülür
     const taken = new Set<ClipInfo>();
     const parked = plan.moves.map((m) => {
       const c = findExp(sP, parkedOf(m.x.clip, P), taken);
@@ -143,9 +158,11 @@ export async function runCollect(): Promise<void> {
       "ok"
     );
     for (const u of plan.unknown) log(`   dokunulmadı: ${trackLabel(u.clip.kind, u.clip.track)} "${fileName(u.clip)}" (${u.why})`, "dim");
+    forgetStopped();
     log(CHECK_MSG, "head");
     log(`Beğenmezsen: timeline'a tıkla, Ctrl+Z'ye ${executed.length} kez bas — ya da yedek sequence "${backupName}"i kullan.`, "dim");
   } catch (e) {
+    if (executed.length && ctx) await rememberStopped(ctx, "TOPLA");
     reportStop("TOPLA", e, executed, backupName);
   }
 }

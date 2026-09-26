@@ -15,6 +15,9 @@ klipleri bağlamak için ona bağlanır (yalnız bu bilgisayarın içinden: 127.
 
 3) Spread panelinde hâlâ "Yardımcı: bağlı değil" yazıyorsa:
    - PlayerDebugMode_CSXS12.reg dosyasına çift tıkla → Evet (CEP 12'nin imza denetimini geliştirici kipine alır).
+     DİKKAT: bu, senin kullanıcı hesabındaki TÜM CEP 12 eklentileri için imza denetimini gevşetir (imzasız eklenti de yüklenir).
+     Yardımcı imzalı olduğu için çoğu durumda gerekmez. Geri almak: regedit → HKEY_CURRENT_USER\Software\Adobe\CSXS.12 →
+     PlayerDebugMode değerini sil ya da "0" yap (yardımcı yalnız bu ayarla çalışıyorsa o zaman "bağlı değil" olur).
    - Premiere Pro'yu kapatıp aç, panelde "Yardımcıyı kontrol et"e bas.
    - Yine olmazsa: %TEMP%\spread-helper.log dosyasını bana getir.
 
