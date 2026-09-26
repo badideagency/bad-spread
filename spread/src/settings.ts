@@ -316,18 +316,22 @@ const vecOk = (v: unknown): v is Vec => Array.isArray(v) && v.length === 4 && v.
 
 /** Geçerli (biçimi doğru, aynı Premiere sürümünde ölçülmüş, kuralı ölçümden yeniden çıkan) kalibrasyon ya da null. */
 export function loadTrimCal(guid: string, host: string): TrimCal | null {
+  if (host === "?") return null; // Premiere sürümü okunamıyor → sürüm değişikliği fark edilemez → saklanan ölçüm kullanılmaz
   const c = allCals()[guid];
-  if (!c || c.v !== 1 || c.guid !== guid || c.host !== host || !c.vec || !c.rule || typeof c.delta !== "string") return null;
+  if (!c || c.v !== 1 || c.guid !== guid || c.host !== host || !c.vec || !c.rule || typeof c.delta !== "string" || !/^\d+$/.test(c.delta)) return null;
   if (!SET_ACTS.every((a) => vecOk(c.vec[a]))) return null;
   const again = chooseRule(c.vec).rule;
   if (!again || again.tail !== c.rule.tail || again.head.join("+") !== (Array.isArray(c.rule.head) ? c.rule.head.join("+") : "")) return null;
   return c;
 }
 
-export function saveTrimCal(c: TrimCal): void {
+/** Saklar; Premiere sürümü okunamıyorsa ("?") saklamaz (false). */
+export function saveTrimCal(c: TrimCal): boolean {
+  if (c.host === "?") return false;
   const all = allCals();
   all[c.guid] = c;
   write(CAL_KEY, JSON.stringify(all));
+  return true;
 }
 
 export function forgetTrimCal(guid: string): void {

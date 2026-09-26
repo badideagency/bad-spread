@@ -14,7 +14,8 @@
 //     Start/In = baş kırpma (start ve in birlikte), fark üretim anındaki hâlden. In'in / Start'ın gerçek anlamı ölçülmedi → BAĞLA önce
 //     KALİBRE eder; mock bunu diğer anlamlarla da sınar:
 //   ? M.setSem "trim" (v0.3.3 tahmini; mutlak, sırayla): in/out değişince start sabit; start/end değişince karşı kenar sabit;
-//     "move" (start klibi taşır), "endmove" (end klibi taşır), "noop" (hiçbir şey), "snap" (real + değer kareye yuvarlanır)
+//     "move" (start klibi taşır), "endmove" (end klibi taşır), "noop" (hiçbir şey), "snap" (real + değer kareye yuvarlanır),
+//     "lastwins" (real, ama aynı klibe tek transaction'da birden çok action gelirse yalnız sonuncusu uygulanır)
 // v0.3.0 (TOPLA / BAĞLA): cep-helper/js/helper.js GERÇEK sunucusu 127.0.0.1:47731'de başlatılır; ExtendScript tarafı
 // (cep-helper/jsx/host.jsx) Node vm'inde, mock timeline'ın üstünde kurulmuş sahte bir Premiere DOM'u (app.project.activeSequence…)
 // ile çalışır. Panel → HTTP → yardımcı → host.jsx → sahte DOM zinciri uçtan uca sınanır.
@@ -125,9 +126,10 @@ function wrapItem(id) {
     const c0 = { ...need(id).c }; // "real": fark, action ÜRETİLİRKEN okunan hâlden
     counters.setActions.set(id, [...(counters.setActions.get(id) ?? []), name]);
     return {
+      __set: id,
       apply: () => {
         const f = need(id);
-        if (M.setSem === "real" || M.setSem === "snap") {
+        if (M.setSem === "real" || M.setSem === "snap" || M.setSem === "lastwins") {
           const v = M.setSem === "snap" ? (BigInt(t.ticks) / FRAME25) * FRAME25 : BigInt(t.ticks);
           const field = { in: "inPt", out: "outPt", start: "start", end: "end" }[name];
           const d = v - c0[field];
@@ -315,8 +317,10 @@ projectW = {
     const snap = deepCopy();
     const S = seqByGuid(state.activeGuid);
     frozen = S ? { V: S.v.length, A: S.a.length } : null;
+    // "lastwins": aynı klibe tek transaction'da birden çok set action → yalnız SONUNCUSU uygulanır (tek başına her biri doğru)
+    const run = M.setSem === "lastwins" ? acts.filter((a, i) => !a.__set || !acts.slice(i + 1).some((b) => b.__set === a.__set)) : acts;
     try {
-      for (const a of acts) a.apply();
+      for (const a of run) a.apply();
     } catch (e) {
       restore(snap); // atomik
       mockGen++;
@@ -584,6 +588,11 @@ scenarios.trim = async () => {
   else ok("kırpılmış 2 kamera → SPREAD BAŞLAMADI (kırpma eşitlemesi kaldırıldı), nedeni ve yapılacak yazıldı");
   if (JSON.stringify(state.sequences, repl) !== before || counters.txNames.length || counters.setActions.size) fail("kırpılmış kamerayla bir şey değişti");
   else ok("hiçbir şeye dokunulmadı (yedek bile alınmadı), hiç set action yok");
+  setupReal({ nCams: 6, nWavSessions: 2, trimmed: [1, 4] });
+  M.noType = true; // medya süresi okunamıyor — başı kırpılmış (in ≠ 0) yine de bilinir
+  const out2 = await clickAndWait("btn-spread", yes);
+  if (!/✗ SPREAD DURDU: 2 kamera klibi kırpılmış/.test(out2) || counters.txNames.length) fail("medya süresi okunamazken başı kırpılmış kamera baştan reddedilmedi:\n" + out2.split("\n").slice(-4).join("\n"));
+  else ok("medya süresi okunamasa da başı kırpılmış (in ≠ 0) kamera → SPREAD baştan BAŞLAMADI");
 };
 
 scenarios.broken = async () => {
@@ -1202,7 +1211,8 @@ function checkLinks(seq, groups, label) {
 const doneRe = /✓ SPREAD tamam|✗ SPREAD DURDU|✓ TOPLA tamam|✗ TOPLA DURDU|✓ BAĞLA tamam|⚠ BAĞLA bitti|✗ BAĞLA DURDU|✓ KES tamam|İptal edildi|Zaten dağıtılmış|Zaten toplanmış|Durum raporu hazır/;
 const txOf = (prefix) => counters.txNames.filter((n) => n.startsWith(prefix));
 const TOPLA_TX = "TOPLA: yedek sequence,TOPLA: ilk park (ölçüm),TOPLA: park,TOPLA: ilk yerleştirme (ölçüm),TOPLA: yerleştir";
-const CAL_TX = ["kopyaları", "SetOutPoint", "SetEnd", "SetInPoint", "SetStart", "kopyalarını sil"].map((x) => `BAĞLA: kalibrasyon ${x}`);
+const CAL_TX = ["kopyaları", "SetOutPoint", "SetEnd", "SetInPoint", "SetStart", "baş+kuyruk birlikte", "kopyalarını sil"].map((x) => `BAĞLA: kalibrasyon ${x}`);
+const CAL_TX_NORULE = CAL_TX.filter((x) => !/birlikte/.test(x)); // tek action'lardan kural çıkmazsa "birlikte" adımı yok
 async function scan() {
   markLog();
   els["btn-channels"].click();
@@ -1306,6 +1316,20 @@ scenarios.dup_only = async () => {
   if (!/✗ TOPLA DURDU: Çift kopya silme doğrulaması tutmadı/.test(o3) || !/Ctrl\+Z'ye 1 kez bas/.test(o3) || txOf("TOPLA").slice(m).includes("TOPLA: ilk park (ölçüm)"))
     fail("TX-0 fazladan silince TOPLA durmadı:\n" + o3.split("\n").slice(-6).join("\n"));
   else ok("TX-0 fazladan bir klip silerse → TOPLA DURDU (Ctrl+Z × 1), taşımaya geçmedi");
+  // KAMERA klibi (video + sesi) yapıştırılarak çoğaltılmış → otomatik silinmez (kopyanın sesi ayırt edilemez), TOPLA başlamaz
+  await collectThen(smallSpec());
+  const S3 = seqByGuid("guid-main-edit");
+  const v3 = S3.v.flat().find((c) => c.name.startsWith("A038C001"));
+  const a3 = S3.a.flat().find((c) => c.name === v3.name && c.start === v3.start);
+  S3.v.push([{ ...v3, id: nextId++, linkId: "Lpaste" }]);
+  S3.a.push([{ ...a3, id: nextId++, linkId: "Lpaste" }]);
+  mockGen++;
+  const before3 = JSON.stringify(state.sequences, repl);
+  const k3 = counters.txNames.length;
+  const o4 = await clickAndWait("btn-collect", yes, doneRe);
+  if (!/✗ TOPLA DURDU: KAMERA klibinin çift kopyası var .*elle sil/.test(o4) || !/V1 \/ V\d+: "A038C001_260912AA\.MP4"/.test(o4) || JSON.stringify(state.sequences, repl) !== before3 || counters.txNames.length !== k3)
+    fail("kamera çifti TOPLA'yı durdurmadı / bir şey değişti:\n" + failLines(o4));
+  else ok("kamera klibi (video + sesi) çoğaltılmış → otomatik silinmedi, TOPLA BAŞLAMADI ('elle sil'), hiçbir şey değişmedi");
 };
 
 scenarios.calib_guard = async () => {
@@ -1322,6 +1346,14 @@ scenarios.calib_guard = async () => {
     fail("kalibrasyonda beklenmeyen değişiklik DURDURMADI:\n" + failLines(o));
   else ok("kalibrasyon adımında başka bir klip değişti → DURDU (Ctrl+Z × 3), kesime geçmedi, kayıt yazılmadı");
   if (lsStore.get("spread.trimCal.v1")) fail("yarım kalibrasyon kaydedildi");
+  // kullanıcı kalibrasyonun son adımını (kopyaları sil) TX-1'den önce geri alırsa → hangi adım geri alındı bilinir, sayı güvenilir
+  await collectThen(smallSpec());
+  await startHelper();
+  M.undoAfterTx = "BAĞLA: kalibrasyon kopyalarını sil";
+  const o2 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/"kalibrasyon kopyalarını sil" adımı geri alınmış görünüyor/.test(o2) || /GÜVENİLİR DEĞİL/.test(o2) || !/Ctrl\+Z'ye 6 kez bas/.test(o2))
+    fail("kalibrasyonun son adımı geri alınınca doğru adım/sayı bildirilmedi:\n" + o2.split("\n").slice(-5).join("\n"));
+  else ok("kalibrasyonun 'kopyaları sil' adımı geri alındı → DURDU, adım düşüldü, Ctrl+Z × 6 (sayı güvenilir)");
 };
 
 scenarios.keepcam_tiny = async () => {
@@ -1402,8 +1434,8 @@ scenarios.real0912 = async () => {
 // regress-trim.sh); yeni kod aynı senaryoda geçmeli ve hiçbir klibin aynı kenarına iki action üretmemeli.
 scenarios.regress_trim = async () => {
   const old = process.env.SPREAD_REGRESS === "old";
+  // gerçek koşudaki gibi TrLR de eşlenmiş (A3) → A kamera kılavuzu A5'te (gerçek rapordaki satır)
   setupFromReport(R0912, ["A27", "A30"]);
-  await setMap("Zoom TrLR", "sil");
   const out = await clickAndWait("btn-collect", yes, doneRe);
   if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + failLines(out));
   const collected = snapList();
@@ -1411,10 +1443,12 @@ scenarios.regress_trim = async () => {
   counters.setActions.clear();
   const out2 = await clickAndWait("btn-bind", yes, doneRe);
   if (old) {
+    // gerçek raporun satırı: A5 "A038C001_260912BD.MP4" [6792.720s–6795.040s] in=0 out=589317120000; okunan out −393257410560000,
+    // fark −393846727680000 (end de aynı farkla — gerçek raporda yalnız out verildi)
     const want =
-      /✗ BAĞLA DURDU: İLK PARÇA TUTMADI[^\n]*\n\s*• A\d+ "A038C001_260912BD\.MP4" \[6792\.720s–6795\.040s\] in=0 out=589317120000 tutmadı → .*outPt: beklenen=589317120000 okunan=-393257410560000 \(fark -393846727680000 tick\)/;
+      /✗ BAĞLA DURDU: İLK PARÇA TUTMADI[^\n]*\n\s*• A5 "A038C001_260912BD\.MP4" \[6792\.720s–6795\.040s\] in=0 out=589317120000 tutmadı → end: beklenen=\d+ okunan=\d+ \(fark -393846727680000 tick\); outPt: beklenen=589317120000 okunan=-393257410560000 \(fark -393846727680000 tick\)$/m;
     if (!want.test(out2)) return fail("ESKİ kod gerçek set anlamında beklenen sayılarla düşmedi:\n" + failLines(out2));
-    ok("ESKİ kod (v0.3.3): ilk parça A038C001 [6792.720s–6795.040s] — out beklenen 589317120000, okunan −393257410560000 (−1548.16 s), fark −393846727680000 → gerçek Premiere raporuyla BİREBİR");
+    ok("ESKİ kod (v0.3.3): ilk parça A5 \"A038C001_260912BD.MP4\" [6792.720s–6795.040s] in=0 — out beklenen 589317120000, okunan −393257410560000 (−1548.16 s), fark −393846727680000 → gerçek Premiere raporuyla BİREBİR (track, ad, park konumu, out)");
     if (!/executeTransaction → true; addAction 4\/4/.test(out2.split("TX-2")[1] ?? "")) fail("eski ilk parça transaction'ı 4 action değil");
     else ok("eski ilk parça: End → Start → In → Out tek transaction'da (addAction 4/4) — kuyruk farkı iki kez uygulandı");
     return;
@@ -1422,9 +1456,9 @@ scenarios.regress_trim = async () => {
   if (!/✓ BAĞLA tamam/.test(out2)) return fail("YENİ kod gerçek set anlamında BAĞLA'yı tamamlamadı:\n" + failLines(out2));
   const calLines = out2.split("\n").filter((l) => /tek başına \((outPt|end|inPt|start) /.test(l) && /→ \(Δstart/.test(l));
   const want = [/SetOutPoint .*\(0, \+1, 0, \+1\)/, /SetEnd .*\(0, \+1, 0, \+1\)/, /SetInPoint .*\(\+1, 0, \+1, 0\)/, /SetStart .*\(\+1, 0, \+1, 0\)/];
-  if (!want.every((re) => calLines.some((l) => re.test(l))) || !/seçilen kural: kuyruk = SetOutPoint, baş = SetInPoint/.test(out2))
+  if (!want.every((re) => calLines.some((l) => re.test(l))) || !/seçilen kural: kuyruk = SetOutPoint, baş = SetInPoint/.test(out2) || !/SetInPoint \+ SetOutPoint BİRLİKTE .*hedefle birebir \(etkiler toplanıyor\)/.test(out2))
     fail("kalibrasyon ölçümü / kuralı beklenenden farklı:\n" + calLines.join("\n"));
-  else ok("YENİ kod: KALİBRASYON Out/End = kuyruk (0,+1,0,+1), In/Start = baş (+1,0,+1,0) ölçtü → kural kuyruk = SetOutPoint, baş = SetInPoint");
+  else ok("YENİ kod: KALİBRASYON Out/End = kuyruk (0,+1,0,+1), In/Start = baş (+1,0,+1,0) ölçtü → kural kuyruk = SetOutPoint, baş = SetInPoint; In + Out BİRLİKTE tek transaction'da da hedefle birebir");
   if (!/TX-2 \(ilk parça — ölçüm\): "A038C001_260912BD\.MP4" → \[0\.000s–2\.320s\]/.test(out2) || !/executeTransaction → true; addAction 1\/1/.test(out2.split("TX-2")[1] ?? ""))
     fail("yeni ilk parça beklenenden farklı (A038C001, tek action olmalı):\n" + out2.split("\n").filter((l) => /TX-2|addAction/.test(l)).join("\n"));
   else ok("YENİ kod: aynı ilk parça (A038C001'in baştaki 2.32 sn'si; park'ta [6792.720s–6795.040s]) TEK action'la (yalnız SetOutPoint; baş farkı 0 → action yok) doğru kırpıldı");
@@ -1437,7 +1471,7 @@ scenarios.regress_trim = async () => {
   const trimmed = [...counters.setActions.values()].length;
   if (dbl || !trimmed) fail(`aynı kenara iki action üretilen klip: ${dbl} (set action alan klip ${trimmed})`);
   else ok(`${trimmed} klibin hiçbirinde aynı kenara iki action yok (kalibrasyon kopyaları dahil)`);
-  checkExactly(seqByGuid("guid-main-edit"), expectBagla(collected, S0912, ["Zoom TrLR"]).exp, "12 Eylül BAĞLA gerçek set anlamında");
+  checkExactly(seqByGuid("guid-main-edit"), expectBagla(collected, S0912, []).exp, "12 Eylül BAĞLA gerçek set anlamında (TrLR eşlenmiş)");
 };
 
 scenarios.trimcal_rules = async () => {
@@ -1489,9 +1523,15 @@ scenarios.trimcal_rules = async () => {
   const mvBad = T.measureVec({ start: 0n, end: 100n, inPt: 0n, outPt: 100n }, { start: 0n, end: 76n, inPt: 0n, outPt: 75n }, -25n);
   if (!mv || mv.join() !== "0,1,0,1" || mvBad !== null) fail(`measureVec: ${mv} / ${mvBad}`);
   else ok("measureVec: tam kat → etki vektörü; tam kat olmayan fark (ör. kareye yuvarlama) → null");
-  const d = T.calDelta(L, 254016000000n);
-  if (d === null || d % 10160640000n === 0n || d >= 254016000000n) fail(`calDelta ${d}`);
-  else ok("calDelta: < 1 sn ve kare sınırına düşmüyor");
+  const TPS_ = 254016000000n;
+  const frames_ = [24n, 25n, 30n, 48n, 50n, 60n, 120n].map((f) => TPS_ / f).concat([(TPS_ * 1001n) / 30000n, (TPS_ * 1001n) / 24000n, (TPS_ * 1001n) / 60000n]);
+  let dBad = [];
+  for (const len of [L, TPS_, TPS_ / 2n, TPS_ / 10n, 3n * TPS_ + 12345n]) {
+    const d = T.calDelta(len, TPS_);
+    if (d === null || d >= TPS_ || d > len / 4n || frames_.some((f) => d % f === 0n) || d % (TPS_ / 48000n) !== 0n || d % (TPS_ / 44100n) !== 0n) dBad.push(`${len}→${d}`);
+  }
+  if (dBad.length) fail(`calDelta: ${dBad.join(", ")}`);
+  else ok("calDelta: < 1 sn, ≤ boy/4, 44.1/48 kHz örnek ızgarasında, hiçbir yaygın kare hızında (24…120, NTSC) kare sınırına düşmüyor");
 };
 
 scenarios.calib_cache = async () => {
@@ -1526,6 +1566,14 @@ scenarios.calib_cache = async () => {
   if (!/✓ BAĞLA tamam/.test(o3) || !txOf("BAĞLA").slice(m).includes("BAĞLA: kalibrasyon kopyaları") || !/Premiere 26\.6\.0/.test(o3))
     fail("Premiere sürümü değişince yeniden ölçülmedi:\n" + failLines(o3));
   else ok("Premiere sürümü değişti (26.5.1 → 26.6.0) → yeniden kalibre edildi");
+  for (let i = 0; i < 4; i++) undo();
+  M.hostVersion = null; // sürüm okunamıyor → "?" → ölçüm saklanmaz, her BAĞLA'da yeniden
+  lsStore.delete("spread.trimCal.v1");
+  const h = txOf("BAĞLA").length;
+  const o4 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ BAĞLA tamam/.test(o4) || !txOf("BAĞLA").slice(h).includes("BAĞLA: kalibrasyon kopyaları") || !/SAKLANMADI, her BAĞLA'da yeniden ölçülür/.test(o4) || lsStore.get("spread.trimCal.v1"))
+    fail("Premiere sürümü okunamazken kalibrasyon saklandı / ölçülmedi:\n" + failLines(o4));
+  else ok("Premiere sürümü okunamıyor ('?') → ölçüldü ama SAKLANMADI (sürüm değişikliği fark edilemez)");
   checkExactly(seqByGuid("guid-main-edit"), expectBagla(collected, SMALL).exp, "üçüncü BAĞLA düzeni");
 };
 
@@ -1841,16 +1889,31 @@ scenarios.setnoop = async () => {
   if (!/SetOutPoint tek başına .*okunan fark start \+0, end \+0, inPt \+0, outPt \+0/.test(out) || !/kuyruk: ne SetOutPoint ne SetEnd/.test(out))
     fail("ölçümler raporda yok:\n" + failLines(out));
   else ok("ölçümler raporda: her action'ın okunan farkı + neden kural çıkmadı");
-  if (txOf("BAĞLA").join(",") !== ["BAĞLA: yedek sequence", ...CAL_TX].join(",") || counters.links) fail(`kalibrasyondan sonra devam etti: ${txOf("BAĞLA").join(", ")}`);
+  if (txOf("BAĞLA").join(",") !== ["BAĞLA: yedek sequence", ...CAL_TX_NORULE].join(",") || counters.links) fail(`kalibrasyondan sonra devam etti: ${txOf("BAĞLA").join(", ")}`);
   if (mainTracks() !== afterCollect) fail("kalibrasyon düzeni değiştirdi");
   else ok("kalibrasyon kopyaları silindi → düzen TOPLA sonrasıyla birebir (geri almaya gerek yok)");
-  if (!/Ctrl\+Z'ye 6 kez bas/.test(out) || !/geri alman gerekmez/.test(out)) fail("geri alma notu yanlış:\n" + out.split("\n").slice(-4).join("\n"));
+  if (/Ctrl\+Z'ye \d+ kez bas/.test(out) || !/Yapılan adımlar \(6\): .*Bu adımlar düzeni DEĞİŞTİRMEDİ .*geri alman GEREKMEZ/s.test(out))
+    fail("geri alma notu yanlış / çelişkili:\n" + out.split("\n").slice(-4).join("\n"));
+  else ok("rapor çelişkisiz: 6 kalibrasyon adımı bildirildi, 'düzen değişmedi, geri alman GEREKMEZ' (Ctrl+Z talimatı yok)");
   const n = txOf("BAĞLA").length;
   M.setSem = "real";
   const out2 = await clickAndWait("btn-bind", yes, doneRe);
   if (/YARIM hâlde/.test(out2) || !/✓ BAĞLA tamam/.test(out2) || !txOf("BAĞLA").slice(n).includes("BAĞLA: kalibrasyon kopyaları"))
     fail("kalibrasyon yedek plana düştükten sonra tekrar basınca BAĞLA (yeniden ölçerek) çalışmadı:\n" + out2.split("\n").slice(-12).join("\n"));
   else ok("tekrar bas → 'yarım iş' sanılmadı, kalibrasyon kaydedilmediği için yeniden ölçüldü, BAĞLA tamam");
+};
+
+scenarios.setlastwins = async () => {
+  // her action tek başına doğru ama aynı klibe iki action (baş + kuyruk) tek transaction'da toplanmıyor → kalibrasyonun "birlikte"
+  // adımı yakalar → kural yok → YEDEK PLAN; gerçek parçalara hiç dokunulmaz
+  await collectThen(smallSpec());
+  const afterCollect = mainTracks();
+  await startHelper();
+  M.setSem = "lastwins";
+  const out = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/KALİBRASYON TUTARLI BİR KURAL VERMEDİ/.test(out) || !/BİRLİKTE .*hedef TUTMADI/.test(out) || !/"etkiler toplanır" varsayımını tutmadı/.test(out) || mainTracks() !== afterCollect || txOf("BAĞLA").includes("BAĞLA: kesim hazırlığı"))
+    fail("baş + kuyruk birlikte toplanmayınca kalibrasyon yakalamadı:\n" + failLines(out));
+  else ok("tek başına her action doğru, ama baş + kuyruk birlikte toplanmıyor → kalibrasyonun 'birlikte' adımı yakaladı → YEDEK PLAN, kesim yok, düzen aynı");
 };
 
 scenarios.setsnap = async () => {
@@ -2819,16 +2882,16 @@ scenarios.stale = async () => {
     fail("kalibre edilmiş kural ilk parçada tutmayınca DURMADI:\n" + failLines(o1));
   else ok("kalibrasyon kuralı ilk parçada tutmadı → DURDU, kalibrasyon kaydı silindi, YEDEK PLAN yazıldı");
   if (/"guid-main-edit"/.test(lsStore.get("spread.trimCal.v1") ?? "")) fail("tutmayan kalibrasyon kaydı silinmedi");
-  if (!/Ctrl\+Z'ye 8 kez bas/.test(o1)) fail("geri alma talimatı yanlış (6 kalibrasyon + kesim hazırlığı + ilk parça = 8)");
+  if (!/Ctrl\+Z'ye 9 kez bas/.test(o1)) fail("geri alma talimatı yanlış (7 kalibrasyon + kesim hazırlığı + ilk parça = 9)");
   const n = counters.txNames.length;
   const out = await clickAndWait("btn-bind", yes, doneRe);
   if (!/YARIM hâlde/.test(out) || counters.txNames.length !== n) fail("yarım düzende BAĞLA yeniden başladı:\n" + out);
   else ok("geri alınmamış yarım düzende BAĞLA BAŞLAMADI");
-  for (let i = 0; i < 8; i++) undo();
-  if (mainTracks() !== afterCollect) fail("Ctrl+Z × 8 geri getirmedi");
+  for (let i = 0; i < 9; i++) undo();
+  if (mainTracks() !== afterCollect) fail("Ctrl+Z × 9 geri getirmedi");
   const out2 = await clickAndWait("btn-bind", yes, doneRe);
   if (!/✓ BAĞLA tamam/.test(out2) || !/KALİBRASYON SONUCU/.test(out2)) fail("geri aldıktan sonra BAĞLA (yeniden ölçerek) çalışmadı:\n" + failLines(out2));
-  else ok("Ctrl+Z × 8 sonrası BAĞLA yeniden ölçtü ve normal çalıştı");
+  else ok("Ctrl+Z × 9 sonrası BAĞLA yeniden ölçtü ve normal çalıştı");
 };
 
 scenarios.notcollected = async () => {

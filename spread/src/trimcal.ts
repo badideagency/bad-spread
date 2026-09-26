@@ -130,11 +130,18 @@ export function planTrim(f0: Edges, target: Edges, rule: TrimRule, vec: Record<S
 /** Denemede hedef alan içeri doğru değişir: kuyruk (out/end) −δ, baş (in/start) +δ. */
 export const inward = (a: SetAct): bigint => (a === "out" || a === "end" ? -1n : 1n);
 
-/** Deneme farkı: kopyanın ¼'ünü ve 1 sn'yi aşmaz; bilerek kare sınırına DÜŞMEZ (gerçek parçalar kare arasında kesilebilir). */
+/**
+ * Deneme farkı: kopyanın ¼'ünü ve 1 sn'yi aşmaz. 1/300 sn ızgarasında (44.1 / 48 / 96 kHz ses örneğine denk düşer — Premiere ses
+ * kenarlarını örneğe yuvarlıyorsa ölçüm bozulmasın) ama kare sınırına DÜŞMEZ: k, 5'in ve 6'nın katı değil (60/120, 50, 30, 25, 24 fps
+ * kareleri bu ızgarada 5, 6, 10, 12, 25'in katlarıdır; NTSC kareleri hiç denk gelmez). Gerçek parçalar kare arasında da kesilir.
+ */
 export function calDelta(len: bigint, tps: bigint): bigint | null {
+  const g = tps / 300n;
   const base = len / 4n < tps ? len / 4n : tps;
-  const d = base - 12345n;
-  return d > 0n ? d : null;
+  let k = base / g;
+  if (k >= 300n) k = 299n;
+  while (k > 0n && (k % 5n === 0n || k % 6n === 0n)) k--;
+  return k > 0n ? k * g : null;
 }
 
 /** Günlük / handoff satırı. */

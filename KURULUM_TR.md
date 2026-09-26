@@ -28,8 +28,8 @@ Her işlem önce onay sorar ve **önce yedek sequence** alır. Her adımdan sonr
   aynı adımda **iki kez** uyguladı (out = −1548.16 sn). Artık:
   - her kenara **tek** komut gider;
   - hangi komutun ne yaptığı tahmin edilmez, **ölçülür** (aşağıda "KALİBRASYON").
-- **Çift kopya TOPLA'yı durdurmaz.** Aynı dosya aynı yerde iki kez varsa TOPLA ilk adımında fazlasını siler; en küçük numaralı
-  track'teki kalır. Onay penceresinde yazar.
+- **Harici ses çifti TOPLA'yı durdurmaz.** Aynı ses dosyası (Zoom, DJI…) aynı yerde iki kez varsa TOPLA ilk adımında fazlasını
+  siler; en küçük numaralı track'teki kalır. Onay penceresinde yazar. **Kamera klibi** çiftini ise elle silmen gerekir (aşağıda neden).
 - **Kılavuz sesler en altta.** Track sırası:
   1. seçtiğin kaynaklar;
   2. korunan kamera sesi;
@@ -37,10 +37,10 @@ Her işlem önce onay sorar ve **önce yedek sequence** alır. Her adımdan sonr
   4. kamera kılavuz sesleri.
 
   BAĞLA'nın boşalttığı track'ler ("Sil" ve kılavuzlar) en altta kalır.
-- **1 kareden kısa kamera sesi parçası yok.** Örnek: 12 Eylül'de C0143'ün 0.04 sn'si. Böyle bir parça, yanındaki kameranın sesine katılır.
-  Yanındaki kamera orayı kapsamıyorsa atlanır ve günlüğe yazılır.
-- **SPREAD, kırpılmış kamera klibi varsa başlamaz.** Kırpılmış kamera = başı ya da sonu kesilmiş kamera klibi. Eski "kırpma eşitlemesi"
-  adımı da aynı çift kırpma hatasını taşıyordu. Kamera klipleri tam boyken SPREAD eskisi gibi çalışır.
+- **1 kare ya da daha kısa kamera sesi parçası yok.** Örnek: 12 Eylül'de C0143'ün 0.04 sn'si (25 fps'te tam 1 kare). Böyle bir parça,
+  yanındaki kameranın sesine katılır. Yanındaki kamera orayı kapsamıyorsa atlanır ve günlüğe yazılır.
+- **SPREAD, taşıyacağı kamera kliplerinden biri kırpılmışsa başlamaz.** Kırpılmış kamera = başı ya da sonu kesilmiş kamera klibi.
+  Eski "kırpma eşitlemesi" adımı da aynı çift kırpma hatasını taşıyordu. Kamera klipleri tam boyken SPREAD eskisi gibi çalışır.
 
 ---
 
@@ -133,10 +133,15 @@ Ana yol **klasör kurulumu**:
   ```
   Oturumların sırası kamera sayaçlarından (A038C001, C0142…) ve Zoom saatlerinden (133224…) gelir. Hepsi aynı sırayı vermezse panel sorar.
 - **Çift kopya** = aynı dosya, aynı start/end/in/out, iki ayrı track'te.
-  - Panel en küçük numaralı track'tekini tutar. Ötekileri **ilk adımda** siler (yedekten hemen sonra; diğer klipler kaymaz).
+  - **Harici ses** çiftinde (Zoom, DJI…) panel en küçük numaralı track'tekini tutar. Ötekileri **ilk adımda** siler (yedekten hemen
+    sonra; diğer klipler kaymaz).
   - Onay penceresinde "ÇİFT KOPYA — ilk adımda silinecek" satırında hangisinin silinip hangisinin kaldığı yazar.
   - 12 Eylül verinde A27 ve A30 silinir; A26 ve A29 kalır.
   - Aynı dosyanın **başka bir yerdeki** kopyası çift sayılmaz.
+  - **Kamera klibi** çiftinde TOPLA **başlamaz**: "KAMERA klibinin çift kopyası var … elle sil" der, hiçbir şey değişmez.
+    - Neden: kopyalanan kamera klibinin sesi, aslının sesiyle aynı dosya ve aynı zamanda. Panel hangi sesin hangi kopyaya ait olduğunu
+      okuyamaz. Yanlış sesi silebilir ya da sesi iki kez tutabilir.
+    - Yapılacak: fazla kopyayı **videosu ve sesiyle birlikte** elle sil, sonra TOPLA'ya tekrar bas.
 - **Sahipsiz** kayıt, hiçbir şeyle eşleşmeyen kayıttır (ör. 1 sn'lik tek kamera klibi). Silinmez: en alttaki "park" track'lerine konur, zamanı değişmez.
   Panel park ettiklerini **hatırlar**. Sonraki TOPLA ve BAĞLA onları oturumlara karıştırmaz, yeni düzende uzun bir kaydın altına denk gelseler bile.
 - **"PARK KAYDI"** sorusu: son TOPLA'dan sonra düzeni elle değiştirmişsin ve panel, park ettiği klipleri hâlâ park'ta tutup tutmayacağını soruyor.
@@ -213,7 +218,7 @@ Ana yol **klasör kurulumu**:
       "çapa dışında" yazar.
     - Oralarda kamera sesi silinmez. Kamera sesi **yalnız o aralığa** kesilir, "korunan kamera sesi" track'ine konur ve gruba bağlanır.
     - Aralığı birden çok kamera kapsıyorsa grubun en uzun kamerasının sesi kullanılır.
-    - **1 kareden kısa** parça olmaz. Böyle bir parça, yanındaki kameranın sesine katılır. Yanındaki kamera orayı kapsamıyorsa atlanır ve
+    - **1 kare ya da daha kısa** parça olmaz. Böyle bir parça, yanındaki kameranın sesine katılır. Yanındaki kamera orayı kapsamıyorsa atlanır ve
       günlüğe "≤ 1 kare → korunan kamera sesi parçası OLUŞTURULMADI" diye yazılır.
     - 12 Eylül verinde iki satır çıkar:
       - A038C001'in başı, 2.3 sn;
@@ -249,11 +254,14 @@ Ana yol **klasör kurulumu**:
 - **KALİBRASYON** (v0.3.4) nedir: panel, Premiere'in dört kırpma komutunun (SetOutPoint, SetEnd, SetInPoint, SetStart) ne yaptığını
   tahmin etmez, **ölçer**.
   - Nasıl:
-    - Kesilecek ilk sesin 4 geçici kopyasını sequence sonunun ötesine koyar.
+    - Kesilecek ilk sesin 5 geçici kopyasını sequence sonunun ötesine koyar.
     - Her kopyada **tek** komutu **ayrı bir adımda** dener ve sonucu okur.
     - Kopyaları siler. Düzenin eskisiyle birebir aynı olduğunu doğrular.
-  - Toplam **6 adım** sürer ve geri alma geçmişine 6 kayıt ekler. Düzeni değiştirmez.
+    - Sonra seçtiği kuralın baş ve kuyruk komutlarını 5. kopyada **aynı adımda birlikte** dener. Gerçek parçalarda iki kenar birlikte
+      kırpılır; bu yüzden "birlikte" de ölçülür.
+  - Toplam **7 adım** sürer ve geri alma geçmişine 7 kayıt ekler. Düzeni değiştirmez.
   - Sonuç bu sequence için saklanır. Sonraki BAĞLA'lar yeniden ölçmez; Premiere sürümü değişirse yeniden ölçer.
+    Premiere sürümü okunamıyorsa sonuç saklanmaz ve her BAĞLA'da yeniden ölçülür.
   - Günlükte yeşil **"KALİBRASYON SONUCU (kanıtlanmış — Premiere …)"** bloğu çıkar. **Bu bloğu bana getir**; handoff'a gerçek ölçüm
     olarak işleyeceğim. Aynı bilgi Durum raporunda da var.
   - Sonra kırpma, ölçülen kurala göre yapılır:
@@ -262,11 +270,12 @@ Ana yol **klasör kurulumu**:
     - değişmeyen kenara hiç komut gitmez.
 - **"KALİBRASYON TUTARLI BİR KURAL VERMEDİ"** yazarsa hiçbir kesim yapılmamıştır.
   - Geçici kopyalar silinmiş, timeline BAĞLA öncesiyle birebir aynıdır. Geri alman gerekmez.
-  - Mesaj **yedek planın** (Spread Helper'da QE razor) gerektiğini yazar. Bu sürüm yedek planı **çalıştırmaz**, çünkü o komut Adobe
-    belgelerinde yok (tahminle kesim yapılmaz).
-  - Mesajdaki ölçümleri bana getir.
+  - Mesaj **yedek planın** (Spread Helper'da QE razor) gerektiğini yazar. Bu sürüm yedek planı **çalıştırmaz**: o komut Adobe
+    belgelerinde yok ve gerçek Premiere'de ölçülmedi. Tahminle kesim yapılmaz.
+  - Yedek planın önce bir yoklamayla ölçülüp ölçülmeyeceği **senin kararın**.
+  - Tekrar basmak büyük olasılıkla aynı sonucu verir. Mesajdaki ölçümleri bana getir.
 - **"İLK PARÇA TUTMADI"** yazarsa: ölçülen kural ilk parçada tutmamıştır ve panel orada durmuştur.
-  - Panelin yazdığı kadar **Ctrl+Z** bas (ya da yedek sequence'ı kullan) ve raporu bana getir. Bu sayıya kalibrasyonun 6 adımı da dahil.
+  - Panelin yazdığı kadar **Ctrl+Z** bas (ya da yedek sequence'ı kullan) ve raporu bana getir. Bu sayıya kalibrasyonun 7 adımı da dahil.
   - Kalibrasyon kaydı silinir; bir sonraki BAĞLA yeniden ölçer.
 - Sarı **`⚠ BAĞLA bitti ama … bağı DOĞRULANAMADI`** görürsen: Premiere "bağlandı" dedi ama panel bunu okuyarak teyit edemedi.
   Bu durumda aşağıdaki kontrol yeterli; bağ yoksa satırları bana getir.

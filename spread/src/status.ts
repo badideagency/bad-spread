@@ -117,7 +117,7 @@ export async function buildStatusReport(): Promise<string> {
     L.push(`  KIRPMA KALİBRASYONU (kanıtlanmış, bu sequence'ta ${cal.at}, Premiere ${cal.host}; δ = ${cal.delta} tick):`);
     for (const l of describeCal(cal)) L.push(`    ${l}`);
   } else L.push(`  kırpma kalibrasyonu: yok (Premiere ${hostVersion()}) — bu sequence'ta ilk kesimli BAĞLA'da ölçülür`);
-  for (const d of a.duplicates) L.push(`  ÇİFT KOPYA: ${d} (TOPLA ilk adımında fazlaları siler)`);
+  for (const d of a.duplicates) L.push(`  ÇİFT KOPYA: ${d} (harici sesse TOPLA ilk adımında fazlaları siler; kamera klibiyse elle sil)`);
   L.push(`  güçlü bağlar (${a.links.length}):`);
   for (const l of describeLinks(a, 200)) L.push(`    ${l}`);
   for (const x of a.sessions) {

@@ -101,8 +101,9 @@ function printBindPlan(plan: BindPlan, s: Snapshot): void {
 
 const FALLBACK =
   "YEDEK PLAN (Spread Helper'da QE razor) gerekiyor — bu sürümde ÇALIŞTIRILMADI: QE DOM'un razor'u Adobe belgelerinde yok (yalnız " +
-  "üçüncü taraf kaynaklar) ve zaman kodu alır (kare hassasiyeti); kare arasına düşen ses kenarları tick düzeyinde doğrulanamaz, " +
-  "kanıtsız yöntemle kesim yapılmaz. Bu raporu getir (ölçümler yukarıda).";
+  "üçüncü taraf kaynaklar) ve gerçek Premiere'de ölçülmedi; ayrıca zaman kodu alır (kare hassasiyeti), korunan kamera sesinin WAV " +
+  "kenarına düşen uçları kare arasında kalabilir. Kanıtsız yöntemle kesim yapılmaz — yedek planın ölçülmesi (yoklama) SENİN KARARIN. " +
+  "Tekrar basmak büyük olasılıkla aynı sonucu verir; bu raporu getir (ölçümler yukarıda).";
 
 /** Kalibre edilmiş kuralla bir park kopyasının kırpma adımları — transaction'dan ÖNCE, sonucu önceden hesaplanarak. */
 function trimSteps(c: ClipInfo, sl: Slot, cal: TrimCal) {
@@ -139,9 +140,14 @@ async function trimTx(
     const c = parkedClip(sPre, sl, false, taken);
     return { c, steps: trimSteps(c, sl, cal) };
   });
-  await runTx(ctx, executed, label, `BAĞLA: ${label}`, (ops) => {
-    for (const { c, steps } of work) for (const st of steps) applySet(ops, c, st.act, st.value);
-  });
+  try {
+    await runTx(ctx, executed, label, `BAĞLA: ${label}`, (ops) => {
+      for (const { c, steps } of work) for (const st of steps) applySet(ops, c, st.act, st.value);
+    });
+  } catch (e) {
+    forgetTrimCal(ctx.guid); // kalibre edilmiş kural bu kırpmada hata verdi → bir sonraki BAĞLA yeniden ölçer
+    throw e;
+  }
   await settle();
   const s = await snapshot(ctx);
   const done = new Set([...doneBefore, ...now]);
@@ -154,7 +160,7 @@ async function trimTx(
         ? `İLK PARÇA TUTMADI: kalibre edilmiş kırpma (${fmtRule(cal.rule)}) ilk parçada beklenen sonucu vermedi ("fark ilk hâlden, ` +
           "etkiler toplanır\" varsayımı bu kırpmada tutmuyor). Kalan parçalar kesilmedi. "
         : `"${label}" doğrulaması tutmadı (kural: ${fmtRule(cal.rule)}). `) +
-        "Kalibrasyon kaydı silindi (bir sonraki BAĞLA yeniden ölçer). " +
+        "Kalibrasyon kaydı silindi. " +
         FALLBACK,
       probs
     );
@@ -390,7 +396,7 @@ export async function runBind(): Promise<void> {
           .map((m) => where(m.clip))
           .join(", ")}) — önce TOPLA'ya bas`
       );
-    for (const d of a.duplicates) pre.push(`çift kopya: ${d} — önce TOPLA'ya bas (fazla kopyaları ilk adımında siler)`);
+    for (const d of a.duplicates) pre.push(`çift kopya: ${d} — önce TOPLA'ya bas (harici ses çiftini ilk adımında siler; kamera çiftini elle sil)`);
     for (const e of a.errors) pre.push(e);
     for (const o of a.orphans) pre.push(`oturumsuz kayıt park dışında: ${o.label} [${secOf(o.start)}s–${secOf(o.end)}s] — TOPLA'dan sonra değişmiş; önce TOPLA'ya bas`);
     for (const u of a.unresolved) pre.push(`ayrılamayan kayıtlar (önce TOPLA): ${u.lines[0]}`);
@@ -471,7 +477,7 @@ export async function runBind(): Promise<void> {
         (plan.cuts.length
           ? cached
             ? `Kırpma: bu sequence'ta ölçülmüş kural (${fmtRule(cached.rule)}; ${cached.at}). `
-            : "Kırpma: bu sequence'ta ilk kesim → önce KALİBRASYON (set action'lar park alanındaki geçici kopyalarda AYRI adımlarda tek tek ölçülür; 6 adım, kopyalar sonra silinir). "
+            : "Kırpma: bu sequence'ta ilk kesim → önce KALİBRASYON (set action'lar park alanındaki geçici kopyalarda AYRI adımlarda tek tek, sonra seçilen kural baş + kuyruk birlikte ölçülür; 7 adım, düzeni değiştirmez, kopyalar sonra silinir). "
           : "") +
         `${edits ? "Önce yedek sequence oluşturulacak." : "Kesme/silme yok → yalnız bağlama (yedek alınmaz)."} Devam?`
     );
@@ -489,27 +495,34 @@ export async function runBind(): Promise<void> {
 
       // KALİBRASYON (sequence'ta ilk kesimde): set action'ların etkisi geçici kopyalarda ölçülür, kural seçilir, kopyalar silinir
       let cal: TrimCal | null = cached;
+      let s1Before: Snapshot | null = null; // kalibrasyonun son adımından önceki düzen (kullanıcı onu geri alırsa sayı doğru kalsın)
       if (plan.cuts.length && !cal) {
         await expectState(ctx, s1, null, executed);
         const co = await calibrateTrim(ctx, executed, s1, firstSlot(makeSlots(plan, 0n))!.piece.src, ctx.guid, host);
         s1 = co.after;
+        s1Before = co.beforeLast;
         if (!co.cal) {
           calRestored = true;
-          throw new SpreadStop(
+          const stop = new SpreadStop(
             "KALİBRASYON TUTARLI BİR KURAL VERMEDİ — hiçbir kesim yapılmadı; kalibrasyon kopyaları silindi, timeline BAĞLA öncesiyle birebir " +
               "aynı (doğrulandı). " +
               FALLBACK,
             [...co.lines, ...co.why]
           );
+          stop.restored = true;
+          throw stop;
         }
         cal = co.cal;
-        saveTrimCal(cal);
-        log(`KALİBRASYON SONUCU (kanıtlanmış — Premiere ${host}; bu sequence için saklandı, handoff.md'ye işlenecek):`, "ok");
-        for (const l of describeCal(cal)) log(`   ${l}`, "ok");
+        const saved = saveTrimCal(cal);
+        log(
+          `KALİBRASYON SONUCU (kanıtlanmış — Premiere ${host}; ${saved ? "bu sequence için saklandı" : "Premiere sürümü okunamadığı için SAKLANMADI, her BAĞLA'da yeniden ölçülür"}; handoff.md'ye işlenecek):`,
+          "ok"
+        );
+        for (const l of [...describeCal(cal), ...co.lines.filter((x) => /BİRLİKTE/.test(x))]) log(`   ${l}`, "ok");
       } else if (cal) log(`Kırpma kuralı (bu sequence'ta ${cal.at} ölçüldü, Premiere ${cal.host}): ${fmtRule(cal.rule)}.`, "dim");
 
       // TX-1 kesim hazırlığı: park kopyaları + silme (tek seçim)
-      await expectState(ctx, s1, null, executed);
+      await expectState(ctx, s1, s1Before, executed);
       const so = await selectExactly(ctx, [...deletes, ...plan.cuts.map((c) => c.src)]);
       for (const n of so.notes) log(`   ${n}`, "dim");
       if (!so.exact) throw new SpreadStop("Silinecek klipler birebir seçilemedi — güvenlik için kesme/silme yapılmadı.");
@@ -626,14 +639,9 @@ export async function runBind(): Promise<void> {
     reportLinked(groups.length, unverified, executed);
     if (executed.length) log(`Beğenmezsen: yedek sequence "${backupName}"i kullan (ya da Ctrl+Z; ${LINK_UNDO_NOTE})`, "dim");
   } catch (e) {
+    // kalibrasyon kural vermedi ama düzen doğrulanarak eski hâlinde → "yarım iş" kaydı tutulmaz (başka bir kayda da dokunulmaz)
     if (executed.length && ctx && !cutsDone && !calRestored) await rememberStopped(ctx, "BAĞLA");
-    else if (cutsDone || calRestored) forgetStopped();
-    reportStop(
-      "BAĞLA",
-      e,
-      executed,
-      backupName,
-      calRestored ? ["Kalibrasyon adımları düzeni değiştirmedi (birebir aynı, doğrulandı) — geri alman gerekmez."] : executed.length ? [LINK_UNDO_NOTE] : []
-    );
+    else if (cutsDone) forgetStopped();
+    reportStop("BAĞLA", e, executed, backupName, !calRestored && executed.length ? [LINK_UNDO_NOTE] : []);
   }
 }

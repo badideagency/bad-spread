@@ -92,6 +92,8 @@ const recSpan = (r: Recording) => `[${secOf(r.start)}s–${secOf(r.end)}s]`;
 const fmtOrder = (o: number[]) => o.join(".");
 
 export interface DuplicateSet {
+  /** "external": TOPLA fazlaları siler; "camera": SİLİNMEZ (kopyanın kamera sesi, UXP'de bağ okunamadığı için ayırt edilemez) */
+  role: "camera" | "external";
   /** kalan kopya: en küçük numaralı track'teki */
   keep: ClipInfo;
   /** silinecek kopyalar (TOPLA'nın ilk adımı, ripple=false) */
@@ -101,21 +103,26 @@ export interface DuplicateSet {
 
 /**
  * ÇİFT KOPYA: aynı tür + aynı kaynak + aynı start/end/in/out (kamera kılavuz sesleri hariç: çok kanallı kamera meşru). Aynı kaynağın
- * FARKLI konumdaki kopyası çift değildir. v0.3.4: TOPLA en küçük numaralı track'tekini tutar, ötekileri ilk adımında siler.
+ * FARKLI konumdaki kopyası çift değildir. v0.3.4: HARİCİ ses çiftinde TOPLA en küçük numaralı track'tekini tutar, ötekileri ilk
+ * adımında siler. KAMERA çifti otomatik silinmez: yapıştırılmış kopyanın kamera sesi (kılavuz) aslınınkiyle aynı kaynak + aynı zaman,
+ * kanallar birbirinden ve kopyadan ayırt edilemez (UXP'de bağ okunamıyor) → yanlış sesi silmek ya da iki kez tutmak mümkün.
  */
 export function duplicateSets(items: Classified[]): DuplicateSet[] {
   const seen = new Map<string, ClipInfo[]>();
+  const roleOf = new Map<string, "camera" | "external">();
   for (const x of items) {
-    if (x.role === "guide" || x.role === "unknown") continue;
+    if (x.role !== "camera" && x.role !== "external") continue;
     const c = x.clip;
     const k = [c.kind, c.projId, c.start, c.end, c.inPt, c.outPt].join("|");
     seen.set(k, [...(seen.get(k) ?? []), c]);
+    roleOf.set(k, x.role);
   }
   const out: DuplicateSet[] = [];
-  for (const list of seen.values())
+  for (const [k, list] of seen)
     if (list.length > 1) {
       const [keep, ...drop] = list.slice().sort((p, q) => p.track - q.track);
       out.push({
+        role: roleOf.get(k)!,
         keep,
         drop,
         line: `${list.map((c) => trackLabel(c.kind, c.track)).join(" / ")}: "${keep.name}" aynı kaynak, aynı start/end/in/out (${list.length} kopya)`,

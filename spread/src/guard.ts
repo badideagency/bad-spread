@@ -30,6 +30,8 @@ import type { Sequence } from "./ppro";
 export class SpreadStop extends Error {
   /** true → kullanıcı adımlar arasında timeline'ı değiştirdi; "Ctrl+Z × N" söylenmez, yedek önerilir */
   public unreliableCount = false;
+  /** true → yapılan adımlar düzeni DEĞİŞTİRMEDİ (doğrulandı; ör. kalibrasyon): "geri al" denmez, adımlar yalnız bildirilir */
+  public restored = false;
   constructor(message: string, public details: string[] = []) {
     super(message);
     this.name = "SpreadStop";
@@ -213,7 +215,14 @@ export function reportStop(op: string, e: unknown, executed: string[], backupNam
   const msg = stop ? stop.message : e instanceof SessionError ? e.message : `Beklenmeyen hata: ${errText(e)}`;
   log(`✗ ${op} DURDU: ${msg}`, "err");
   for (const d of stop?.details ?? []) log(`   • ${d}`, "err");
-  if (executed.length && stop?.unreliableCount) {
+  if (executed.length && stop?.restored) {
+    log(`Yapılan adımlar (${executed.length}): ${executed.join(", ")}.`, "warn");
+    log(
+      `Bu adımlar düzeni DEĞİŞTİRMEDİ (doğrulandı: timeline başlangıçtaki hâliyle birebir aynı) — geri alman GEREKMEZ. ` +
+        `Geri alma geçmişinde ${executed.length} kayıt olarak durur.${backupName ? ` (Yedek "${backupName}" oluştu; silebilirsin.)` : ""}`,
+      "warn"
+    );
+  } else if (executed.length && stop?.unreliableCount) {
     log(`Yapılan adımlar (${executed.length}): ${executed.join(", ")}.`, "warn");
     log(
       `Timeline arada başka biçimde de değiştiği için Ctrl+Z sayısı GÜVENİLİR DEĞİL — yedek sequence "${backupName ?? "?"}"i kullan. ` +

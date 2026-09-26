@@ -4,8 +4,9 @@
 //
 // Transaction'lar: [yedek] → [TX-0 çift kopyaları sil] → [TX-A track hazırlığı] → TX-1 ilk oturum park (ÖLÇÜM) → TX-2 kalan park →
 // TX-3 ilk oturum yerleştir (ÖLÇÜM) → TX-4 kalan yerleştir.
-// v0.3.4 — ÇİFT KOPYA (aynı kaynak + aynı start/end/in/out; aynı kaynağın farklı konumdaki kopyası çift DEĞİL) TOPLA'yı durdurmaz: en
-// küçük numaralı track'teki kalır, ötekiler ilk adımda (TX-0, ripple=false) silinir; bütün plan çiftsiz düzen üzerinden kurulur. Sıfırdan farklı timeOffset'li clone gerçek Premiere'de tick düzeyinde ölçülmedi → ilk oturum
+// v0.3.4 — HARİCİ SES ÇİFTİ (aynı kaynak + aynı start/end/in/out; aynı kaynağın farklı konumdaki kopyası çift DEĞİL) TOPLA'yı durdurmaz:
+// en küçük numaralı track'teki kalır, ötekiler ilk adımda (TX-0, ripple=false) silinir; bütün plan çiftsiz düzen üzerinden kurulur.
+// KAMERA çifti otomatik silinmez (kopyanın kamera sesi ayırt edilemez — sessions.duplicateSets) → TOPLA başlamaz, elle silinir. Sıfırdan farklı timeOffset'li clone gerçek Premiere'de tick düzeyinde ölçülmedi → ilk oturum
 // tek başına taşınır; tutmazsa "İLK TAŞIMA TUTMADI".
 
 import { selectExactly } from "./edit";
@@ -110,7 +111,16 @@ export async function runCollect(): Promise<void> {
     assertNotStopped(ctx, sAll, "TOPLA");
     for (const w of sAll.warnings) throw new SpreadStop(`Okuma sorunu: ${w}. TOPLA BAŞLAMADI.`);
     // çift kopyalar: fazlalar ilk adımda silinecek → bütün analiz ve plan çiftsiz düzen (s0) üzerinden
-    const dups = duplicateSets(classify(sAll));
+    const allDups = duplicateSets(classify(sAll));
+    const camDups = allDups.filter((d) => d.role === "camera");
+    if (camDups.length)
+      throw new SpreadStop(
+        "KAMERA klibinin çift kopyası var (aynı kaynak + aynı start/end/in/out) — TOPLA BAŞLAMADI, hiçbir şeye dokunulmadı. Kamera çifti otomatik " +
+          "silinmez: kopyanın kamera sesi aslınınkiyle aynı kaynak ve zamanda, hangi sesin hangi kopyaya ait olduğu okunamıyor. Fazla " +
+          "kopyayı (videosu ve sesiyle birlikte) elle sil, sonra tekrar bas. (Harici ses çiftlerini TOPLA kendisi siler.)",
+        camDups.map((d) => d.line)
+      );
+    const dups = allDups;
     const drop = dups.flatMap((d) => d.drop);
     const dropSet = new Set(drop);
     const s0: Snapshot = drop.length ? { ...sAll, clips: sAll.clips.filter((c) => !dropSet.has(c)) } : sAll;

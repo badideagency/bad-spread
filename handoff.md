@@ -6,8 +6,8 @@
 |---|---|
 | Sürüm | **Spread v0.3.4** (`release/spread.ccx`) + **Spread Helper v0.3.4** (`release/spread-helper-klasor.zip`, imzasız klasör; `.zxp` yok — ADIM 3.2) |
 | Gerçek Premiere bulgusu (v0.3.3) | TOPLA doğru (4 oturum sırayla, V1 A, V2 Sony, Zoom altında, kılavuzlar en altta). BAĞLA ilk parçada durdu (koruma doğru çalıştı). Bkz. **KANITLANMIŞ** |
-| Düzeltmeler | (1) kırpma **kalibrasyonu** (ölçüm, tahmin değil) + kenar başına TEK action; (2) tutarlı kural yoksa YEDEK PLAN mesajı (yedek plan bu sürümde çalıştırılmaz — aşağıda neden); (3) mock gerçek set anlamında + **regresyon** (eski kod −1548.16 s ile düşer, yeni geçer); (4) çift kopya TOPLA'nın ilk adımında silinir; (5) çerçeve: eşlenen → korunan → "sil" → **kılavuz (en alt)** → park; (6) ≤ 1 kare korunan kamera sesi parçası yok; (7) SPREAD'in eski "kırpma eşitlemesi" (aynı hata) kaldırıldı |
-| Bulutta doğrulanan | `npm run check` (+ `scripts/regress-trim.sh`), mutasyon sınaması, bağımsız alt ajan incelemesi #6 |
+| Düzeltmeler | (1) kırpma **kalibrasyonu** (ölçüm, tahmin değil; baş + kuyruk BİRLİKTE de ölçülür) + kenar başına TEK action; (2) tutarlı kural yoksa YEDEK PLAN mesajı (yedek plan bu sürümde çalıştırılmaz — aşağıda neden; **kullanıcı kararı bekliyor**); (3) mock gerçek set anlamında + **regresyon** (eski kod gerçek raporun satırıyla birebir düşer, yeni geçer); (4) HARİCİ ses çifti TOPLA'nın ilk adımında silinir (kamera çifti: elle — aşağıda neden); (5) çerçeve: eşlenen → korunan → "sil" → **kılavuz (en alt)** → park; (6) ≤ 1 kare korunan kamera sesi parçası yok; (7) SPREAD'in eski "kırpma eşitlemesi" (aynı hata) kaldırıldı |
+| Bulutta doğrulanan | `npm run check` (+ `scripts/regress-trim.sh`), mutasyon sınaması (11/11 yakalandı), bağımsız alt ajan incelemesi #6 (2 major + 6 minor + nit'ler, hepsi ele alındı) |
 
 ### KANITLANMIŞ (gerçek Premiere, kullanıcının v0.3.3 BAĞLA raporu)
 
@@ -34,17 +34,25 @@
 ### Tasarım (v0.3.4)
 
 **Kalibrasyon** (`spread/src/calibrate.ts` çalıştırıcı, `spread/src/trimcal.ts` saf):
-- Ne zaman: BAĞLA'da yedekten SONRA, TX-1'den ÖNCE; yalnız kesim varsa ve bu sequence için geçerli kayıt yoksa. Kayıt
-  `localStorage "spread.trimCal.v1"`, sequence guid'i başına; Premiere sürümü (`uxp.host.version`) değişince geçersiz.
+- Ne zaman: BAĞLA'da yedekten SONRA, TX-1'den ÖNCE; yalnız kesim varsa ve bu sequence için geçerli kayıt yoksa.
+- Kayıt: `localStorage "spread.trimCal.v1"`, sequence guid'i başına.
+  - Premiere sürümü (`uxp.host.version`) değişince geçersiz. Sürüm okunamıyorsa ("?") hiç saklanmaz.
+  - Yüklenirken kural ölçümden yeniden çıkarılır; bozuk kayıt kullanılmaz.
+  - Kırpma transaction'ı hata verirse ya da doğrulaması tutmazsa kayıt silinir.
 - Adımlar:
-  - **C-1**: kesilecek İLK parçanın kaynağının 4 tam boy kopyası, aynı track'te park alanına. Kaynak `firstSlot`'un kaynağı; 12 Eylül'de
-    A038C001 kılavuzu. Kopyaların iki yanında ≥ ses boyu boşluk bırakılır.
+  - **C-1**: kesilecek İLK parçanın kaynağının 5 tam boy kopyası, aynı track'te park alanına (aralarında 2 sn; δ < 1 sn). Kaynak
+    `firstSlot`'un kaynağı; 12 Eylül'de A038C001 kılavuzu.
   - **C-2…C-5**: her kopyada TEK action, AYRI transaction. Hedef alan δ kadar içeri çekilir: kuyruk −δ, baş +δ.
-    - δ = min(1 sn, boy/4) − 12345 tick. Bilerek kare sınırına düşmez: gerçek parçalar kare arasında kesilir; kareye yuvarlama olursa
-      ölçüm bunu görür.
+    - δ = k/300 sn (k ≤ 299, k 5'in ve 6'nın katı değil; boy/4'ü aşmaz). 1/300 sn ızgarası 44.1 / 48 / 96 kHz ses örneğine denk düşer
+      (Premiere ses kenarlarını örneğe yuvarlıyorsa ölçüm bozulmaz). Hiçbir yaygın kare hızında (24…120, NTSC) kare sınırına düşmez;
+      kareye yuvarlama olursa ölçüm bunu görür.
     - Her adımdan sonra: yalnız o kopya değişmiş olmalı (değilse DUR).
-    - Etki = her alanın farkı ÷ hedef farkı. Tam −1 / 0 / +1 değilse "tam kat DEĞİL" sayılır.
-  - **C-6**: kopyalar silinir. Düzen kalibrasyon öncesiyle birebir aynı olmalı (değilse DUR).
+    - Etki = her alanın farkı ÷ hedef farkı. Tam −1 / 0 / +1 değilse "tam kat DEĞİL" sayılır; okunan farklar tick olarak rapora yazılır.
+  - **C-6** (yalnız tek action'lardan kural çıktıysa): 5. kopyada kuralın baş VE kuyruk action'ları TEK transaction'da. Sonuç
+    "fark ilk hâlden, etkiler toplanır" varsayımıyla hesaplananla birebir olmalı; değilse kural yok sayılır. Gerçek orta parçalar iki
+    kenarı birlikte kırptığı için bu varsayım da ölçülür (inceleme #6, m3).
+  - **C-7**: kopyalar silinir. Düzen kalibrasyon öncesiyle birebir aynı olmalı (değilse DUR). Kullanıcı bu adımı TX-1'den önce geri
+    alırsa, hangi adımın geri alındığı bilinir ve Ctrl+Z sayısı güvenilir kalır.
 - Kural (`chooseRule`):
   - kuyruk = etkisi tam (0, +1, 0, +1) olan **Out**, yoksa **End**;
   - baş = etkisi tam (+1, 0, +1, 0) olan **In**, yoksa **Start**, yoksa **In+Start** (etkilerinin toplamı (+1, 0, +1, 0) ise — kullanıcının
@@ -58,17 +66,23 @@
   - DUR: "KALİBRASYON TUTARLI BİR KURAL VERMEDİ … YEDEK PLAN (Spread Helper'da QE razor) gerekiyor — bu sürümde ÇALIŞTIRILMADI".
   - Ölçümler ve nedenler rapora yazılır.
   - Düzen birebir eski hâlinde (doğrulandı) → "yarım iş" kaydı tutulmaz; tekrar basınca yeniden ölçer.
+  - Rapor çelişkisiz: adımlar sayılır, ama "Ctrl+Z" talimatı yerine "düzen değişmedi, geri alman GEREKMEZ" yazılır (`SpreadStop.restored`).
 - **Neden yedek plan çalıştırılmıyor** (kural: tahmin yok):
   - `app.enableQE()` belgeli (Scripting Guide, Application), ve Adobe'nin PProPanel örneği `qe.project.getActiveSequence()` kullanıyor.
     Ama QE track'lerindeki `razor(timecode)` yalnız üçüncü taraf kodda geçiyor (pymiere, ppmcp); Adobe belgesi yok.
-  - `razor` zaman kodu alıyor, yani kare hassasiyetinde. Harici seslerin kare arasına düşen kenarları (WAV başı/sonu, park yuvası)
-    tick düzeyinde kesilemez → doğrulama tutmaz.
+  - Asıl neden: belgesiz ve ölçülmemiş. Ayrıca `razor` zaman kodu alıyor, yani kare hassasiyetinde. Harici parçalar çapa (kamera)
+    kenarlarında kesilir ve bunlar kare hizalı; ama korunan kamera sesinin WAV başına/sonuna düşen uçları kare arasında kalabilir.
   - Yedek plan için önce bir Probe gerekir: QE razor'un gerçek Premiere'de ne yaptığını ölçen bir yoklama. Kullanıcı kararı bekliyor.
 
 **Çift kopya** (`sessions.duplicateSets`, `topla.ts`):
 - Tanım: aynı tür + kaynak + start/end/in/out. Kılavuz sesler hariç: çok kanallı kamera meşru. Aynı kaynağın başka konumdaki kopyası çift DEĞİL.
-- En küçük numaralı track'teki kalır. Ötekiler **TX-0 "çift kopyaları sil"** ile silinir (yedekten sonra, ripple=false); kalan her klip
-  tick düzeyinde doğrulanır.
+- **Harici ses** çifti: en küçük numaralı track'teki kalır. Ötekiler **TX-0 "çift kopyaları sil"** ile silinir (yedekten sonra,
+  ripple=false); kalan her klip tick düzeyinde doğrulanır.
+- **Kamera** çifti (inceleme #6, M2) otomatik SİLİNMEZ, TOPLA başlamaz ("… elle sil").
+  - Neden: yapıştırılmış V+A kopyasının kamera sesi, aslınınkiyle aynı kaynak + aynı zaman. Kanallar birbirinden ve kopyadan ayırt
+    edilemez; UXP bağı okuyamaz.
+  - Yalnız videoyu silmek, kalan ses kopyasını "ikinci kanal" yapıyordu: BAĞLA kamera sesini iki kez tutuyordu (çift ses, bütün
+    denetimler geçerek).
 - Bütün analiz ve plan çiftsiz düzen üzerinden kurulur. Onayda "ÇİFT KOPYA — ilk adımda silinecek …" satırı çıkar.
 - Düzen zaten toplanmışsa yalnız TX-0 yapılır.
 - BAĞLA çift görürse yine başlamaz ve "önce TOPLA'ya bas" der.
@@ -85,8 +99,8 @@
 - 12 Eylül: C0143'ün 0.040 sn'si atlanır (A038C002 orayı kapsamıyor) → 2 korunan parça.
 
 **SPREAD** (`spread.ts`, `verify.ts`): eski TX-C "kırpma eşitlemesi" aynı klibe In + Out + Start + End gönderiyordu (aynı hata).
-- Kırpılmış kamera (in ≠ 0 ya da out ≠ medya sonu) varsa SPREAD BAŞLAMAZ.
-- Medya süresi okunamazsa taşıma yapılır. Klip kırpılmışsa doğrulama durdurur.
+- Taşınacak kırpılmış kamera (in ≠ 0 ya da out ≠ medya sonu) varsa SPREAD BAŞLAMAZ. in ≠ 0 medya süresi okunamasa da bilinir.
+- Medya süresi okunamaz ve in = 0 ise taşıma yapılır. Klip kırpılmışsa doğrulama durdurur.
 - `verifySpread`'in "kırpma eşitlemesi" istisnası kaldırıldı.
 
 ### Mock + regresyon (v0.3.4)
@@ -96,10 +110,14 @@
   - Start/In = baş (start ve in birlikte).
   - Diğer anlamlar da sınanır: `trim` (v0.3.3 tahmini), `move`, `endmove`, `noop`, `snap` (kareye yuvarlama).
 - `bash scripts/regress-trim.sh` (`npm run check` içinde):
-  - v0.3.3'ü (6aa05c8) geçici klasörde derler ve AYNI mock'la `regress_trim`'i çalıştırır → ESKİ kod düşer. Sonuç: "A038C001
-    [6792.720s–6795.040s] in=0 out=589317120000 tutmadı → … outPt: beklenen=589317120000 okunan=**-393257410560000** (fark
-    **-393846727680000** tick)". Gerçek raporla, park konumu dahil, BİREBİR.
-  - Yeni kod aynı senaryoda geçer. Kalibrasyon Out/End = (0,+1,0,+1), In/Start = (+1,0,+1,0) ölçer; kural Out + In.
+  - v0.3.3'ü (6aa05c8) geçici klasörde derler ve AYNI mock'la `regress_trim`'i çalıştırır → ESKİ kod düşer.
+    - Senaryo gerçek koşudaki gibi TrLR'yi de eşler, yani A kamera kılavuzu A5'te.
+    - Beklenen satır (tam satır olarak sınanır): "A5 "A038C001_260912BD.MP4" [6792.720s–6795.040s] in=0 out=589317120000 tutmadı →
+      end: … (fark −393846727680000); outPt: beklenen=589317120000 okunan=**-393257410560000** (fark **-393846727680000** tick)".
+    - Track, ad, park konumu, in ve out gerçek raporla BİREBİR. Gerçek rapor end'i vermedi; mock'ta end de aynı farkla kayar.
+  - Yeni kod aynı senaryoda geçer.
+    - Kalibrasyon Out/End = (0,+1,0,+1), In/Start = (+1,0,+1,0) ölçer; kural Out + In.
+    - In + Out birlikte de hedefle birebir.
   - İlk parça tek action alır (addAction 1/1). Hiçbir klibin aynı kenarına iki action gitmez.
 
 | Senaryo | Ne gösterir |
@@ -109,19 +127,61 @@
 | `calib_cache` | kalibrasyon sequence başına saklanır; ikinci BAĞLA kalibre etmez (onayda yazar); Premiere sürümü değişince yeniden ölçer |
 | `setnoop` | set action'lar hiçbir şey yapmıyor → kalibrasyon kural vermez → YEDEK PLAN, ölçümler raporda, düzen birebir, "yarım iş" sanılmaz, tekrar basınca yeniden ölçer |
 | `setsnap` | set değerleri kareye yuvarlanıyor → "tam kat DEĞİL" → YEDEK PLAN |
+| `setlastwins` | her action tek başına doğru ama aynı klibe tek transaction'da ikisi gelince yalnız sonuncusu uygulanıyor → kalibrasyonun "birlikte" adımı yakalar → YEDEK PLAN, gerçek parçalara dokunulmaz |
+| `calib_guard` | kalibrasyon adımı başka bir klibi değiştirirse DUR (Ctrl+Z × 3, kayıt yok); kullanıcı "kopyaları sil" adımını geri alırsa adım düşülür, sayı güvenilir (× 6) |
+| `keepcam_tiny` | ≤ 1 kare dilimin en iyisi C0101 ama komşu kamera A038C001 onu da kapsıyor → komşuya katılır (tek parça 0–2 s) |
 | `settrim` / `setmove` / `setendmove` | başka anlamlarda kalibrasyon doğru kuralı seçer (Out+Start / Out+In+Start / Out+Start) ve parçalar tick düzeyinde doğru |
 | `stale` | kalibrasyon tutarlı ama asıl kırpma tutmuyor → İLK PARÇA TUTMADI, kalibrasyon kaydı silinir, Ctrl+Z × 8; yarım düzende BAĞLA başlamaz; geri alınca yeniden ölçüp çalışır |
 | `real0912dup` | çiftli gerçek veri: onayda satır, TX-0, sonuç el ile temizlenmiş veriyle BİREBİR; başka konumdaki kopya çift değil |
-| `dup_only` | toplanmış düzende sonradan çift → yalnız yedek + TX-0; ardından BAĞLA |
+| `dup_only` | toplanmış düzende sonradan harici ses çifti → yalnız yedek + TX-0; ardından BAĞLA; TX-0 fazladan silerse DUR (Ctrl+Z × 1); kamera klibi V+A çoğaltılmışsa TOPLA başlamaz ("elle sil") |
 | `real0912` | çerçeve Tr1 A1, Tr2 A2, korunan A3, TrLR A4 (sil), kılavuzlar A5–A6; 2 korunan parça + C0143 uyarısı |
-| `trim` (SPREAD) | kırpılmış kamera → SPREAD başlamaz, hiçbir şey değişmez |
+| `trim` (SPREAD) | kırpılmış kamera → SPREAD başlamaz, hiçbir şey değişmez; medya süresi okunamasa da (in ≠ 0) |
+| `calib_cache` (ek) | bozuk kayıt kullanılmaz; Premiere sürümü okunamazsa ölçüm saklanmaz |
+
+Mutasyon (dist'te tek koruma bozulur → ilgili senaryo düşmeli; 11/11 yakalandı):
+- kalibrasyonda "yalnız kendi kopyası" denetimi yok → `calib_guard`;
+- TX-0 doğrulaması yok → `dup_only`;
+- ≤ 1 kare komşuya katma yok → `keepcam_tiny`;
+- kural vermeyen kalibrasyon "yarım iş" sayılır → `setnoop`;
+- tutmayan kırpmada kayıt silinmez → `stale`;
+- sürüm denetimi yok → `calib_cache`;
+- çiftte en büyük track kalır → `real0912dup`;
+- SPREAD kırpılmışta başlar → `trim`;
+- çerçevede "sil" kılavuzların altında → `real0912`;
+- "birlikte" adımı yok → `setlastwins`;
+- kamera çifti de otomatik silinir → `dup_only`.
+
+### Bağımsız alt ajan incelemesi #6 (v0.3.4) — engelleyici yok; 2 major + 6 minor + nit'ler ele alındı
+
+İnceleyici doğruladı (çalıştırarak):
+- ölçüm matematiği (işaretler, normalizasyon, In+Start yalnız tek başına olmayınca), rollback ve Ctrl+Z sayıları, kayıt doğrulaması;
+- eski v0.3.3 kaydıyla BAĞLA'nın çalıştığı (çerçeve kayıttan) ve yeniden TOPLA'nın yeni çerçeveye birebir dizdiği;
+- çiftsiz düzenin her yerde kullanıldığı; ≤ 1 kare birleştirme; `regress-trim.sh`.
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| M1 | `release/` paketleri hâlâ v0.3.3 | paketler yeniden üretildi (`npm run package:spread`, `package:helper`) |
+| M2 | kamera V+A çifti: yalnız video siliniyor, kalan ses "ikinci kanal" olup BAĞLA'da iki kez tutuluyordu (çift ses, denetimler geçerek) | kamera çifti otomatik silinmez → TOPLA "elle sil" der (`dup_only`) |
+| m3 | iki kenarlı kırpma (orta parça) hiç ölçülmeden TX-3'te ~26 parçaya birden uygulanıyordu | kalibrasyona C-6 "baş+kuyruk birlikte" (`setlastwins`) |
+| m4 | kural çıkmayınca rapor hem "Ctrl+Z × 6" hem "geri alman gerekmez" diyordu | `SpreadStop.restored` → yalnız "düzen değişmedi, geri alman GEREKMEZ" |
+| m5 | δ ses örneğinin altında (12345 tick); Premiere örneğe yuvarlıyorsa her ölçüm "tam kat değil" çıkardı | δ = k/300 sn (örnek ızgarasında, kare dışı) |
+| m6 | sürüm okunamazsa ("?") kayıt sürüm değişikliğinden sağ çıkıyordu | "?" iken saklanmaz / yüklenmez |
+| m7 | kırpma transaction'ı hata verirse kayıt kalıyordu; mesaj "yeniden ölçer" diye boş umut veriyordu | her hata yolunda silinir; mesaj "tekrar basmak büyük olasılıkla aynı sonucu verir" |
+| m8 | medya süresi okunamazken başı kırpılmış kamera SPREAD'de baştan reddedilmiyordu | in ≠ 0 → kırpılmış (`trim`) |
+| n9 | kullanıcı kalibrasyonun son adımını geri alırsa sayı "güvenilir değil" deniyordu | son adımdan önceki düzen TX-1 öncesi denetime verilir (`calib_guard`) |
+| n10 | bozuk `delta` Durum raporunu çökertiyordu | `delta` yalnız rakam |
+| n12 | yedek plan mesajı "kullanıcı kararı" demiyordu; kare-hassasiyeti gerekçesi abartılıydı | mesaj: belgesiz + ölçülmemiş, karar kullanıcının |
+| n13 | regresyon yalnız out'u ve park yerini sınıyordu (A4 ≠ gerçek A5) | TrLR eşlenir (gerçek koşu gibi) → tam satır A5 ile sınanır |
+| n14 | belge ifadeleri (≤ 1 kare, "taşınacak" kırpılmış kamera) | düzeltildi |
+| n15 | kopyalar arası 3L+1 sn (3 saatlik WAV'da ~33 saat park) | 2 sn |
+| n16 | kural vermeyen kalibrasyonda `forgetStopped` başka sequence'ın yarım-iş kaydını silebilirdi | çağrılmıyor |
+| n11 | bir kalibrasyon action'ı hata verirse kalibrasyon durur (kopyalar Ctrl+Z ile gider) | bilerek böyle: v0.3.3'te 4 action da kabul edildi; durup sayı söylemek kuralımız |
 
 ### Belirsizlikler (v0.3.4)
 
 1. Kalibrasyonun gerçek ölçümü henüz yok (yukarıdaki tablo). Kural tutsa bile TX-2 ilk parçayı tick düzeyinde doğrular.
-2. Bir klibin iki kenarı tek transaction'da değişiyorsa (orta parça), "etkiler toplanır" varsayımı ölçülmedi; yalnız kuyruk için
-   kanıtlı. Tutmazsa TX-2 ya da TX-3 durur, Ctrl+Z sayısını yazar ve kalibrasyon kaydını siler. Gerekirse iki kenar ayrı transaction'a
-   bölünebilir (+1 adım).
+2. İki kenarın birlikte kırpılması kalibrasyonda (C-6) tek bir kopyada, tek bir δ ile ölçülür. Gerçek parçalardaki farklar çok daha
+   büyüktür; ölçüm doğrusal bir etki varsayar. Tutmazsa TX-3 durur, Ctrl+Z sayısını yazar ve kalibrasyon kaydını siler.
 3. Kalibrasyon ses (Audio) track item'ında ölçülür. BAĞLA yalnız ses kırptığı için yeterli; video için ayrıca ölçülmedi.
 4. Çift kopya silme, bağlı bir partneri de silerse (UXP'de bağ okunamıyor) TX-0 doğrulaması durur. Clone ile oluşan kopyalar (Probe
    artıkları) bağsızdır.

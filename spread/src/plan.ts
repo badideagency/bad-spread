@@ -155,7 +155,8 @@ export function makePlan(s: Snapshot, clipType: number | null): Plan {
       if (c.name !== c.projName && c.projName !== "?")
         warnings.push(`yeniden adlandırılmış kamera klibi "${c.name}" (kaynak "${c.projName}") — overwrite kaynak adını kullanır, klip adı taşınmaz`);
     }
-    u.trimmed = v.mediaDur === null ? null : !(v.inPt === "0" && v.outPt === v.mediaDur);
+    // başı kırpılmışsa (in ≠ 0) medya süresi okunamasa da kırpılmış (v0.3.4: SPREAD baştan reddeder)
+    u.trimmed = v.inPt !== "0" ? true : v.mediaDur === null ? null : v.outPt !== v.mediaDur;
   }
 
   const stay = units.filter((u) => u.stays);
