@@ -4,9 +4,9 @@
 //   - makine okunur blok (CLIP / OVERLAP satırları)
 
 import { classify, devicesOf, sourcesOf, roleLabel } from "./classify";
-import { collectedShape, makeFrame } from "./collect";
+import { bindState, parkedFromRecord } from "./collect";
 import { analyze, describeLinks, sessionGroups } from "./sessions";
-import { getThreshold, mappingFor } from "./settings";
+import { getThreshold, loadRecord, mappingFor, recordDrift } from "./settings";
 import { big, secOf, snapshot, trackLabel, type ClipInfo } from "./model";
 import { makePlan, type Unit } from "./plan";
 import { requireActive } from "./session";
@@ -87,11 +87,20 @@ export async function buildStatusReport(): Promise<string> {
   for (const src of sourcesOf(cls)) L.push(`  harici kaynak ${src}: ${cls.filter((x) => x.role === "external" && x.source === src).length} klip`);
   for (const x of cls.filter((i) => i.role === "unknown")) L.push(`  dokunulmaz: ${trackLabel(x.clip.kind, x.clip.track)} "${x.clip.name}" (${x.why})`);
 
-  const frame = makeFrame(cls, mappingFor(sourcesOf(cls)));
-  const shape = collectedShape(frame, cls);
-  const a = analyze(s, cls, { threshold: getThreshold(), exclude: shape.shaped ? shape.parked : undefined });
+  // park listesi TOPLA KAYDINDAN (track sırasından tahmin yok)
+  const rec = loadRecord(ctx.guid);
+  const parked = parkedFromRecord(cls, rec);
+  const a = analyze(s, cls, { threshold: getThreshold(), exclude: parked });
   L.push("");
-  L.push(`OTURUMLAR (güçlü bağ eşiği %${Math.round(getThreshold() * 100)}; ${shape.shaped ? "TOPLA düzeninde — park track'leri hariç" : "TOPLA düzeninde değil"})`);
+  L.push(
+    `OTURUMLAR (güçlü bağ eşiği %${Math.round(getThreshold() * 100)}; ${rec ? `TOPLA kaydı ${rec.at} — kayıttaki park'taki ${parked.size} klip hariç` : "TOPLA kaydı yok"})`
+  );
+  if (rec) {
+    for (const d of recordDrift(rec, mappingFor(sourcesOf(cls)), Math.round(getThreshold() * 100))) L.push(`  TOPLA'dan sonra değişti: ${d}`);
+    const bs = bindState(rec, s);
+    if (rec.bind) L.push(`  BAĞLA kaydı: ${rec.bind.stage === "linked" ? "kesme/silme + bağlama" : "kesme/silme (bağlama bitmedi)"} ${rec.bind.at}; timeline'da ${bs === "applied" ? "yerinde" : bs === "partial" ? "KISMEN yerinde (düzen değişmiş)" : "yok (geri alınmış)"}`);
+    if (bs === "applied" && rec.bind!.created.length) L.push("  not: harici sesler çapalara kesildi — aşağıdaki oturum analizi kesilmiş düzene göredir (TOPLA/BAĞLA bunu kullanmaz)");
+  }
   for (const d of a.duplicates) L.push(`  ÇİFT KOPYA: ${d}`);
   L.push(`  güçlü bağlar (${a.links.length}):`);
   for (const l of describeLinks(a, 200)) L.push(`    ${l}`);

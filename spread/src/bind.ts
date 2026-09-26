@@ -9,6 +9,8 @@
 // 3) KAMERA SESİ: grubunda tutulan harici ses VARSA kılavuz sesler silinir; YOKSA (ör. oturumda Zoom/yaka yok) kamera sesi asıl
 //    sestir → silinmez, bağlanır.
 // 4) BAĞLAMA grubu: gruptaki kamera videoları + o grubun çapasına düşen harici ses parçaları (+ korunan kamera sesleri).
+// 5) SESSİZ KALACAK yerler (kamera sesi silinen grupta harici sesin kapsamadığı > 1 sn: çapa içindeki boşluklar ve çapa dışına
+//    taşan kamera kısımları) → onay penceresinde AÇIKÇA gösterilir (karar kullanıcının; kural gereği kamera sesi silinir).
 // Sahipsizler, park track'lerindekiler ve dokunulmayan öğeler BAĞLA'ya girmez.
 //
 // UXP'de razor yok → parça = createCloneTrackItemAction + set End/Start/In/Out, sonra aslı silinir. Yöntem (tümü AYNI track'te):
@@ -23,7 +25,7 @@
 import { cmpStart, fileName, where, type Classified } from "./classify";
 import { LINK_LIMITS } from "./linker";
 import { expOf, type Exp } from "./layout";
-import { big, TICKS_PER_SECOND, type ClipInfo, type Snapshot } from "./model";
+import { big, secOf, TICKS_PER_SECOND, type ClipInfo, type Snapshot } from "./model";
 import { sessionGroups, unionLength, type Analysis, type Group } from "./sessions";
 import type { Target } from "./settings";
 
@@ -58,9 +60,14 @@ export interface BindPlan {
   keptSources: string[];
   /** grup.id|kaynak → çapa içindeki harici ses süresi (birleşim, tick) — BAĞLA ÖNCESİ */
   coverage: Map<string, bigint>;
+  /** kamera sesi silinen grupta harici sesin kapsamadığı (> 1 sn) yerler — onayda gösterilir */
+  silent: string[];
   errors: string[];
   warnings: string[];
 }
+
+/** Bundan kısa sessiz kalan kısım bildirilmez (senkron kenar payı). */
+const SILENT_MIN = TICKS_PER_SECOND;
 
 const clampTo = (c: { start: bigint; end: bigint }, g: Group): [bigint, bigint] => {
   const as = big(g.anchor.start);
@@ -80,6 +87,7 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>): BindPla
   const keptGuides = new Map<Group, ClipInfo[]>();
   const keptSet = new Set<string>();
   const coverage = new Map<string, bigint>();
+  const silent: string[] = [];
   if (!a.sessions.length) errors.push("oturum yok (güçlü bağlı kayıt yok) → BAĞLA'nın bağlayacağı bir şey yok");
 
   for (const session of a.sessions) {
@@ -137,6 +145,24 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>): BindPla
         const iv = ext.filter((x) => x.source === src).map((x) => clampTo({ start: big(x.clip.start), end: big(x.clip.end) }, g));
         coverage.set(`${g.id}|${src}`, unionLength(iv));
       }
+    // kamera sesi silinen gruplarda harici sesin kapsamadığı yerler
+    for (const g of gs) {
+      const mine = pieces.filter((p) => p.group === g);
+      if (!mine.length) continue;
+      const as = big(g.anchor.start);
+      const ae = big(g.anchor.end);
+      const hole = ae - as - unionLength(mine.map((p) => [p.start, p.end] as [bigint, bigint]));
+      if (hole > SILENT_MIN) silent.push(`${g.id}: çapa "${g.anchor.name}" içinde ${secOf(hole)} sn harici ses yok → kamera sesi silineceği için orada ses kalmaz`);
+      for (const c of g.cams) {
+        if (c === g.anchor) continue;
+        const cs = big(c.start);
+        const ce = big(c.end);
+        const inside = (ce < ae ? ce : ae) - (cs > as ? cs : as);
+        const out = ce - cs - (inside > 0n ? inside : 0n);
+        if (out > SILENT_MIN)
+          silent.push(`${g.id}: "${c.name}" klibinin çapa dışındaki ${secOf(out)} sn'si harici ses almaz (parçalar çapaya göre kesilir), kamera sesi de silinir → orada ses kalmaz`);
+      }
+    }
   }
 
   // yardımcının sınırları (bağlama isteği bunları aşarsa kesmeden SONRA reddedilirdi → şimdi, hiçbir şey değişmeden)
@@ -147,7 +173,7 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>): BindPla
   for (const c of [...groups.flatMap((g) => g.cams), ...pieces.map((p) => p.src)])
     if (fileName(c).length > LINK_LIMITS.name) errors.push(`kaynak adı çok uzun (${fileName(c).length} > ${LINK_LIMITS.name}): ${where(c)}`);
 
-  return { groups, pieces, cuts, deleteGuides, deleteSil, deleteOutside, keptGuides, keptSources: [...keptSet], coverage, errors, warnings };
+  return { groups, pieces, cuts, deleteGuides, deleteSil, deleteOutside, keptGuides, keptSources: [...keptSet], coverage, silent, errors, warnings };
 }
 
 // ------------------------------------------------------------------ park yuvaları ve beklenen düzenler

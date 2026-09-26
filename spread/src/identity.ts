@@ -7,7 +7,8 @@
 //   DJI    : ^DJI_\d+_\d{8}_\d{6}$             DJI_02_20260923_175336 → cihaz "DJI", sıra [tarih, saat, sayaç]
 //   Zoom   : ^\d{6}_\d{6}_(Tr\w+)$             260912_133224_Tr1 → cihaz "Zoom", kayıt "260912_133224", kanal "Tr1", sıra [tarih, saat]
 //            (aynı Zoom saati = TEK kayıt; kanallar o kaydın parçaları)
-//   bilinmeyen: rakam grupları atılmış ad = cihaz, son rakam grubu = sayaç (her dosya kendi kaydı)
+//   bilinmeyen: rakam grupları atılmış ad = cihaz, son rakam grubu = sayaç (her dosya kendi kaydı; sondaki kanal eki _Tr1/_LR/_MS
+//            ayrılır → ZOOM0001_Tr1 ve ZOOM0001_Tr2 aynı kaydın kanalları)
 // Kamera iç saati ve dosya tarihi (mtime) KULLANILMAZ.
 
 export type Pattern = "cinema" | "sony" | "dji" | "zoom" | "generic";
@@ -38,9 +39,13 @@ export function identify(fileName: string): Identity {
   if (m) return { pattern: "dji", device: "DJI", recording: b, channel: null, order: [Number(m[2]), Number(m[3]), Number(m[1])] };
   m = /^(\d{6})_(\d{6})_(Tr\w+)$/i.exec(b);
   if (m) return { pattern: "zoom", device: "Zoom", recording: `${m[1]}_${m[2]}`, channel: "Tr" + m[3].slice(2).toUpperCase(), order: [Number(m[1]), Number(m[2])] };
-  const groups = b.match(/\d+/g) ?? [];
-  const device = b.replace(/\d+/g, "").replace(/[\s._-]+/g, "_").replace(/^_+|_+$/g, "") || "#";
-  return { pattern: "generic", device, recording: b, channel: null, order: [groups.length ? Number(groups[groups.length - 1]) : 0] };
+  // bilinmeyen desen: sondaki kanal eki (…_Tr1, …_LR, …_MS) ayrılır → aynı kaydın kanalları aynı kayıt (ör. ZOOM0001_Tr1 / _Tr2)
+  const ch = /^(.*?)[_-](tr(?:\d+|lr|ms|mix|l|r)|lr|ms)$/i.exec(b); // "_trim" kanal DEĞİL
+  const rest = ch && ch[1] ? ch[1] : b;
+  const channel = ch && ch[1] ? (/^tr/i.test(ch[2]) ? "Tr" + ch[2].slice(2).toUpperCase() : ch[2].toUpperCase()) : null;
+  const groups = rest.match(/\d+/g) ?? [];
+  const device = rest.replace(/\d+/g, "").replace(/[\s._-]+/g, "_").replace(/^_+|_+$/g, "") || "#";
+  return { pattern: "generic", device, recording: rest, channel, order: [groups.length ? Number(groups[groups.length - 1]) : 0] };
 }
 
 /** Harici ses kaynağının anahtarı (kaynak eşleme paneli): "Zoom Tr1", "Zoom TrLR", "DJI", … */

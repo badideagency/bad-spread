@@ -11,12 +11,12 @@
 //   Bilinmeyen öğeler (grafik…) YERİNDE kalır; hedef yerle çakışırsa plan HATASI.
 // Taşıma (topla.ts): park (+P) → yerleştir (Δ − P, dikey). İlk oturum hem park'ta hem yerleştirmede TEK BAŞINA (ölçüm).
 
-import { devicesOf, sourcesOf, where, type Classified, type DeviceInfo } from "./classify";
+import { devicesOf, fileName, sourcesOf, where, type Classified, type DeviceInfo } from "./classify";
 import { ceilTo } from "./guard";
 import { expOf, overlapsIn, type Exp, type OvItem } from "./layout";
 import { big, secOf, trackLabel, type ClipInfo, type Kind, type Snapshot } from "./model";
 import type { Analysis, Recording, Session } from "./sessions";
-import type { Target } from "./settings";
+import type { CollectRecord, LinkItemRec, Target } from "./settings";
 
 // ------------------------------------------------------------------ track çerçevesi
 
@@ -81,22 +81,70 @@ export function frameTrack(f: Frame, x: Classified, ch: Map<ClipInfo, number>): 
   return null;
 }
 
-/**
- * TOPLA düzeninde mi (dikey)? Her sınıflı klip ya çerçevedeki yerinde ya da PARK bölgesinde. Öyleyse park bölgesindekiler
- * (sahipsizler / ayrılamayanlar) analizden çıkarılır — aksi hâlde yeni düzende bir oturumun uzun kaydının altına düşen sahipsiz bir
- * klip "güçlü bağ" kurup o oturuma karışabilirdi.
- */
-export function collectedShape(f: Frame, items: Classified[]): { shaped: boolean; parked: Set<ClipInfo>; misplaced: Classified[] } {
+/** Klibin (zamanıyla) kimlik anahtarı — TOPLA kaydındaki park listesi için (track'ten bağımsız). */
+export const clipKey = (c: ClipInfo): string => [c.kind, c.projId, c.start, c.end, c.inPt, c.outPt].join("|");
+
+export function frameToRecord(f: Frame): CollectRecord["frame"] {
+  return {
+    devTrack: [...f.devTrack],
+    srcTrack: [...f.srcTrack],
+    silTrack: [...f.silTrack],
+    guideBase: [...f.guideBase],
+    guideCh: [...f.guideCh],
+    mappedCount: f.mappedCount,
+    guideCount: f.guideCount,
+    vPark: f.vPark,
+    aPark: f.aPark,
+  };
+}
+
+export function frameFromRecord(r: CollectRecord["frame"]): Frame {
+  const devTrack = new Map(r.devTrack);
+  return {
+    devices: [...devTrack.entries()].sort((x, y) => x[1] - y[1]).map(([key]) => ({ key, total: 0n, clips: [], sample: "" })),
+    devTrack,
+    sources: [...r.srcTrack.map(([k]) => k), ...r.silTrack.map(([k]) => k)],
+    srcTrack: new Map(r.srcTrack),
+    silSources: r.silTrack.map(([k]) => k),
+    silTrack: new Map(r.silTrack),
+    mappedCount: r.mappedCount,
+    guideBase: new Map(r.guideBase),
+    guideCh: new Map(r.guideCh),
+    guideCount: r.guideCount,
+    vPark: r.vPark,
+    aPark: r.aPark,
+  };
+}
+
+/** TOPLA kaydındaki park anahtarlarına uyan klipler (track'i ne olursa olsun). */
+export function parkedFromRecord(items: Classified[], rec: CollectRecord | null): Set<ClipInfo> {
+  const keys = new Set(rec?.parked ?? []);
+  return new Set(items.filter((x) => keys.has(clipKey(x.clip))).map((x) => x.clip));
+}
+
+/** Kayıtlı çerçeveye göre yerinde OLMAYAN sınıflı klipler (park'takiler ve bilinmeyenler hariç). */
+export function misplacedAgainst(f: Frame, items: Classified[], parked: Set<ClipInfo>): Classified[] {
   const ch = guideChannels(items);
-  const parked = new Set<ClipInfo>();
-  const misplaced: Classified[] = [];
-  for (const x of items) {
-    if (x.role === "unknown") continue;
-    const inPark = x.clip.kind === "V" ? x.clip.track >= f.vPark : x.clip.track >= f.aPark;
-    if (inPark) parked.add(x.clip);
-    else if (frameTrack(f, x, ch) !== x.clip.track) misplaced.push(x);
-  }
-  return { shaped: misplaced.length === 0, parked, misplaced };
+  return items.filter((x) => x.role !== "unknown" && !parked.has(x.clip) && frameTrack(f, x, ch) !== x.clip.track);
+}
+
+/** Yardımcının arama anahtarı (tür, track, start, end, kaynak adı). */
+export const itemKey = (i: LinkItemRec): string => [i.kind, i.track, i.start, i.end, i.name].join("|");
+export const itemOf = (c: ClipInfo): LinkItemRec => ({ kind: c.kind, track: c.track, start: c.start, end: c.end, name: fileName(c) });
+
+/**
+ * Kayıttaki BAĞLA aşaması okunan düzende geçerli mi:
+ *  - "applied": kayıtlı bağlama gruplarının BÜTÜN öğeleri yerinde (BAĞLA'nın kesme/silmesi duruyor)
+ *  - "partial": bir kısmı yok ama kesimin yarattığı parçalardan biri var (BAĞLA'dan sonra düzen değişmiş) → hiçbir komut çalışmaz
+ *  - "none"   : BAĞLA'dan geçmedi ya da tamamen geri alındı (kesimin yarattığı hiçbir parça yok)
+ */
+export function bindState(rec: CollectRecord | null, s: Snapshot): "none" | "applied" | "partial" {
+  const b = rec?.bind;
+  if (!b) return "none";
+  const have = new Set(s.clips.map((c) => itemKey(itemOf(c))));
+  const all = b.groups.flatMap((g) => g.items);
+  if (all.length && all.every((i) => have.has(itemKey(i)))) return "applied";
+  return b.created.some((i) => have.has(itemKey(i))) ? "partial" : "none";
 }
 
 // ------------------------------------------------------------------ plan
@@ -141,7 +189,8 @@ interface Ov extends OvItem {
 
 /**
  * @param parkedRecs sahipsizler + (kullanıcı onayladıysa) ayrılamayan kayıtlar → park track'leri, zaman aynı
- * @param keepInPlace TOPLA düzeninde park bölgesinde olan klipler (dokunulmaz)
+ * @param keepInPlace önceki TOPLA'nın park ettikleri (kayıttan; analize girmez): park bölgesindeyse yerinde kalır, değilse (eşleme
+ *        değişip çerçeve büyüdüyse) park track'lerine yeniden yerleşir — ZAMANI hiçbir durumda değişmez
  */
 export function makeCollectPlan(
   s0: Snapshot,
@@ -172,8 +221,13 @@ export function makeCollectPlan(
   const parkedClips = new Set(opts.parkedRecs.flatMap((r) => r.clips));
   const placeLater: Classified[] = [];
   for (const x of items) {
-    if (x.role === "unknown" || opts.keepInPlace.has(x.clip)) {
+    const parkedBefore = opts.keepInPlace.has(x.clip);
+    if (x.role === "unknown" || (parkedBefore && x.clip.track >= (x.clip.kind === "V" ? frame.vPark : frame.aPark))) {
       placements.push({ x, track: x.clip.track, delta: 0n, session: null, moves: false });
+      continue;
+    }
+    if (parkedBefore) {
+      placeLater.push(x);
       continue;
     }
     const rec = a.recordingOf.get(x.clip);

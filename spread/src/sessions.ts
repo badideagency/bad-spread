@@ -134,9 +134,16 @@ function buildRecordings(items: Classified[], warnings: string[]): { recordings:
     add(`${x.ident!.device}|${x.ident!.recording}|${x.clip.start}|${x.clip.end}`, "audio", x);
   // kılavuz sesler kendi kamerasının kaydına (aynı kaynak + aynı start/end; yoksa aynı kaynaklı ilk kamera örneği)
   const cams = [...byKey.values()].filter((r) => r.kind === "camera");
+  const ovl = (r: Recording, c: ClipInfo) => {
+    const s0 = big(c.start) > r.start ? big(c.start) : r.start;
+    const e0 = big(c.end) < r.end ? big(c.end) : r.end;
+    return e0 > s0 ? e0 - s0 : 0n;
+  };
   for (const g of items.filter((i) => i.role === "guide")) {
     const exact = cams.find((r) => r.clips.some((c) => c.kind === "V" && c.projId === g.clip.projId && c.start === g.clip.start && c.end === g.clip.end));
-    const any = exact ?? cams.find((r) => r.clips.some((c) => c.kind === "V" && c.projId === g.clip.projId));
+    // yeri farklı kılavuz: aynı kaynaklı kamera örneklerinden zamanda EN ÇOK çakışana
+    const same = cams.filter((r) => r.clips.some((c) => c.kind === "V" && c.projId === g.clip.projId)).sort((x, y) => (ovl(y, g.clip) > ovl(x, g.clip) ? 1 : ovl(y, g.clip) < ovl(x, g.clip) ? -1 : 0));
+    const any = exact ?? same[0];
     if (!any) continue; // kamerası analizde değil (ör. park'ta) → dokunulmaz
     if (!exact) warnings.push(`kılavuz ses videosuyla aynı yerde değil: ${trackLabel("A", g.clip.track)} "${g.clip.name}"`);
     any.items.push(g);
@@ -200,8 +207,8 @@ function vetoPairs(recs: Recording[]): [Recording, Recording][] {
 
 /**
  * Veto ihlali olan bileşeni en zayıf bağları keserek ayırmaya çalışır.
- * Tek anlamlı: kesme düzeyi (kesilen en güçlü bağ) < kalan en zayıf bağ − VETO_MARGIN VE kesim hiçbir kaydı sahipsiz bırakmıyor.
- * Değilse null (→ kullanıcıya sorulur).
+ * Tek anlamlı: kesme düzeyi (kesilen en güçlü bağ) < kalan en zayıf bağ − VETO_MARGIN, kesim hiçbir kaydı sahipsiz bırakmıyor VE
+ * kesilen her bağ gerekli (tek başına geri eklenince veto geri geliyor). Değilse null (→ kullanıcıya sorulur).
  */
 function resolveVeto(comp: Recording[], links: Link[]): { parts: Recording[][]; cut: Link[]; level: number; next: number } | null {
   const inComp = new Set(comp);
@@ -217,6 +224,9 @@ function resolveVeto(comp: Recording[], links: Link[]): { parts: Recording[][]; 
     if (!keep.length || parts.some((p) => p.length < 2)) return null;
     const next = Math.min(...keep.map((l) => l.ratio));
     if (next - levels[k] < VETO_MARGIN) return null;
+    // (c) kesilen HER bağ gerekli olmalı: tek başına geri eklenince veto geri gelmeli. Gereksiz bir bağ da kesiliyorsa (ör. aynı
+    // oturumun iki yarısını birleştiren zayıf bir köprü) kesim gerçek bir oturumu böler → tek anlamlı değil
+    for (const l of cut) if (!components(comp, [...keep, l]).some((p) => vetoPairs(p).length)) return null;
     return { parts, cut, level: levels[k], next };
   }
   return null;
@@ -232,7 +242,12 @@ function sessionLabel(recs: Recording[]): string {
   return [...auds, ...cams].join(" + ");
 }
 
-/** Oturumları cihaz sıra anahtarlarıyla sıralar. Çelişki / belirsizlik → issue (sıra, timeline'daki mevcut sıraya düşer). */
+/**
+ * Oturumları cihaz sıra anahtarlarıyla sıralar. Döndürülen sıra, kullanıcı onaylarsa KULLANILACAK sıradır:
+ *  - sorun yok: cihazların verdiği tek sıra
+ *  - BELİRSİZ: bilinen bütün kısıtlara uyan sıra; kısıtın olmadığı yerde timeline'daki mevcut sıra
+ *  - ÇELİŞKİ: kısıtlar birbirini tutmuyor → timeline'daki mevcut sıra
+ */
 function orderSessions(sessions: Session[]): { order: Session[]; issue: OrderIssue | null } {
   const byTimeline = sessions.slice().sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
   const devs = new Map<string, { s: Session; min: number[]; max: number[] }[]>();
@@ -263,8 +278,9 @@ function orderSessions(sessions: Session[]): { order: Session[]; issue: OrderIss
   // Kahn: her adımda tek aday olmalı (yoksa belirsiz); döngü = çelişki
   const indeg = new Map<Session, number>(sessions.map((s) => [s, 0]));
   for (const [, nexts] of after) for (const n of nexts) indeg.set(n, indeg.get(n)! + 1);
+  // Kahn: her adımda tek aday olmalı; birden çoksa BELİRSİZ (bilinen kısıtlara UYAN sıra, eşitlikte timeline — kullanıcı onaylarsa)
   const order: Session[] = [];
-  let ambiguous = false;
+  const amb: string[] = [];
   const left = new Set(sessions);
   while (left.size) {
     const ready = byTimeline.filter((s) => left.has(s) && indeg.get(s) === 0);
@@ -272,22 +288,19 @@ function orderSessions(sessions: Session[]): { order: Session[]; issue: OrderIss
       lines.push(`cihaz sıraları döngü oluşturuyor: ${[...left].map((x) => `"${x.label}"`).join(", ")}`);
       break;
     }
-    if (ready.length > 1) ambiguous = true;
+    if (ready.length > 1) amb.push(`${ready.map((x) => `"${x.label}"`).join(" / ")} arasındaki sıra cihaz sayaçlarından çıkarılamıyor`);
     const pick = ready[0];
     order.push(pick);
     left.delete(pick);
     for (const n of after.get(pick)!) indeg.set(n, indeg.get(n)! - 1);
   }
   if (lines.length) {
+    lines.push("kısıtlar çelişkili olduğundan, onaylarsan oturumlar senkronun bıraktığı (timeline'daki) sırayla dizilir");
     for (const [d, list] of devs)
       if (list.length > 1) lines.push(`cihaz ${d} sırası: ${list.map((x) => `"${x.s.label}" [${fmtOrder(x.min)}]`).join(" < ")}`);
     return { order: byTimeline, issue: { kind: "conflict", lines } };
   }
-  if (ambiguous)
-    return {
-      order: byTimeline,
-      issue: { kind: "ambiguous", lines: ["bazı oturumların ortak cihazı yok → aralarındaki sıra cihaz sayaçlarından çıkarılamıyor"] },
-    };
+  if (amb.length) return { order, issue: { kind: "ambiguous", lines: amb } };
   return { order, issue: null };
 }
 
@@ -298,6 +311,22 @@ export function analyze(s: Snapshot, items: Classified[], opts: AnalyzeOpts): An
   const included = items.filter((x) => x.role !== "unknown" && !opts.exclude?.has(x.clip));
   const { recordings, recordingOf } = buildRecordings(included, warnings);
   const links = strongLinks(recordings, opts.threshold);
+  // aynı kaydın bütün klipleri (kanallar, parçalar, örnekler) AYNI senkron konumunda olmalı: (in − start) hepsinde aynı
+  const offsets = new Map<string, Map<string, ClipInfo>>();
+  for (const r of recordings)
+    for (const x of r.items) {
+      if (x.role === "guide" || x.clip.speed !== 1) continue;
+      const k = `${r.device}|${r.ident.recording}`;
+      const off = String(big(x.clip.inPt) - big(x.clip.start));
+      const m = offsets.get(k) ?? new Map<string, ClipInfo>();
+      if (!m.has(off)) m.set(off, x.clip);
+      offsets.set(k, m);
+    }
+  for (const [k, m] of offsets)
+    if (m.size > 1)
+      errors.push(
+        `aynı kaydın klipleri farklı senkron konumunda (${k.split("|")[1]}): ${[...m.values()].map((c) => `${trackLabel(c.kind, c.track)} "${c.name}" [${secOf(big(c.start))}s]`).join(", ")} — senkronu kontrol et`
+      );
 
   const vetoDecisions: string[] = [];
   const unresolved: Unresolved[] = [];
@@ -344,6 +373,35 @@ export function analyze(s: Snapshot, items: Classified[], opts: AnalyzeOpts): An
   const sessionOf = new Map<Recording, Session>();
   for (const x of order) for (const r of x.recordings) sessionOf.set(r, x);
   return { recordings, links, sessions: order, orphans, unresolved, vetoDecisions, duplicates, orderIssue, errors, warnings, sessionOf, recordingOf };
+}
+
+/** Kısa olanın kendinden en az bu kadar kat uzun bir kaydın içine düşmesi "yalnız içerilme" kanıtı sayılır. */
+export const SUSPECT_FACTOR = 20n;
+
+/**
+ * ŞÜPHELİ ÜYE: bir oturumdaki kaydın BÜTÜN güçlü bağları, kendinden en az SUSPECT_FACTOR kat uzun kayıtların içine düşmesinden geliyor
+ * (ör. eşsiz 1 sn'lik klip, senkronun eşleyemeyip uzun bir Zoom/DJI kaydının ortasına bıraktığı). Oran kısa olana göre ölçüldüğü için
+ * bu hep %100 çıkar → kanıt zayıf. Karar kullanıcının (TOPLA sorar).
+ */
+export function suspiciousMembers(a: Analysis): { rec: Recording; session: Session; line: string }[] {
+  const out: { rec: Recording; session: Session; line: string }[] = [];
+  for (const s of a.sessions)
+    for (const r of s.recordings) {
+      const mine = a.links.filter((l) => (l.a === r || l.b === r) && a.sessionOf.get(l.a) === s && a.sessionOf.get(l.b) === s);
+      if (!mine.length) continue;
+      const len = r.end - r.start;
+      const allContained = mine.every((l) => {
+        const o = l.a === r ? l.b : l.a;
+        return (o.end - o.start) >= len * SUSPECT_FACTOR;
+      });
+      if (allContained)
+        out.push({
+          rec: r,
+          session: s,
+          line: `${r.label} (${secOf(len)} sn) ${s.id} oturumuna yalnız kendinden çok uzun ${mine.map((l) => (l.a === r ? l.b : l.a).label).join(", ")} kaydının içine düştüğü için bağlı`,
+        });
+    }
+  return out;
 }
 
 // ------------------------------------------------------------------ BAĞLA: oturum içi gruplar

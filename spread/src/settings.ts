@@ -185,3 +185,100 @@ export function bindSettingInputs(): void {
     log(`Ayar alanları bağlanamadı: ${e instanceof Error ? e.message : String(e)}`, "warn");
   }
 }
+
+// ------------------------------------------------------------------ TOPLA kaydı (sequence başına)
+// TOPLA başarıyla bitince: kullandığı track çerçevesi, kaynak eşlemesi, eşik ve PARK ettiği kliplerin anahtarları saklanır.
+// BAĞLA ve sonraki TOPLA'lar park'ı track sırasından TAHMİN ETMEZ, bu kayda bakar (sahipsiz bir klip yeni düzende bir oturumun uzun
+// kaydının altına düşse de oturuma karışmaz; kılavuz sesler silinince çerçeve kaymaz).
+// BAĞLA kesme/silmeyi doğrulayınca bağlama gruplarını (öğe değerleriyle) ve kesimin YARATTIĞI parçaları kayda ekler: kesimden sonra
+// harici sesler çapalara bölündüğü için senkron kanıtı (tam kayıtlar) artık yoktur → yeniden analiz yapılmaz, kayıt kullanılır.
+
+export interface CollectRecord {
+  v: 1;
+  guid: string;
+  frame: {
+    devTrack: [string, number][];
+    srcTrack: [string, number][];
+    silTrack: [string, number][];
+    guideBase: [string, number][];
+    guideCh: [string, number][];
+    mappedCount: number;
+    guideCount: number;
+    vPark: number;
+    aPark: number;
+  };
+  mapping: [string, Target][];
+  thresholdPct: number;
+  parked: string[];
+  /** BAĞLA'nın kesme/silmesi doğrulandıysa (null: BAĞLA'dan geçmedi) */
+  bind: BindRecord | null;
+  at: string;
+}
+
+/** Yardımcının aradığı öğe (bind.LinkTarget ile aynı biçim). */
+export interface LinkItemRec {
+  kind: "V" | "A";
+  track: number;
+  start: string;
+  end: string;
+  name: string;
+}
+
+export interface BindRecord {
+  /** "cut": kesme/silme doğrulandı, bağlama bitmedi; "linked": bağlama da yapıldı */
+  stage: "cut" | "linked";
+  groups: { id: string; label: string; items: LinkItemRec[] }[];
+  /** kesimin yarattığı (TOPLA düzeninde olmayan) ses parçaları */
+  created: LinkItemRec[];
+  at: string;
+}
+
+const REC_KEY = "spread.collectRecord.v1";
+
+function allRecords(): Record<string, CollectRecord> {
+  try {
+    const raw = read(REC_KEY);
+    const j: unknown = raw ? JSON.parse(raw) : {};
+    return j && typeof j === "object" ? (j as Record<string, CollectRecord>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function loadRecord(guid: string): CollectRecord | null {
+  const r = allRecords()[guid];
+  if (!r || r.v !== 1 || r.guid !== guid || !Array.isArray(r.parked) || !r.frame || !Array.isArray(r.mapping)) return null;
+  const b = r.bind;
+  const bindOk = !b || (Array.isArray(b.groups) && Array.isArray(b.created) && (b.stage === "cut" || b.stage === "linked"));
+  return { ...r, bind: bindOk ? (b ?? null) : null };
+}
+
+export function saveRecord(rec: CollectRecord): void {
+  const all = allRecords();
+  all[rec.guid] = rec;
+  write(REC_KEY, JSON.stringify(all));
+}
+
+/** BAĞLA aşamasını kayda yazar (null: temizle). Kayıt yoksa bir şey yapmaz. */
+export function saveBindRecord(guid: string, bind: BindRecord | null): void {
+  const r = loadRecord(guid);
+  if (r) saveRecord({ ...r, bind });
+}
+
+/** TOPLA'nın kullandığı eşlemeyi (varsayılanlar dahil) kalıcı yapar: sonradan yeni kaynak gelince varsayılanlar kaymaz. */
+export function saveMapping(mapping: Map<string, Target>): void {
+  const m = savedMap();
+  for (const [k, v] of mapping) m[k] = v;
+  write(MAP_KEY, JSON.stringify(m));
+}
+
+/** Kayıttaki eşleme / eşik bugünküyle aynı mı (değilse satırlar). */
+export function recordDrift(rec: CollectRecord, mapping: Map<string, Target>, thresholdPct: number): string[] {
+  const out: string[] = [];
+  const was = new Map(rec.mapping);
+  const show = (t: Target | undefined) => (t === undefined ? "yok" : t === "sil" ? "sil" : `A${t + 1}`);
+  for (const k of new Set([...was.keys(), ...mapping.keys()]))
+    if (was.get(k) !== mapping.get(k)) out.push(`kaynak eşlemesi: ${k} TOPLA'da ${show(was.get(k))}, şimdi ${show(mapping.get(k))}`);
+  if (rec.thresholdPct !== thresholdPct) out.push(`güçlü bağ eşiği: TOPLA'da %${rec.thresholdPct}, şimdi %${thresholdPct}`);
+  return out;
+}
