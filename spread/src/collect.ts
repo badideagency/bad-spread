@@ -5,7 +5,9 @@
 //        öğeler zamanda kaymaz.
 // DİKEY (track ÇERÇEVESİ, BAĞLA da aynısını kullanır):
 //   V: kamera cihazları (toplam süre uzun → V1; eşitse cihaz adı alfabetik) → sonra V PARK track'leri
-//   A: eşlenen kaynaklar (kullanıcının seçtiği A track'leri) → kamera kılavuz sesleri (cihaz sırasıyla, kanal kanal) →
+//   A: eşlenen kaynaklar (kullanıcının seçtiği A track'leri) → KORUNAN KAMERA SESİ track'leri (v0.3.3; kılavuz kanalı başına bir,
+//      TOPLA boş bırakır, BAĞLA harici sesin olmadığı aralıklara kesilen kamera sesini buraya koyar) → kamera kılavuz sesleri (cihaz
+//      sırasıyla, kanal kanal) →
 //      "sil" seçilen kaynaklar (kontrol için; BAĞLA siler) → A PARK track'leri
 //   PARK: sahipsiz kayıtlar ve (kullanıcı onaylarsa) ayrılamayan kayıtlar — zamanı değişmeden, çakışmayacak biçimde.
 //   Bilinmeyen öğeler (grafik…) YERİNDE kalır; hedef yerle çakışırsa plan HATASI.
@@ -28,6 +30,9 @@ export interface Frame {
   silSources: string[];
   silTrack: Map<string, number>;
   mappedCount: number;
+  /** "korunan kamera sesi" track'leri: keptBase … keptBase + keptCount − 1 (eski kayıtta 0) */
+  keptBase: number;
+  keptCount: number;
   guideBase: Map<string, number>;
   guideCh: Map<string, number>;
   guideCount: number;
@@ -63,14 +68,30 @@ export function makeFrame(items: Classified[], mapping: Map<string, Target>): Fr
   const guideCh = new Map<string, number>();
   for (const g of items.filter((x) => x.role === "guide")) guideCh.set(g.device!, Math.max(guideCh.get(g.device!) ?? 0, ch.get(g.clip)! + 1));
   const guideBase = new Map<string, number>();
-  let base = mappedCount;
+  const keptCount = guideCh.size ? Math.max(...guideCh.values()) : 0;
+  let base = mappedCount + keptCount;
   for (const d of devices) {
     guideBase.set(d.key, base);
     base += guideCh.get(d.key) ?? 0;
   }
-  const guideCount = base - mappedCount;
+  const guideCount = base - mappedCount - keptCount;
   const silTrack = new Map(silSources.map((s, i) => [s, base + i]));
-  return { devices, devTrack, sources, srcTrack, silSources, silTrack, mappedCount, guideBase, guideCh, guideCount, vPark: devices.length, aPark: base + silSources.length };
+  return {
+    devices,
+    devTrack,
+    sources,
+    srcTrack,
+    silSources,
+    silTrack,
+    mappedCount,
+    keptBase: mappedCount,
+    keptCount,
+    guideBase,
+    guideCh,
+    guideCount,
+    vPark: devices.length,
+    aPark: base + silSources.length,
+  };
 }
 
 /** Klibin çerçevedeki yeri (bilinmeyen → null). */
@@ -92,6 +113,8 @@ export function frameToRecord(f: Frame): CollectRecord["frame"] {
     guideBase: [...f.guideBase],
     guideCh: [...f.guideCh],
     mappedCount: f.mappedCount,
+    keptBase: f.keptBase,
+    keptCount: f.keptCount,
     guideCount: f.guideCount,
     vPark: f.vPark,
     aPark: f.aPark,
@@ -108,6 +131,8 @@ export function frameFromRecord(r: CollectRecord["frame"]): Frame {
     silSources: r.silTrack.map(([k]) => k),
     silTrack: new Map(r.silTrack),
     mappedCount: r.mappedCount,
+    keptBase: typeof r.keptBase === "number" ? r.keptBase : r.mappedCount,
+    keptCount: typeof r.keptCount === "number" ? r.keptCount : 0, // v0.3.2 ve öncesi kayıt: ayrılmış track yok
     guideBase: new Map(r.guideBase),
     guideCh: new Map(r.guideCh),
     guideCount: r.guideCount,
@@ -396,6 +421,10 @@ export function verifyRelative(plan: CollectPlan, fin: Snapshot): string[] {
 export function describeFrame(f: Frame): string {
   const dev = f.devices.map((d) => `${d.key} → ${trackLabel("V", f.devTrack.get(d.key)!)}`).join(", ");
   const src = f.sources.map((s) => `${s} → ${f.srcTrack.has(s) ? trackLabel("A", f.srcTrack.get(s)!) : `${trackLabel("A", f.silTrack.get(s)!)} (sil)`}`).join(", ");
-  const guides = f.guideCount ? `kılavuz sesler → ${trackLabel("A", f.mappedCount)}–${trackLabel("A", f.mappedCount + f.guideCount - 1)}` : "kılavuz ses yok";
-  return `${dev}; ${src || "harici kaynak yok"}; ${guides}`;
+  const g0 = f.keptBase + f.keptCount;
+  const guides = f.guideCount ? `kılavuz sesler → ${trackLabel("A", g0)}–${trackLabel("A", g0 + f.guideCount - 1)}` : "kılavuz ses yok";
+  const kept = f.keptCount
+    ? `korunan kamera sesi (BAĞLA'da, harici sesin olmadığı aralıklar) → ${f.keptCount > 1 ? `${trackLabel("A", f.keptBase)}–${trackLabel("A", f.keptBase + f.keptCount - 1)}` : trackLabel("A", f.keptBase)}; `
+    : "";
+  return `${dev}; ${src || "harici kaynak yok"}; ${kept}${guides}`;
 }

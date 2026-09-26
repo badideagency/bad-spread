@@ -203,6 +203,9 @@ export interface CollectRecord {
     guideBase: [string, number][];
     guideCh: [string, number][];
     mappedCount: number;
+    /** v0.3.3: "korunan kamera sesi" track'leri (eski kayıtta yok → 0) */
+    keptBase?: number;
+    keptCount?: number;
     guideCount: number;
     vPark: number;
     aPark: number;

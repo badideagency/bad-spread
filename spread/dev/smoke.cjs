@@ -1008,7 +1008,9 @@ const entry = (x) => ({ kind: x.kind, track: x.track, name: x.c.name, start: x.c
 function expectTopla(seq, { sessions, devices, srcTrack, sil = [], gap = sec(2) }) {
   const clips = allClips(seq);
   const mapped = Math.max(-1, ...Object.values(srcTrack)) + 1;
-  const aPark = mapped + devices.length + sil.length;
+  // v0.3.3: eşlenen kaynakların altında "korunan kamera sesi" track'i (kılavuz kanalı başına; testlerde kamera başına 1 kanal)
+  const kept = clips.some((x) => x.kind === "A" && devOf(x.c.name)) ? 1 : 0;
+  const aPark = mapped + kept + devices.length + sil.length;
   const exp = [];
   const blocks = [];
   const used = new Set();
@@ -1025,8 +1027,8 @@ function expectTopla(seq, { sessions, devices, srcTrack, sil = [], gap = sec(2) 
       const n = x.c.name;
       let track;
       if (x.kind === "V") track = devices.indexOf(devOf(n));
-      else if (devOf(n)) track = mapped + devices.indexOf(devOf(n));
-      else track = sil.includes(srcOf(n)) ? mapped + devices.length + sil.indexOf(srcOf(n)) : srcTrack[srcOf(n)];
+      else if (devOf(n)) track = mapped + kept + devices.indexOf(devOf(n));
+      else track = sil.includes(srcOf(n)) ? mapped + kept + devices.length + sil.indexOf(srcOf(n)) : srcTrack[srcOf(n)];
       exp.push({ ...entry(x), track, start: x.c.start + d, end: x.c.end + d });
     }
   }
@@ -1062,11 +1064,24 @@ function checkExactly(seq, exp, label) {
   return true;
 }
 
-/** BAĞLA'nın beklenen sonucu — oturum İÇİNDE: grup = çakışan kameralar, çapa = en uzun (eşitlikte alt track), parça = ses ∩ çapa. */
+/**
+ * BAĞLA'nın beklenen sonucu — oturum İÇİNDE: grup = çakışan kameralar, çapa = en uzun (eşitlikte alt track), parça = ses ∩ çapa.
+ * v0.3.3: harici sesli grupta, grup aralığının harici parçalarca kapsanmayan > 1 sn'lik boşluklarında kamera sesi korunur: boşluk kamera
+ * sınırlarında bölünür, her dilim onu kapsayan kılavuzlu en iyi kameranın (en uzun, eşitlikte alt track, sonra erken start) kılavuz
+ * sesinden kesilir ve "korunan kamera sesi" track'ine (ilk kılavuz track'inin bir üstü) konur.
+ */
 function expectBagla(list, sessions, sil = []) {
   const exp = [];
   const groups = [];
   const used = new Set();
+  const guideOf = (v) => list.filter((e) => e.kind === "A" && e.name === v.name && e.start === v.start && e.end === v.end);
+  const guideTracks = list.filter((e) => e.kind === "A" && devOf(e.name)).map((e) => e.track);
+  const keptTrack = guideTracks.length ? Math.min(...guideTracks) - 1 : -1;
+  const better = (c, m) => {
+    const lc = c.end - c.start;
+    const lm = m.end - m.start;
+    return lc > lm || (lc === lm && (c.track < m.track || (c.track === m.track && c.start < m.start)));
+  };
   for (const keys of sessions) {
     const mem = list.filter((e) => keys.includes(recOf(e.name)));
     mem.forEach((e) => used.add(e));
@@ -1103,6 +1118,39 @@ function expectBagla(list, sessions, sil = []) {
       if (!g.pieces.length) {
         g.guides = mem.filter((e) => e.kind === "A" && devOf(e.name) && g.cams.some((c) => c.name === e.name && c.start === e.start));
         exp.push(...g.guides);
+        continue;
+      }
+      // boşluklar: [grup başı, grup sonu) − harici parçalar
+      const gStart = g.cams.reduce((m, c) => (c.start < m ? c.start : m), g.cams[0].start);
+      let gaps = [[gStart, g.end]];
+      for (const p of g.pieces) {
+        const next = [];
+        for (const [a, b] of gaps) {
+          if (p.end <= a || p.start >= b) next.push([a, b]);
+          else {
+            if (p.start > a) next.push([a, p.start]);
+            if (p.end < b) next.push([p.end, b]);
+          }
+        }
+        gaps = next;
+      }
+      const cp = [];
+      for (const [a, b] of gaps) {
+        if (b - a <= sec(1)) continue;
+        const pts = [...new Set([a, b, ...g.cams.flatMap((c) => [c.start, c.end]).filter((t) => t > a && t < b)])].sort((x, y) => (x < y ? -1 : 1));
+        let cur = null;
+        for (let i = 0; i + 1 < pts.length; i++) {
+          const cands = g.cams.filter((c) => c.start <= pts[i] && c.end >= pts[i + 1] && guideOf(c).length);
+          const best = cands.length ? cands.reduce((m, c) => (better(c, m) ? c : m)) : null;
+          if (cur && cur.cam === best && cur.e === pts[i]) cur.e = pts[i + 1];
+          else cp.push((cur = { s: pts[i], e: pts[i + 1], cam: best }));
+        }
+      }
+      for (const k of cp.filter((x) => x.cam)) {
+        const gd = guideOf(k.cam)[0];
+        const p = { kind: "A", track: keptTrack, name: gd.name, start: k.s, end: k.e, inPt: gd.inPt + (k.s - gd.start) };
+        g.pieces.push(p);
+        exp.push(p);
       }
     }
     groups.push(...gs);
@@ -1191,7 +1239,7 @@ scenarios.real0912 = async () => {
   // beklenen düzen TOPLA ÖNCESİ kliplerden hesaplanır: undo yığınındaki ilk (TOPLA öncesi) hâl
   const pre = JSON.parse(JSON.stringify(undoStack[0]), rev).sequences.find((x) => x.guid === "guid-main-edit");
   const { exp, blocks } = expectTopla(pre, { sessions: S0912, devices: ["A", "Sony"], srcTrack: { "Zoom Tr1": 0, "Zoom Tr2": 1 }, sil: ["Zoom TrLR"] });
-  checkExactly(S, exp, "12 Eylül TOPLA (oturumlar sırayla, blok içi ofset aynı, A → V1, Sony → V2, Tr1 → A1, Tr2 → A2, kılavuzlar A3–A4, TrLR → A5)");
+  checkExactly(S, exp, "12 Eylül TOPLA (oturumlar sırayla, blok içi ofset aynı, A → V1, Sony → V2, Tr1 → A1, Tr2 → A2, korunan kamera sesi A3 (boş), kılavuzlar A4–A5, TrLR → A6)");
   const disjoint = blocks.every((b, i) => i === 0 || b.start >= blocks[i - 1].end);
   if (!disjoint) fail("bloklar çakışıyor");
   else ok(`bloklar çakışmıyor: ${blocks.map((b) => `[${secOf(b.start)}–${secOf(b.end)}]`).join(" ")}`);
@@ -1200,13 +1248,23 @@ scenarios.real0912 = async () => {
 
   const collected = snapList();
   await startHelper();
-  const out2 = await clickAndWait("btn-bind", yes, doneRe);
+  let qB = "";
+  const out2 = await clickAndWait("btn-bind", async (x) => ((qB = x), yes()), doneRe);
   if (!/✓ BAĞLA tamam/.test(out2)) return fail("BAĞLA tamamlanmadı:\n" + out2.split("\n").filter((l) => /DURDU|•|HATA/.test(l)).join("\n"));
   const silent = out2.split("\n").filter((l) => /SESSİZ KALACAK:/.test(l));
-  if (process.env.SPREAD_SMOKE_VERBOSE) console.log(silent.join("\n"));
-  ok(`12 Eylül BAĞLA: ${silent.length} "sessiz kalacak" bildirimi (kamera sesi silinen grupta harici sesin kapsamadığı > 1 sn) günlükte ve onayda`);
+  const keptCam = out2.split("\n").filter((l) => /KAMERA SESİ KORUNACAK:/.test(l));
+  if (process.env.SPREAD_SMOKE_VERBOSE) console.log([...keptCam, ...silent].join("\n"));
+  const wantKept = [
+    /O1-G1: "A038C001_260912BD\.MP4" 0\.000–2\.320 s \(2\.320 sn\) → A3/,
+    /O2-G1: "A038C002_260912RQ\.MP4" 2824\.320–2866\.160 s \(41\.840 sn\) → A3/,
+    /O2-G1: "C0143\.MP4" 2866\.160–2866\.200 s \(0\.040 sn\) → A3/,
+  ];
+  if (silent.length || keptCam.length !== 3 || !wantKept.every((re) => keptCam.some((l) => re.test(l))) || !/KAMERA SESİ KORUNACAK \(harici sesin olmadığı aralıkta/.test(qB))
+    fail(`12 Eylül korunan kamera sesi beklenenden farklı:\n${[...keptCam, ...silent].join("\n")}`);
+  else
+    ok("12 Eylül: KAMERA SESİ KORUNACAK onayda — A038C001 başı 2.320 sn, A038C002 sonu 41.840 sn (+ C0143'ün çapadan 1 kare sonraki 0.040 sn'si) → A3; sessiz kalan yer yok");
   const eb = expectBagla(collected, S0912, ["Zoom TrLR"]);
-  checkExactly(S, eb.exp, "12 Eylül BAĞLA (kesim yalnız oturum içinde, TrLR ve kılavuzlar silindi)");
+  checkExactly(S, eb.exp, "12 Eylül BAĞLA (kesim yalnız oturum içinde, TrLR ve kılavuzlar silindi, harici sessiz aralıklarda kamera sesi A3'te)");
   checkLinks(S, eb.groups, "12 Eylül bağları");
   // A038C001'in bağında 144207'den bir parça OLMAMALI
   const a1 = S.v.flat().find((c) => c.name.startsWith("A038C001"));
@@ -1651,7 +1709,7 @@ scenarios.adv_after = async () => {
       { name: "B001C001_260912XX.MP4", start: sec(100), dur: sec(30) },
       { name: "C0102.MP4", start: sec(101), dur: sec(28) },
     ],
-    wavs: [{ name: "260912_101512_Tr1.WAV", start: sec(15), dur: sec(15) }],
+    wavs: [{ name: "260912_101512_Tr1.WAV", start: sec(10), dur: sec(30) }], // çapayı birebir kapsar: kesim yok
     others: [],
   });
   const t1 = await clickAndWait("btn-collect", yes, doneRe);
@@ -1663,9 +1721,9 @@ scenarios.adv_after = async () => {
   if (!/✓ TOPLA tamam/.test(t2) || !/DİKKAT: bu sequence BAĞLA'dan geçti \(kesimsiz\)/.test(q)) return fail("(b) kesimsiz BAĞLA sonrası TOPLA uyarısız / tamamlanmadı:\n" + q + "\n" + failLines(t2));
   const vid = clipNamed(/^B001C001/).find((x) => x.kind === "V");
   const gd = clipNamed(/^B001C001/).find((x) => x.kind === "A");
-  // çerçeve: Sony V1 (48 sn), A V2 / B V3 (30 sn, alfabetik); Tr1 A1; kılavuzlar: Sony A2, A (0 kanal), B A3
-  if (!vid || !gd || gd.c.start !== vid.c.start || gd.c.end !== vid.c.end || gd.track !== 2 || vid.track !== 2) fail(`korunan kamera sesi videosundan ayrı düştü: V${vid && vid.track + 1} ${vid && secOf(vid.c.start)} / A${gd && gd.track + 1} ${gd && secOf(gd.c.start)}`);
-  else ok("kesimsiz BAĞLA sonrası TOPLA: onayda uyarı; B001C001'in korunan sesi A4 → A3, videosuyla aynı zamanda (kayma yok)");
+  // çerçeve: Sony V1 (48 sn), A V2 / B V3 (30 sn, alfabetik); Tr1 A1; korunan kamera sesi A2; kılavuzlar: Sony A3, A (0 kanal), B A4
+  if (!vid || !gd || gd.c.start !== vid.c.start || gd.c.end !== vid.c.end || gd.track !== 3 || vid.track !== 2) fail(`korunan kamera sesi videosundan ayrı düştü: V${vid && vid.track + 1} ${vid && secOf(vid.c.start)} / A${gd && gd.track + 1} ${gd && secOf(gd.c.start)}`);
+  else ok("kesimsiz BAĞLA sonrası TOPLA: onayda uyarı; B001C001'in korunan sesi A5 → A4, videosuyla aynı zamanda (kayma yok)");
   const collected2 = snapList();
   const b2 = await clickAndWait("btn-bind", yes, doneRe);
   if (!/✓ BAĞLA tamam/.test(b2)) return fail("(b) ikinci BAĞLA tamamlanmadı:\n" + failLines(b2));
@@ -1840,7 +1898,7 @@ scenarios.adv_cutfree_undo = async () => {
       { name: "A038C001_260912AA.MP4", start: sec(10), dur: sec(30) },
       { name: "C0101.MP4", start: sec(12), dur: sec(20) },
     ],
-    wavs: [{ name: "260912_101512_Tr1.WAV", start: sec(15), dur: sec(15) }],
+    wavs: [{ name: "260912_101512_Tr1.WAV", start: sec(10), dur: sec(30) }], // çapayı birebir kapsar: kesim yok, korunacak boşluk yok
     others: [],
   };
   const collected = await collectThen(spec);
@@ -2210,6 +2268,92 @@ scenarios.helper_second = async () => {
   else ok("ikinci yardımcı örneği: 'EADDRINUSE … port kullanımda' gösterdi, çalışanın bilgi dosyasına dokunmadı (başlarken de kapanırken de); köprü çalışıyor");
 };
 
+// ------------------------------------------------------------ v0.3.3 — harici sesin olmadığı aralıkta kamera sesi korunur
+scenarios.keepcam_multi = async () => {
+  // iki kanallı A kamerası (çapa), Zoom çapanın ortasında: [10–15] ve [30–40] harici sessiz → A'nın İKİ kılavuz kanalı o aralıklara
+  // kesilip iki "korunan kamera sesi" track'ine (A2, A3) konur; sync (in − start) korunur; köprülü ve köprüsüz yol aynı
+  const spec = () => ({
+    cams: [
+      { name: "A038C001_260912AA.MP4", start: sec(10), dur: sec(30), channels: 2 },
+      { name: "C0101.MP4", start: sec(12), dur: sec(20) },
+    ],
+    wavs: [{ name: "260912_101512_Tr1.WAV", start: sec(15), dur: sec(15), inPt: sec(4) }],
+    others: [],
+  });
+  const topla = async () => /✓ TOPLA tamam/.test(await clickAndWait("btn-collect", yes, doneRe));
+  setupSync(spec());
+  if (!(await topla())) return fail("TOPLA tamamlanmadı");
+  const S = seqByGuid("guid-main-edit");
+  const g0 = allClips(S).filter((x) => x.kind === "A" && /^A038C001/.test(x.c.name)).map((x) => ({ track: x.track, off: x.c.inPt - x.c.start }));
+  await startHelper();
+  let q = "";
+  const o = await clickAndWait("btn-bind", async (x) => ((q = x), yes()), doneRe);
+  if (!/✓ BAĞLA tamam/.test(o)) return fail("BAĞLA tamamlanmadı:\n" + failLines(o));
+  const kept = allClips(S).filter((x) => x.kind === "A" && (x.track === 1 || x.track === 2) && /^A038C001/.test(x.c.name));
+  const spans = kept.map((x) => `A${x.track + 1}:${secOf(x.c.start)}-${secOf(x.c.end)}`).sort().join(" ");
+  const offOk = kept.every((x) => x.c.inPt - x.c.start === g0[0].off);
+  const L = kept[0] && kept[0].c.linkId;
+  const cam = S.v.flat().find((c) => c.name.startsWith("A038C001"));
+  if (!/KAMERA SESİ KORUNACAK/.test(q) || !/→ A2\+A3/.test(q) || spans !== "A2:0.000-5.000 A2:20.000-30.000 A3:0.000-5.000 A3:20.000-30.000" || !offOk || !L || cam.linkId !== L || !kept.every((x) => x.c.linkId === L))
+    fail(`iki kanallı korunan kamera sesi yanlış: ${spans} (sync ${offOk}, bağ ${!!L && cam.linkId === L})\n${q}`);
+  else ok("iki kanallı kamera: harici sessiz [0–5] ve [20–30] aralıkları A'nın İKİ kanalından kesildi → A2 + A3, in − start kılavuzla aynı, hepsi grubun bağında");
+  const A = finalState();
+  setupSync(spec());
+  await topla();
+  await stopHelper();
+  await clickAndWait("btn-bind", yes, doneRe);
+  const h = await startHelper();
+  const r = await h.bindFromPlan({});
+  if (!r.ok || JSON.stringify(A) !== JSON.stringify(finalState())) fail(`iki kanallı: köprüsüz yol farklı (${r.summary})\n${r.lines.join("\n")}`);
+  else ok(`iki kanallı: köprülü tek tık = KES + yardımcı paneldeki BAĞLA (${r.summary})`);
+};
+
+scenarios.keepcam_noguide = async () => {
+  // çapa A038C001 [10–40] (sesli), Zoom çapayı birebir kapsıyor; sesi OLMAYAN (kanalsız) Sony C0101 [8–35] çapadan 2 sn önce başlıyor:
+  // o 2 sn'yi kapsayan kılavuzlu kamera yok → SESSİZ KALACAK (1 satır), korunan parça yok
+  await collectThen({
+    cams: [
+      { name: "A038C001_260912AA.MP4", start: sec(10), dur: sec(30) },
+      { name: "C0101.MP4", start: sec(8), dur: sec(27), channels: 0 },
+    ],
+    wavs: [{ name: "260912_101512_Tr1.WAV", start: sec(10), dur: sec(30) }],
+    others: [],
+  });
+  await startHelper();
+  let q = "";
+  const o = await clickAndWait("btn-bind", async (x) => ((q = x), yes()), doneRe);
+  if (!/✓ BAĞLA tamam/.test(o)) return fail("BAĞLA tamamlanmadı:\n" + failLines(o));
+  const sil = (q.match(/SESSİZ KALACAK \(harici ses yok, kılavuz sesi olan kamera da yok\):\n((?:  • .*\n?)+)/) || [])[1] || "";
+  if ((sil.match(/•/g) || []).length !== 1 || !/0\.000–2\.000 s \(2\.000 sn\)/.test(sil) || /KAMERA SESİ KORUNACAK \(/.test(q)) fail("kılavuzsuz kamera boşluğu SESSİZ KALACAK diye listelenmedi:\n" + q);
+  else ok("sesi olmayan C0101'in çapadan önceki 2 sn'si: kılavuzlu kamera yok → 'SESSİZ KALACAK' (0.000–2.000 s), korunan parça yok");
+};
+
+scenarios.keepcam_oldrecord = async () => {
+  // v0.3.2 TOPLA kaydı (ayrılmış track yok) + korunacak kamera sesi → BAĞLA hiçbir şeye dokunmadan "TOPLA'ya tekrar bas"
+  await collectThen({
+    cams: [
+      { name: "A038C001_260912AA.MP4", start: sec(10), dur: sec(30) },
+      { name: "C0101.MP4", start: sec(12), dur: sec(20) },
+    ],
+    wavs: [{ name: "260912_101512_Tr1.WAV", start: sec(15), dur: sec(15) }],
+    others: [],
+  });
+  const all = JSON.parse(lsStore.get("spread.collectRecord.v1"));
+  delete all["guid-main-edit"].frame.keptBase;
+  delete all["guid-main-edit"].frame.keptCount;
+  lsStore.set("spread.collectRecord.v1", JSON.stringify(all));
+  await startHelper();
+  const before = JSON.stringify(state.sequences, repl);
+  const o = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/korunan kamera sesi" track'i var .*TOPLA'ya tekrar bas \(v0\.3\.3 track çerçevesi\)/.test(o) || JSON.stringify(state.sequences, repl) !== before)
+    fail("eski TOPLA kaydıyla BAĞLA durmadı:\n" + o.split("\n").filter((l) => /HATA|DURDU/.test(l)).join("\n"));
+  else ok("eski (v0.3.2) TOPLA kaydı + korunacak kamera sesi → BAĞLA BAŞLAMADI: 'TOPLA'ya tekrar bas (v0.3.3 track çerçevesi)'");
+  const t = await clickAndWait("btn-collect", yes, doneRe);
+  const o2 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/Zaten toplanmış|✓ TOPLA tamam/.test(t) || !/✓ BAĞLA tamam/.test(o2)) fail("TOPLA'dan sonra BAĞLA çalışmadı:\n" + failLines(o2));
+  else ok("TOPLA'ya tekrar basınca (kayıt yenilendi) BAĞLA çalıştı");
+};
+
 scenarios.diag = async () => {
   // Spread paneli "bağlı değil" yerine GERÇEK hatayı ve adımı yazar
   setupSync(smallSpec());
@@ -2234,8 +2378,8 @@ scenarios.diag = async () => {
   else ok("UXP izin reddi ayrı tespit edildi ('UXP İZİN REDDİ … Ham hata …'); yardımcıya istek ULAŞMADI (son istek yok)");
   const o4 = await clickAndWait("btn-helper", yes, hre);
   const lr = h.state().lastRequest;
-  if (!/✓ Yardımcı bağlı \(yardımcı 0\.3\.2/.test(o4) || !lr || lr.url !== "/v1/ping" || lr.status !== 200) fail(`bağlıyken: ${o4} / ${JSON.stringify(lr)}`);
-  else ok(`bağlı: 'yardımcı 0.3.2'; yardımcı panelinde son istek POST /v1/ping → 200 (${lr.ms} ms), Premiere ${h.state().premiere}`);
+  if (!o4.includes(`✓ Yardımcı bağlı (yardımcı ${HELPER.VERSION}`) || !lr || lr.url !== "/v1/ping" || lr.status !== 200) fail(`bağlıyken: ${o4} / ${JSON.stringify(lr)}`);
+  else ok(`bağlı: 'yardımcı ${HELPER.VERSION}'; yardımcı panelinde son istek POST /v1/ping → 200 (${lr.ms} ms), Premiere ${h.state().premiere}`);
 };
 
 scenarios.mapping = async () => {
@@ -2359,7 +2503,8 @@ scenarios.limits = async () => {
   await startHelper();
   const before = JSON.stringify(state.sequences, repl);
   const out = await clickAndWait("btn-bind", yes, doneRe);
-  if (!/bağlanacak 271 öğe var, yardımcı en çok 256 kabul ediyor/.test(out) || JSON.stringify(state.sequences, repl) !== before)
+  // 1 kamera + 270 ses + 2 korunan kamera sesi (baştaki 2 sn ve sondaki 158.5 sn harici sessiz) = 273
+  if (!/bağlanacak 273 öğe var, yardımcı en çok 256 kabul ediyor/.test(out) || JSON.stringify(state.sequences, repl) !== before)
     fail("grup boyutu sınırı kesmeden önce yakalanmadı:\n" + out.split("\n").slice(-6).join("\n"));
   else ok("grup yardımcının sınırını aşıyor → kesmeden ÖNCE plan hatası");
 };

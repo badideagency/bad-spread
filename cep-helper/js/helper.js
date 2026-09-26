@@ -27,7 +27,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "0.3.2";
+  var VERSION = "0.3.3";
   var PORT = 47731;
   var MAX_BODY = 1024 * 1024;
   // Panelle AYNI sınırlar (spread/src/linker.ts LINK_LIMITS) — panel BAĞLA planında kesmeden ÖNCE denetler
@@ -100,6 +100,8 @@
     var f = obj.frame;
     if (!f || !isTrack(f.vPark) || !isTrack(f.aPark) || !Array.isArray(f.silTracks) || f.silTracks.length > 64 || !f.silTracks.every(isTrack))
       throw bad("plan: track çerçevesi geçersiz");
+    var kept = f.keptTracks === undefined ? [] : f.keptTracks;
+    if (!Array.isArray(kept) || kept.length > 64 || !kept.every(isTrack)) throw bad("plan: korunan kamera sesi track'leri geçersiz");
     if (!Array.isArray(obj.groups) || obj.groups.length > PLAN_MAX_GROUPS) throw bad("plan: groups 0.." + PLAN_MAX_GROUPS + " olmalı");
     var groups = obj.groups.map(function (g, gi) {
       var c = cleanGroup(g, gi);
@@ -107,7 +109,7 @@
       return c;
     });
     var at = typeof obj.createdAt === "string" ? obj.createdAt.slice(0, 64) : "?";
-    return { sequence: seq.name, createdAt: at, frame: { vPark: f.vPark, aPark: f.aPark, silTracks: f.silTracks.slice() }, groups: groups };
+    return { sequence: seq.name, createdAt: at, frame: { vPark: f.vPark, aPark: f.aPark, silTracks: f.silTracks.slice(), keptTracks: kept.slice() }, groups: groups };
   }
 
   /**

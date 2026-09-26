@@ -9,8 +9,11 @@
 // 3) KAMERA SESİ: grubunda tutulan harici ses VARSA kılavuz sesler silinir; YOKSA (ör. oturumda Zoom/yaka yok) kamera sesi asıl
 //    sestir → silinmez, bağlanır.
 // 4) BAĞLAMA grubu: gruptaki kamera videoları + o grubun çapasına düşen harici ses parçaları (+ korunan kamera sesleri).
-// 5) SESSİZ KALACAK yerler (kamera sesi silinen grupta harici sesin kapsamadığı > 1 sn: çapa içindeki boşluklar ve çapa dışına
-//    taşan kamera kısımları) → onay penceresinde AÇIKÇA gösterilir (karar kullanıcının; kural gereği kamera sesi silinir).
+// 5) KAMERA SESİ KORUNACAK (v0.3.3, kullanıcı kararı): harici sesli grupta harici sesin kapsamadığı > 1 sn'lik aralıklar (çapa içindeki
+//    boşluklar, çapa dışına taşan kamera kısımları) için kamera sesi SİLİNMEZ: o aralığı kapsayan, kılavuz sesi olan en iyi kameranın
+//    (çapa kuralı: en uzun, eşitlikte alt track) kılavuz sesi YALNIZ o aralığa kesilir, TOPLA'nın ayırdığı "korunan kamera sesi"
+//    track'ine (harici kanal track'lerinin hemen altı; kanal başına bir track) konur ve gruba bağlanır. Onayda "KAMERA SESİ KORUNACAK".
+//    Kılavuz sesi olan kamera yoksa o aralık "SESSİZ KALACAK" diye listelenir.
 // Sahipsizler, park track'lerindekiler ve dokunulmayan öğeler BAĞLA'ya girmez. KAMERASIZ oturumun (ör. Zoom + DJI, kamera yok) sesleri
 // de olduğu gibi kalır (çapa yok → kesilmez, silinmez, bağlanmaz; bildirilir).
 //
@@ -27,7 +30,7 @@ import { cmpStart, fileName, where, type Classified } from "./classify";
 import { LINK_LIMITS } from "./linker";
 import { expOf, type Exp } from "./layout";
 import { big, secOf, TICKS_PER_SECOND, type ClipInfo, type Snapshot } from "./model";
-import { sessionGroups, unionLength, type Analysis, type Group, type Session } from "./sessions";
+import { anchorLess, sessionGroups, unionLength, type Analysis, type Group, type Session } from "./sessions";
 import type { Target } from "./settings";
 
 export type { Group };
@@ -40,8 +43,18 @@ export interface Piece {
   end: bigint;
   inPt: bigint;
   outPt: bigint;
-  /** ses tamamen tek çapanın içinde → kesilmez, olduğu gibi kalır */
+  /** ses tamamen tek çapanın içinde → kesilmez, olduğu gibi kalır (korunan kamera sesinde hep false: track'i değişir) */
   whole: boolean;
+  /** son yeri (A track): harici seste kendi track'i, korunan kamera sesinde "korunan kamera sesi" track'i */
+  track: number;
+  /** korunan kamera sesi parçası (harici sesin olmadığı aralığa kesilmiş kılavuz ses) */
+  camera: boolean;
+}
+
+/** TOPLA'nın ayırdığı "korunan kamera sesi" track'leri: base, base+1, … (kılavuz kanalı başına). count 0 = eski çerçeve. */
+export interface KeptTracks {
+  base: number;
+  count: number;
 }
 
 export interface Cut {
@@ -61,8 +74,10 @@ export interface BindPlan {
   keptSources: string[];
   /** grup.id|kaynak → çapa içindeki harici ses süresi (birleşim, tick) — BAĞLA ÖNCESİ */
   coverage: Map<string, bigint>;
-  /** kamera sesi silinen grupta harici sesin kapsamadığı (> 1 sn) yerler — onayda gösterilir */
+  /** harici sesin kapsamadığı (> 1 sn) ama kılavuz sesi olan kamerası da olmayan yerler — onayda gösterilir */
   silent: string[];
+  /** KAMERA SESİ KORUNACAK satırları (harici sesin olmadığı aralıkta kamera sesi kesilip korunan track'e konur) */
+  keptCamera: string[];
   /** kamerasız oturumlar: sesleri olduğu gibi kalır */
   camless: Session[];
   errors: string[];
@@ -78,7 +93,24 @@ const clampTo = (c: { start: bigint; end: bigint }, g: Group): [bigint, bigint] 
   return [c.start > as ? c.start : as, c.end < ae ? c.end : ae];
 };
 
-export function makeBindPlan(a: Analysis, mapping: Map<string, Target>): BindPlan {
+/** [s,e) aralıklarından başka aralıkları çıkarır (sonuç sıralı, ayrık). */
+function subtract(from: [bigint, bigint], cut: [bigint, bigint][]): [bigint, bigint][] {
+  let out: [bigint, bigint][] = [from];
+  for (const [cs, ce] of cut) {
+    const next: [bigint, bigint][] = [];
+    for (const [s, e] of out) {
+      if (ce <= s || cs >= e) next.push([s, e]);
+      else {
+        if (cs > s) next.push([s, cs]);
+        if (ce < e) next.push([ce, e]);
+      }
+    }
+    out = next;
+  }
+  return out.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0));
+}
+
+export function makeBindPlan(a: Analysis, mapping: Map<string, Target>, kept: KeptTracks = { base: 0, count: 0 }): BindPlan {
   const errors: string[] = [];
   const warnings: string[] = [];
   const groups: Group[] = [];
@@ -91,6 +123,7 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>): BindPla
   const keptSet = new Set<string>();
   const coverage = new Map<string, bigint>();
   const silent: string[] = [];
+  const keptCamera: string[] = [];
   const camless: Session[] = [];
   if (!a.sessions.length) errors.push("oturum yok (güçlü bağlı kayıt yok) → BAĞLA'nın bağlayacağı bir şey yok");
 
@@ -117,7 +150,7 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>): BindPla
       for (const g of gs) {
         const [ps, pe] = clampTo({ start: ws, end: we }, g);
         if (pe <= ps) continue;
-        mine.push({ src: w, source: x.source!, group: g, start: ps, end: pe, inPt: win + (ps - ws), outPt: win + (pe - ws), whole: ps === ws && pe === we });
+        mine.push({ src: w, source: x.source!, group: g, start: ps, end: pe, inPt: win + (ps - ws), outPt: win + (pe - ws), whole: ps === ws && pe === we, track: w.track, camera: false });
       }
       if (!mine.length) {
         deleteOutside.push(w);
@@ -130,20 +163,74 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>): BindPla
         errors.push(`harici seste süre ≠ kaynak aralığı (end−start=${we - ws}, out−in=${big(w.outPt) - win} tick): ${where(w)}`);
       cuts.push({ src: w, pieces: mine });
     }
-    // kamera sesleri: grubunda harici ses varsa sil, yoksa koru ve bağla
+    // kamera sesleri: grubunda harici ses varsa sil (harici sesin olmadığı > 1 sn'lik aralıklar hariç: orada kesilip korunur), yoksa
+    // koru ve bağla. Kılavuz kanalları asıl track sırasıyla 0, 1, … (korunan track'ler de aynı sırayla)
     const guideOf = (v: ClipInfo) =>
-      session.recordings.flatMap((r) => r.items).filter((x) => x.role === "guide" && x.clip.projId === v.projId && x.clip.start === v.start && x.clip.end === v.end);
+      session.recordings
+        .flatMap((r) => r.items)
+        .filter((x) => x.role === "guide" && x.clip.projId === v.projId && x.clip.start === v.start && x.clip.end === v.end)
+        .map((x) => x.clip)
+        .sort((p, q) => p.track - q.track);
+    const guideCut = new Map<ClipInfo, Piece[]>();
     for (const g of gs) {
-      const has = pieces.some((p) => p.group === g);
-      const gg = g.cams.flatMap((v) => guideOf(v).map((x) => x.clip));
-      if (has) deleteGuides.push(...gg);
+      const ext0 = pieces.filter((p) => p.group === g && !p.camera);
+      if (!ext0.length) continue;
+      const gaps = subtract([g.start, g.end], ext0.map((p) => [p.start, p.end] as [bigint, bigint]));
+      for (const [gs0, ge0] of gaps) {
+        if (ge0 - gs0 <= SILENT_MIN) continue; // senkron kenar payı
+        // aralığı kamera sınırlarında böl; her dilimde kılavuzu olan, dilimi kapsayan en iyi kamera (çapa kuralı)
+        const pts = [...new Set([gs0, ge0, ...g.cams.flatMap((v) => [big(v.start), big(v.end)]).filter((t) => t > gs0 && t < ge0)])].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
+        const segs: { s: bigint; e: bigint; v: ClipInfo | null }[] = [];
+        for (let i = 0; i + 1 < pts.length; i++) {
+          const [x, y] = [pts[i], pts[i + 1]];
+          const cands = g.cams.filter((v) => big(v.start) <= x && big(v.end) >= y && guideOf(v).length);
+          const best = cands.length ? cands.reduce((m, c) => (anchorLess(c, m) ? c : m)) : null;
+          const last = segs[segs.length - 1];
+          if (last && last.v === best && last.e === x) last.e = y;
+          else segs.push({ s: x, e: y, v: best });
+        }
+        for (const sg of segs) {
+          const span = `${secOf(sg.s)}–${secOf(sg.e)} s (${secOf(sg.e - sg.s)} sn)`;
+          if (!sg.v) {
+            silent.push(`${g.id}: ${span} harici ses yok ve kılavuz sesi olan kamera yok → orada ses kalmaz`);
+            continue;
+          }
+          const gg = guideOf(sg.v);
+          if (gg.length > kept.count) {
+            errors.push(
+              `${g.id}: "${sg.v.name}" ${span} için kamera sesi korunacak ama ${kept.count ? `yalnız ${kept.count}` : "hiç"} "korunan kamera sesi" track'i var ` +
+                `(${gg.length} kanal gerekli) — TOPLA'ya tekrar bas (v0.3.3 track çerçevesi)`
+            );
+            continue;
+          }
+          gg.forEach((c, j) => {
+            const cs = big(c.start);
+            const cin = big(c.inPt);
+            const piece: Piece = { src: c, source: "kamera sesi", group: g, start: sg.s, end: sg.e, inPt: cin + (sg.s - cs), outPt: cin + (sg.e - cs), whole: false, track: kept.base + j, camera: true };
+            guideCut.set(c, [...(guideCut.get(c) ?? []), piece]);
+            pieces.push(piece);
+          });
+          keptCamera.push(`${g.id}: "${sg.v.name}" ${span} → ${gg.map((_, j) => `A${kept.base + j + 1}`).join("+")}`);
+        }
+      }
+    }
+    for (const [c, ps] of guideCut) {
+      if (c.speed !== 1) errors.push(`hızı ${c.speed} olan kamera sesi kesilemez: ${where(c)}`);
+      else if (big(c.end) - big(c.start) !== big(c.outPt) - big(c.inPt))
+        errors.push(`kamera sesinde süre ≠ kaynak aralığı (end−start=${big(c.end) - big(c.start)}, out−in=${big(c.outPt) - big(c.inPt)} tick): ${where(c)}`);
+      cuts.push({ src: c, pieces: ps });
+    }
+    for (const g of gs) {
+      const has = pieces.some((p) => p.group === g && !p.camera);
+      const gg = g.cams.flatMap((v) => guideOf(v));
+      if (has) deleteGuides.push(...gg.filter((c) => !guideCut.has(c))); // kesilenler "kesim" olarak silinir (TX-1)
       else {
         keptGuides.set(g, gg);
         warnings.push(`${g.id} (çapa "${g.anchor.name}"): grupta harici ses yok → kamera sesi korunuyor ve bağlanacak`);
       }
     }
     // bir kameraya bağlı olmayan (yeri farklı) kılavuzlar: harici ses olan oturumda silinir, olmayanda dokunulmaz
-    const placed = new Set([...deleteGuides, ...[...keptGuides.values()].flat()]);
+    const placed = new Set([...deleteGuides, ...[...keptGuides.values()].flat(), ...guideCut.keys()]);
     const stray = session.recordings.flatMap((r) => r.items).filter((x) => x.role === "guide" && !placed.has(x.clip));
     if (stray.length) {
       if (ext.length) deleteGuides.push(...stray.map((x) => x.clip));
@@ -154,24 +241,6 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>): BindPla
         const iv = ext.filter((x) => x.source === src).map((x) => clampTo({ start: big(x.clip.start), end: big(x.clip.end) }, g));
         coverage.set(`${g.id}|${src}`, unionLength(iv));
       }
-    // kamera sesi silinen gruplarda harici sesin kapsamadığı yerler
-    for (const g of gs) {
-      const mine = pieces.filter((p) => p.group === g);
-      if (!mine.length) continue;
-      const as = big(g.anchor.start);
-      const ae = big(g.anchor.end);
-      const hole = ae - as - unionLength(mine.map((p) => [p.start, p.end] as [bigint, bigint]));
-      if (hole > SILENT_MIN) silent.push(`${g.id}: çapa "${g.anchor.name}" içinde ${secOf(hole)} sn harici ses yok → kamera sesi silineceği için orada ses kalmaz`);
-      for (const c of g.cams) {
-        if (c === g.anchor) continue;
-        const cs = big(c.start);
-        const ce = big(c.end);
-        const inside = (ce < ae ? ce : ae) - (cs > as ? cs : as);
-        const out = ce - cs - (inside > 0n ? inside : 0n);
-        if (out > SILENT_MIN)
-          silent.push(`${g.id}: "${c.name}" klibinin çapa dışındaki ${secOf(out)} sn'si harici ses almaz (parçalar çapaya göre kesilir), kamera sesi de silinir → orada ses kalmaz`);
-      }
-    }
   }
 
   if (a.sessions.length && !groups.length) errors.push("hiçbir oturumda kamera yok → BAĞLA'nın bağlayacağı grup yok");
@@ -183,7 +252,7 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>): BindPla
   for (const c of [...groups.flatMap((g) => g.cams), ...pieces.map((p) => p.src)])
     if (fileName(c).length > LINK_LIMITS.name) errors.push(`kaynak adı çok uzun (${fileName(c).length} > ${LINK_LIMITS.name}): ${where(c)}`);
 
-  return { groups, pieces, cuts, deleteGuides, deleteSil, deleteOutside, keptGuides, keptSources: [...keptSet], coverage, silent, camless, errors, warnings };
+  return { groups, pieces, cuts, deleteGuides, deleteSil, deleteOutside, keptGuides, keptSources: [...keptSet], coverage, silent, keptCamera, camless, errors, warnings };
 }
 
 // ------------------------------------------------------------------ park yuvaları ve beklenen düzenler
@@ -261,7 +330,7 @@ export function expectedFinalClips(s0: Snapshot, plan: BindPlan): ClipInfo[] {
   const gone = removedSet(plan);
   const out = s0.clips.filter((c) => !gone.has(c));
   for (const cut of plan.cuts)
-    for (const p of cut.pieces) out.push({ ...cut.src, start: String(p.start), end: String(p.end), inPt: String(p.inPt), outPt: String(p.outPt) });
+    for (const p of cut.pieces) out.push({ ...cut.src, track: p.track, start: String(p.start), end: String(p.end), inPt: String(p.inPt), outPt: String(p.outPt) });
   return out;
 }
 
@@ -269,7 +338,7 @@ export function expectBindFinal(s0: Snapshot, plan: BindPlan): Exp[] {
   const gone = removedSet(plan);
   const exp = s0.clips.filter((c) => !gone.has(c)).map((c) => expOf(c));
   for (const cut of plan.cuts)
-    for (const p of cut.pieces) exp.push(expOf(cut.src, { start: p.start, end: p.end, inPt: p.inPt, outPt: p.outPt }));
+    for (const p of cut.pieces) exp.push(expOf(cut.src, { track: p.track, start: p.start, end: p.end, inPt: p.inPt, outPt: p.outPt }));
   return exp;
 }
 
@@ -324,14 +393,15 @@ export function linkTargets(plan: BindPlan): { group: Group; items: LinkTarget[]
     const lt: LinkTarget[] = [];
     for (const c of g.cams.slice().sort(cmpStart)) lt.push({ kind: "V", track: c.track, start: c.start, end: c.end, name: fileName(c) });
     for (const c of plan.keptGuides.get(g) ?? []) lt.push({ kind: "A", track: c.track, start: c.start, end: c.end, name: fileName(c) });
-    for (const p of plan.pieces.filter((q) => q.group === g).sort((x, y) => (x.start < y.start ? -1 : x.start > y.start ? 1 : x.src.track - y.src.track)))
-      lt.push({ kind: "A", track: p.src.track, start: String(p.start), end: String(p.end), name: fileName(p.src) });
+    for (const p of plan.pieces.filter((q) => q.group === g).sort((x, y) => (x.start < y.start ? -1 : x.start > y.start ? 1 : x.track - y.track)))
+      lt.push({ kind: "A", track: p.track, start: String(p.start), end: String(p.end), name: fileName(p.src) });
     const nCam = g.cams.length;
     const nG = plan.keptGuides.get(g)?.length ?? 0;
+    const nK = plan.pieces.filter((q) => q.group === g && q.camera).length;
     return {
       group: g,
       items: lt,
-      label: `${g.id} (${nCam} kamera + ${lt.length - nCam - nG} harici ses${nG ? ` + ${nG} kamera sesi` : ""}; çapa "${g.anchor.name}")`,
+      label: `${g.id} (${nCam} kamera + ${lt.length - nCam - nG - nK} harici ses${nK ? ` + ${nK} korunan kamera sesi` : ""}${nG ? ` + ${nG} kamera sesi` : ""}; çapa "${g.anchor.name}")`,
     };
   });
 }

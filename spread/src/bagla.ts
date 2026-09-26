@@ -67,8 +67,8 @@ function printBindPlan(plan: BindPlan, s: Snapshot): void {
     );
     for (const p of ps)
       log(
-        `     ${p.source.padEnd(10)} ${trackLabel("A", p.src.track)} "${p.src.name}" → [${secOf(p.start)}s–${secOf(p.end)}s] in=${secOf(p.inPt)}s` +
-          (p.whole ? " (olduğu gibi kalır)" : " (kesilecek)"),
+        `     ${p.source.padEnd(10)} ${trackLabel("A", p.src.track)} "${p.src.name}" → ${p.camera ? `${trackLabel("A", p.track)} ` : ""}[${secOf(p.start)}s–${secOf(p.end)}s] in=${secOf(p.inPt)}s` +
+          (p.whole ? " (olduğu gibi kalır)" : p.camera ? " (korunan kamera sesi: kesilip taşınacak)" : " (kesilecek)"),
         "dim"
       );
   }
@@ -78,6 +78,7 @@ function printBindPlan(plan: BindPlan, s: Snapshot): void {
   for (const x of plan.camless) log(`  ${x.id}: kamerasız oturum — sesleri olduğu gibi kalır`, "dim");
   if (plan.deleteGuides.length) log(`  sil: ${plan.deleteGuides.length} kamera kılavuz sesi`, "dim");
   for (const w of plan.warnings) log(`uyarı: ${w}`, "warn");
+  for (const w of plan.keptCamera) log(`KAMERA SESİ KORUNACAK: ${w}`, "ok");
   for (const w of plan.silent) log(`SESSİZ KALACAK: ${w}`, "warn");
   for (const e of plan.errors) log(`HATA: ${e}`, "err");
 }
@@ -149,11 +150,15 @@ async function pingRetry(tries: number): Promise<Awaited<ReturnType<ReturnType<t
 type LinkSpec = { id: string; label: string; items: LinkItemRec[] };
 
 /** Kayıttaki çerçeveden yardımcıyla ortak "düzenden gruplar" kuralının çerçevesi. */
-const layoutFrameOf = (rec: CollectRecord): LayoutFrame => ({
-  vPark: rec.frame.vPark,
-  aPark: rec.frame.aPark,
-  silTracks: rec.frame.silTrack.map(([, t]) => t),
-});
+const layoutFrameOf = (rec: CollectRecord): LayoutFrame => {
+  const f = frameFromRecord(rec.frame);
+  return {
+    vPark: f.vPark,
+    aPark: f.aPark,
+    silTracks: [...f.silTrack.values()],
+    keptTracks: Array.from({ length: f.keptCount }, (_, j) => f.keptBase + j),
+  };
+};
 
 /** Düzenden gruplar (yardımcı panelin kuralı) bu gruplarla BİREBİR aynı mı; farklar / hatalar satır satır. */
 function layoutMismatch(clips: ClipInfo[], lf: LayoutFrame, groups: LinkSpec[]): string[] {
@@ -338,7 +343,7 @@ export async function runBind(): Promise<void> {
     const frame = frameFromRecord(rec.frame);
     const parked = parkedFromRecord(items, rec);
     const a = analyze(s0, items, { threshold: rec.thresholdPct / 100, exclude: parked });
-    const plan = makeBindPlan(a, mapping);
+    const plan = makeBindPlan(a, mapping, { base: frame.keptBase, count: frame.keptCount });
     // Ön koşullar (hepsi plan hatası → hiçbir şey değişmez):
     //  - TOPLA düzeni (dikey, KAYITLI çerçeveye göre): TOPLA taşıdığı kamera/kılavuz çiftlerini clone ile AYIRIR; kılavuzu hâlâ
     //    kamerasına bağlı bir düzende kılavuz silmek bağlı kamerayı da silebilir (kanıtlanmadı). Park'takiler analize girmez.
@@ -413,8 +418,14 @@ export async function runBind(): Promise<void> {
           ? `Sonra ${groups.length} grup yardımcıyla (köprü) bağlanacak. `
           : `Yardımcıya köprü YOK → yalnız KES yapılacak; ${groups.length} grup sonra Spread Helper panelindeki BAĞLA ile bağlanacak. `) +
         `${plan.warnings.length ? `${plan.warnings.length} uyarı (günlükte). ` : ""}` +
+        (plan.keptCamera.length
+          ? `\nKAMERA SESİ KORUNACAK (harici sesin olmadığı aralıkta kamera sesi o aralığa kesilip "korunan kamera sesi" track'ine konacak ve gruba bağlanacak):\n${plan.keptCamera
+              .slice(0, 8)
+              .map((x) => "  • " + x)
+              .join("\n")}${plan.keptCamera.length > 8 ? `\n  … ${plan.keptCamera.length - 8} tane daha (günlükte)` : ""}\n`
+          : "") +
         (plan.silent.length
-          ? `\nSESSİZ KALACAK (kamera sesi silinecek, harici ses kapsamıyor):\n${plan.silent
+          ? `\nSESSİZ KALACAK (harici ses yok, kılavuz sesi olan kamera da yok):\n${plan.silent
               .slice(0, 8)
               .map((x) => "  • " + x)
               .join("\n")}${plan.silent.length > 8 ? `\n  … ${plan.silent.length - 8} tane daha (günlükte)` : ""}\n`
@@ -494,9 +505,9 @@ export async function runBind(): Promise<void> {
           if (!f) throw new SpreadStop(`yerleştirme öncesi parça yeniden bulunamadı: ${fmtClip(p.c)}`);
           return { sl: p.sl, c: f };
         });
-        log(`TX-4 (yerleştir): ${work.length} parça asıl yerine → park kopyaları siliniyor.`);
+        log(`TX-4 (yerleştir): ${work.length} parça asıl yerine (korunan kamera sesi kendi track'ine) → park kopyaları siliniyor.`);
         await runTx(ctx, executed, "yerleştir", "BAĞLA: yerleştir", (ops) => {
-          for (const { sl, c } of work) ops.clone(c, ticks(-sl.offset), 0, 0);
+          for (const { sl, c } of work) ops.clone(c, ticks(-sl.offset), 0, sl.piece.track - c.track);
           ops.remove(so4.sel);
         });
         await settle();
@@ -523,7 +534,7 @@ export async function runBind(): Promise<void> {
     // kesme/silme doğrulandı → bağlama grupları kayda (yeniden basınca yalnız bağlama; kesilmiş düzen yeniden analiz edilmez)
     const created: LinkItemRec[] = plan.pieces
       .filter((p) => !p.whole)
-      .map((p) => ({ kind: "A", track: p.src.track, start: String(p.start), end: String(p.end), name: itemOf(p.src).name }));
+      .map((p) => ({ kind: "A", track: p.track, start: String(p.start), end: String(p.end), name: itemOf(p.src).name }));
     const removed: LinkItemRec[] = [...deletes, ...plan.cuts.map((c) => c.src)].map(itemOf);
     const bind: BindRecord = { stage: "cut", groups: specs, created, removed, at: new Date().toISOString() };
     saveBindRecord(ctx.guid, bind);

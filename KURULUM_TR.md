@@ -1,6 +1,6 @@
-# Spread v0.3.2 — Kurulum ve Kullanım (Türkçe, adım adım)
+# Spread v0.3.3 — Kurulum ve Kullanım (Türkçe, adım adım)
 
-**Spread v0.3.2**'nin işleri. Sıra hep aynı:
+**Spread v0.3.3**'ün işleri. Sıra hep aynı:
 
 1. **SPREAD**: her klibi kendi track'ine dağıtır. Zamanlar değişmez.
 2. **Clip → Synchronize**: senkronu Premiere yapar.
@@ -25,12 +25,12 @@ Her işlem önce onay sorar ve **önce yedek sequence** alır. Her adımdan sonr
 
 ---
 
-## 1) Spread panelini güncelle (v0.3.2)
+## 1) Spread panelini güncelle (v0.3.3)
 
 - İndir: <https://github.com/badideagency/bad-spread/raw/claude/sweet-bell-do4j75/release/spread.ccx>
 - `spread.ccx`'e **çift tıkla**, Creative Cloud'da **Install / Yükle**'ye bas. Eski Spread'in üstüne kurulur.
   Hata verirse: önce Creative Cloud → **Manage plugins** → Spread → **Uninstall**, sonra tekrar çift tıkla.
-- **Premiere Pro'yu kapatıp aç.** Paneli aç: **Window → UXP Plugins → Spread**. Başlıkta **"Spread v0.3.2"** yazmalı.
+- **Premiere Pro'yu kapatıp aç.** Paneli aç: **Window → UXP Plugins → Spread**. Başlıkta **"Spread v0.3.3"** yazmalı.
 - Kurulumda "dosya sistemi / ağ izni" sorulursa **izin ver**. Panel yalnız bilgisayarın içindeki yardımcıyla konuşur
   (`localhost:47731`), internete çıkmaz.
 
@@ -54,9 +54,9 @@ Ana yol **klasör kurulumu**:
 5. **Window → Extensions (Legacy) → Spread Helper**'ı aç. Paneli açık bırak ya da bir yere yerleştir; Premiere çalışma alanıyla birlikte
    hatırlar. **Panel kapanınca sunucusu da durur.** Panelde şunlar görünmeli:
    - yeşil **"● dinliyor: localhost:47731 (127.0.0.1 …)"**;
-   - Premiere sürümü, yardımcı sürümü (0.3.2), Node sürümü;
+   - Premiere sürümü, yardımcı sürümü (0.3.3), Node sürümü;
    - **son istek**: Spread panelinden gelen son istek. Spread'de **Yardımcıyı kontrol et**'e basınca burada `POST /v1/ping → 200` görünür.
-6. Spread panelinin üstünde **"Yardımcı: bağlı — (yardımcı 0.3.2, Premiere …)"** yazmalı.
+6. Spread panelinin üstünde **"Yardımcı: bağlı — (yardımcı 0.3.3, Premiere …)"** yazmalı.
 
 **Çalışmazsa** panel artık gerçek hatayı yazar. Satırı aynen bana getir:
 - **Menüde Spread Helper yok** ya da panel boş → yardımcı yüklenmemiş.
@@ -73,7 +73,7 @@ Ana yol **klasör kurulumu**:
 - **Uzaktan konsol**: Spread Helper paneli açıkken Chrome ya da Edge'de **<http://localhost:8098>** adresini aç, "Spread Helper"a tıkla
   ve Console sekmesine bak.
 - **Köprü hiç çalışmasa da BAĞLA yapılabilir**: Spread'de BAĞLA KES'i yapar, sonra Spread Helper panelindeki **BAĞLA**'ya basarsın (bkz. 3e).
-- Tarayıcıyla hızlı deneme: <http://localhost:47731/> açılıyorsa ve `{"ok":false,"error":"yalnız POST","helper":"Spread Helper 0.3.2"}`
+- Tarayıcıyla hızlı deneme: <http://localhost:47731/> açılıyorsa ve `{"ok":false,"error":"yalnız POST","helper":"Spread Helper 0.3.3"}`
   yazıyorsa sunucu çalışıyor. Hiç açılmıyorsa yardımcı başlamamıştır.
 
 ## 3) Testi GÜVENLİ yerde yap
@@ -106,7 +106,7 @@ Ana yol **klasör kurulumu**:
     O1  Zoom 260912_133224 + A: A038C001_260912BD + Sony: C0142  → 0.000 s'den başlar
     O2  Zoom 260912_141513 + A: A038C002_260912RQ + Sony: C0143  → 1557.320 s'den başlar
     …
-  Track'ler: A → V1, Sony → V2; Zoom Tr1 → A1, Zoom Tr2 → A2, Zoom TrLR → A5 (sil); kılavuz sesler → A3–A4.
+  Track'ler: A → V1, Sony → V2; Zoom Tr1 → A1, Zoom Tr2 → A2, Zoom TrLR → A6 (sil); korunan kamera sesi (BAĞLA'da, harici sesin olmadığı aralıklar) → A3; kılavuz sesler → A4–A5.
   ```
   Oturumların sırası kamera sayaçlarından (A038C001, C0142…) ve Zoom saatlerinden (133224…) gelir. Hepsi aynı sırayı vermezse panel sorar.
 - **Çift kopya** varsa (aynı dosya aynı yerde iki kez) panel hiçbir şeye dokunmadan durur ve hangi track'ler olduğunu yazar.
@@ -130,6 +130,13 @@ Ana yol **klasör kurulumu**:
 - **"VETO: …"** satırı (TOPLA onayında): aynı cihazın iki kaydı üst üste geldiği için panel bir bileşeni oturumlara ayırdı.
   **İki Sony gövdesi** (ikisi de C0xxx) panel için tek cihazdır. Aynı anda kayıt yaptılarsa bu satır gerçek bir oturumu ikiye bölüyor olabilir.
   Böyle bir satır görürsen **Hayır** de ve bana getir.
+- **ÖNEMLİ — aynı adlandırmayla kaydeden iki gövde:** Aynı çekimde, dosyaları aynı biçimde adlandıran iki kamera kullanacaksan (ör. iki
+  Sony gövdesi, ikisi de `C0001, C0002…`), **çekimden ÖNCE birinin dosya adı önekini kamerada değiştir.** Nasıl yapılacağını kameranın
+  kılavuzunda "dosya adı / başlık / clip name" ayarı altında bul.
+  - Panel cihazı dosya adından tanır. Aynı adlandırmayı kullanan iki gövde onun için **tek cihazdır**: üst üste kayıtları "aynı cihazın
+    iki kaydı çakışıyor" sayılır, gerçek bir oturum ikiye bölünebilir.
+  - Önek değişince panel o gövdeyi **ayrı bir cihaz** olarak tanır: bilinmeyen adlarda rakamlar atılmış ad cihaz, sondaki sayı sayaç olur.
+  - Bu yüzden önek her dosyada **aynı** kalmalı, sayaç da artmaya devam etmeli.
 - **"OTURUM SIRASI ÇELİŞKİLİ"** sorusu: kameraların sayaçları farklı sıra söylüyor.
   - **Hayır**: hiçbir şey değişmez.
   - **Evet**: oturumlar senkronun bıraktığı sırayla dizilir.
@@ -151,7 +158,10 @@ Ana yol **klasör kurulumu**:
 
 - Oturumlar çekim sırasıyla, sequence'ın başından, aralarında 2 sn boşlukla dizilmiş olmalı. Hiçbir oturum diğerine binmemeli.
 - **V1**: A kamera, **V2**: B kamera (toplam süreler eşitse ada göre).
-- **A1, A2, …**: seçtiğin kaynaklar. Altında kamera kılavuz sesleri (kontrol için; BAĞLA siler), onların altında "Sil" dediğin kaynaklar.
+- **A1, A2, …**: seçtiğin kaynaklar.
+  - Altında **boş** bir "korunan kamera sesi" track'i durur. Kamera birden çok ses kanalı kaydediyorsa kanal başına bir track olur.
+    BAĞLA, harici sesin olmadığı yerlerde kamera sesini buraya koyar.
+  - Onun altında kamera kılavuz sesleri durur (kontrol için; BAĞLA siler), en altta da "Sil" dediğin kaynaklar.
 - En altta park track'lerinde sahipsizler, zamanları değişmeden.
 - Oturum içinde Zoom ile kamera, senkronun bıraktığı gibi hizalı kalmalı.
 - Beğenmezsen: panelde yazan sayıda **Ctrl+Z** bas (genelde 4) ya da yedek sequence'ı kullan.
@@ -164,11 +174,20 @@ Ana yol **klasör kurulumu**:
   - Kesim **yalnız oturum içinde**: bir Zoom/DJI kaydı sadece kendi oturumundaki kameraların çapasına göre kesilir.
   - Oturumda harici ses yoksa (ör. sadece iki kamera) kamera sesi **korunur** ve kameralarla bağlanır.
   - Oturumda hiç kamera yoksa (ör. yalnız Zoom + DJI) o oturumun seslerine **dokunulmaz**: kesilmez, silinmez, bağlanmaz.
-  - Onay penceresinde **"SESSİZ KALACAK"** satırları çıkabilir. Bunlar, kamera sesinin silineceği ama Zoom/DJI sesinin 1 sn'den uzun süre
-    olmadığı yerlerdir: çapanın içindeki boşluklar ya da çapadan taşan kamera kısımları. BAĞLA'dan sonra oralarda ses kalmaz.
-    12 Eylül verinde iki yer çıktı: A038C002'de 41.8 sn, A038C001'de 2.3 sn. Kabul etmiyorsan **Hayır** de; hiçbir şey değişmez.
+  - Onay penceresinde **"KAMERA SESİ KORUNACAK"** satırları çıkabilir. Bunlar, Zoom/DJI sesinin 1 sn'den uzun süre olmadığı yerlerdir:
+    çapanın içindeki boşluklar ya da çapadan taşan kamera kısımları.
+    - Oralarda kamera sesi silinmez. Kamera sesi **yalnız o aralığa** kesilir, "korunan kamera sesi" track'ine konur ve gruba bağlanır.
+    - Aralığı birden çok kamera kapsıyorsa grubun en uzun kamerasının sesi kullanılır.
+    - 12 Eylül verinde üç satır çıkar:
+      - A038C001'in başı, 2.3 sn;
+      - A038C002'nin sonu, 41.8 sn;
+      - C0143'ün çapadan 1 kare (0.04 sn) sonra bitmesi. O son kareyi yalnız C0143 kapsadığı için oradaki ses onun kamera sesinden gelir.
+  - **"SESSİZ KALACAK"** satırı yalnız o aralıkta sesi olan hiçbir kamera yoksa çıkar (ör. sessiz kaydeden bir kamera). BAĞLA'dan sonra
+    orada ses kalmaz. Kabul etmiyorsan **Hayır** de; hiçbir şey değişmez.
+  - **"TOPLA'ya tekrar bas (v0.3.3 track çerçevesi)"** derse: sequence eski sürümle toplanmış ve korunan kamera sesi track'i yok.
+    TOPLA'ya bir kez bas (track'leri düzenler), sonra BAĞLA'ya.
 - **Evet** → yedek sequence → sırasıyla:
-  - **kesim hazırlığı**: kılavuz sesler (harici sesi olan gruplarda) ve "Sil" dediğin kaynaklar silinir;
+  - **kesim hazırlığı**: kılavuz sesler (harici sesi olan gruplarda; korunacak aralıklar kesilmek üzere ayrılır) ve "Sil" dediğin kaynaklar silinir;
   - **ilk parça**: bir ölçüm, bkz. aşağı;
   - **parçalar**;
   - **yerleştir**;

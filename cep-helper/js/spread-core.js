@@ -215,8 +215,11 @@ var SpreadCore = (function(exports) {
 	*    ses çapayı kapsıyorsa start/end çapayla BİREBİR aynı, kapsamıyorsa çapanın içinde kısa bir parça. Hiçbir çapanın içinde değil ama
 	*    bir ana kameraya değiyorsa HATA (KES yapılmamış / düzen değişmiş); hiçbir ana kameraya değmiyorsa (kamerasız oturum) dokunulmaz.
 	*  - "sil" track'inde klip bir ana kameraya değiyorsa → HATA (KES silmemiş); değmiyorsa (kamerasız oturum) dokunulmaz.
-	*  - kamera sesi: videosuyla aynı kaynak + aynı start/end → grubunda harici ses YOKSA grubun (korunan kamera sesi), VARSA HATA (KES
-	*    kılavuzu silmemiş). Videosuyla aynı yerde olmayan kamera sesi: harici sesli bir grubun çapasına değiyorsa HATA, değilse dokunulmaz.
+	*  - "korunan kamera sesi" track'indeki kamera sesi (v0.3.3: harici sesin olmadığı aralığa kesilmiş kılavuz): aynı kaynaklı kamerası
+	*    onu kapsayan grubun; öyle bir kamera yoksa HATA.
+	*  - kamera sesi (kılavuz track'lerinde): videosuyla aynı kaynak + aynı start/end → grubunda harici ses YOKSA grubun (kamera sesi
+	*    korunur), VARSA HATA (KES kılavuzu silmemiş). Videosuyla aynı yerde olmayan kamera sesi: harici sesli bir grubun çapasına
+	*    değiyorsa HATA, değilse dokunulmaz.
 	*/
 	function groupsFromLayout(items, frame) {
 		const errors = [];
@@ -245,7 +248,14 @@ var SpreadCore = (function(exports) {
 			else ignored.push(`${at(c)}: hiçbir kameraya değmiyor (kamerasız oturum) — dokunulmaz`);
 		}
 		const hasExt = new Set(groups.filter((g) => g.audio.length).map((g) => g.anchor));
-		for (const x of items.filter((i) => i.role === "guide" && i.clip.track < frame.aPark)) {
+		const keptT = new Set(frame.keptTracks ?? []);
+		for (const x of items.filter((i) => i.role === "guide" && keptT.has(i.clip.track))) {
+			const c = x.clip;
+			const g = groups.find((q) => q.cams.some((v) => v.projId === c.projId && big(v.start) <= big(c.start) && big(c.end) <= big(v.end)));
+			if (g) g.audio.push(c);
+			else errors.push(`${at(c)}: "korunan kamera sesi" track'inde ama aynı kaynaklı kamerası onu kapsamıyor — düzen değişmiş`);
+		}
+		for (const x of items.filter((i) => i.role === "guide" && i.clip.track < frame.aPark && !keptT.has(i.clip.track))) {
 			const c = x.clip;
 			const g = groups.find((q) => q.cams.some((v) => v.projId === c.projId && v.start === c.start && v.end === c.end));
 			if (g) {
@@ -280,7 +290,7 @@ var SpreadCore = (function(exports) {
 		return out;
 	}
 	//#endregion
-	exports.CORE_VERSION = "0.3.2";
+	exports.CORE_VERSION = "0.3.3";
 	exports.classify = classify;
 	exports.compareLinkGroups = compareLinkGroups;
 	exports.groupsFromLayout = groupsFromLayout;
