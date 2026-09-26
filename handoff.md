@@ -2,8 +2,10 @@
 
 ## v1.0.0 ürünleştirme — mantık değişmedi
 
-**Açık risk:** kırpma kalibrasyonu gerçek Premiere'de ilk BAĞLA'da ölçülecek. Ölçüm "KALİBRASYON SONUCU" bloğu olarak ayrıntılı
-günlüğe ve Sorun bildir raporuna yazılır; ADIM 3.4'teki tabloya işlenecek. Tutarlı kural çıkmazsa BAĞLA hiçbir şey kesmeden durur.
+> **v1.0.0 ürünleştirme — mantık değişmedi; açık risk: kırpma kalibrasyonu gerçek Premiere'de ilk BAĞLA'da ölçülecek.**
+
+Ölçüm "KALİBRASYON SONUCU" bloğu olarak ayrıntılı günlüğe ve Sorun bildir raporuna yazılır; ADIM 3.4'teki tabloya işlenecek.
+Tutarlı kural çıkmazsa BAĞLA hiçbir şey kesmeden durur.
 
 | | |
 |---|---|
@@ -29,16 +31,20 @@ günlüğe ve Sorun bildir raporuna yazılır; ADIM 3.4'teki tabloya işlenecek.
   - KES planına `handoff: "panel" | "bridge"` alanı: yardımcı panel bölümünü göstermek için; yardımcının plan doğrulaması bu alanı
     okumaz.
 - **Arka plan günlüğü** (`spread/src/journal.ts`): bellek (son 4000 satır) + dosya
-  `%APPDATA%/BadIdeaAgency/Spread/spread-gunluk.txt`.
+  `%APPDATA%\BadIdeaAgency\Spread\spread-gunluk.txt`. Panel her açıldığında önceki oturumun dosyası
+  `spread-gunluk-onceki.txt`'ye alınır; son 500 satırı Sorun bildir raporuna girer (Premiere çökse de son TOPLA / BAĞLA günlüğü kalır).
 - **Sorun bildir** (`spread/src/report.ts`): sürümler, yardımcı durumu, son hata + ayrıntısı, kalibrasyon sonucu, son SPREAD /
-  TOPLA / BAĞLA günlükleri, Durum raporu, ayrıntılı günlüğün sonu.
-  - Rapor panoya kopyalanır ve `Desktop/SpreadRapor_<tarih>.txt` olarak kaydedilir.
-  - Masaüstüne yazılamazsa OneDrive masaüstü, o da olmazsa veri klasörü denenir.
-  - Yollarda "/" kullanılır (Adobe UXP dosya örneği gibi).
+  TOPLA / BAĞLA günlükleri, Durum raporu (işlem sürerken atlanır), ayrıntılı günlüğün sonu, önceki oturumun günlüğü.
+  - Rapor panoya kopyalanır ve `Desktop\SpreadRapor_<tarih>.txt` olarak kaydedilir. Kopyalama olmazsa metin panelde bir kutuda görünür.
+  - Denenen yollar sırayla: `<home>\Desktop`, `<home>\OneDrive\Desktop`, `<home>\OneDrive\Masaüstü`, `<home>/Desktop` ("/" ayraçlı),
+    veri klasörü. Önce "\\" ayraç (linker.ts'teki yardımcı dosyalarıyla aynı, çalıştığı bilinen biçim).
+  - Düğme hiç kapanmaz: işlem sürerken (ör. onay beklerken) de çalışır; o sırada timeline'ı okumaz (Durum raporu atlanır).
+  - Rapor `#report` kutusuna yazılmaz (orada yardımcıya yapıştırılacak KES planı durabilir); kendi kutusu `#issue-text`.
 - **Spread Helper** (`cep-helper/index.html`, `js/panel.js`):
   - Tek durum satırı.
-  - BAĞLA bölümü yalnız `planStatus().waiting` iken görünür: plan `handoff:"panel"` ve henüz bağlanmamış.
-  - Geri kalan her şey "Ayrıntı ▸" altında.
+  - BAĞLA bölümü yalnız `planStatus().waiting` iken görünür: plan `handoff:"panel"` ve henüz bağlanmamış. Bu panelde yapılan son
+    BAĞLA'nın sonucu (başarılı ya da değil) yeni bir plan gelene kadar görünür kalır; yeşil "bağlandı" yalnız sonuç başarılıysa.
+  - Geri kalan her şey "Ayrıntı ▸" altında; Spread'in mesajlarıyla aynı adlar: "Planı yapıştır" kutusu + altındaki "BAĞLA".
   - Varsayılan boyut 300×140. `helper.js`'e yalnız okuma yapan `planStatus()` eklendi.
 - **Sürüm**: `spread/src/version.ts` (SPREAD_VERSION = yardımcıdan beklenen sürüm); manifest'ler, host.jsx, çekirdek 1.0.0.
 
@@ -53,7 +59,12 @@ günlüğe ve Sorun bildir raporuna yazılır; ADIM 3.4'teki tabloya işlenecek.
   - Yardımcıyı `%APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper`'a kopyalar.
   - UPIA `/install spread.ccx` çalıştırır. Yol ve sözdizimi: developer.adobe.com/premiere-pro/uxp/plugins/distribution/install/;
     exe `C:\Program Files\Common Files\Adobe\Adobe Desktop Common\RemoteComponents\UPI\UnifiedPluginInstallerAgent\`.
-  - Sonuç, çıkış kodlarına değil okunan değerlere ve dosyalara göre raporlanır.
+  - PlayerDebugMode ve yardımcı için sonuç çıkış kodlarına değil okunan değerlere ve dosyalara göre raporlanır. UPIA için okunacak bir
+    şey belgeli değil: özet yalnız "Adobe kurucusu kurduğunu **bildirdi**" der ve UPIA'nın kendi çıktısı ekranda kalır (`cls` yok).
+    Özet her durumda "Menüde Spread yoksa: spread.ccx'e çift tıkla" satırını gösterir.
+  - `onceki.txt` yazılamazsa kayıt defterine dokunmadan durur (KALDIR geri yükleyemeyeceği bir değişiklik yapılmaz).
+  - Özet satırları blok (`( … )`) içinde değil, tek satırlık `if`'lerle: `%APPDATA%` ")" içerse de (ör. kullanıcı "Ali (Kurgu)")
+    cmd'nin ayrıştırması bozulmaz.
 - **KALDIR.cmd**:
   - UPIA `/remove "Spread"` (belgede ad alır).
   - Yardımcı klasörünü siler.
@@ -62,8 +73,14 @@ günlüğe ve Sorun bildir raporuna yazılır; ADIM 3.4'teki tabloya işlenecek.
   - Masaüstündeki raporlara dokunmaz.
 - **Sınama** (`scripts/test-kurulum-wine.sh`, Wine):
   - ilk kurulum, ikinci kurulum (saklanan değer bozulmaz), kaldırma (CSXS.11 "0"a, CSXS.12 YOK'a döner; klasörler silinir);
+  - kurulum klasörü adında boşluk + parantez ("Spread Kurulum (1)");
+  - Adobe kurucusu: yok → "bulunamadı / çift tıkla"; sahte UPIA çıkış 0 (Wine'ın whoami.exe'si) → "bildirdi"; çıkış 1 (hostname.exe)
+    → "kurulamadı"; KALDIR'da `/remove` → "kaldırdığını bildirdi";
+  - `%APPDATA%` içinde ")" (sarmalayıcı .cmd ile): kurulum ve kaldırma tam;
   - zip açılmadan çalıştırma; yönetici reddi.
-  - Wine'ın `net session`'ı 0 döndürdüğü için sınamada o satır değiştirilir.
+  - Wine'ın `net session`'ı 0 döndürdüğü için sınamada o satır değiştirilir. Wine'ın `cmd /c`'si parantezli yolu açamadığı için betik
+    `cmd /c call "…"` ile çağrılır (Windows'ta çift tıklama bundan etkilenmez).
+  - Wine'ın `findstr /b /c:`'si eşleşmeyi kaçırdı → KUR.cmd'de bu kontrol `for /f` ile yapılıyor (`:has12`); Windows'ta da aynı çalışır.
 - **Sınanamayan:**
   - UPIA'nın gerçek davranışı: Market dışı .ccx'te onay istiyor mu, çıkış kodları. Başarısızsa özet "spread.ccx'e çift tıkla" der.
   - Gerçek Windows cmd'si. Wine'da `reg` / `xcopy` başarılıyken de sıfır dışı döndü; bu yüzden sonuç okunarak doğrulanıyor.
@@ -71,9 +88,40 @@ günlüğe ve Sorun bildir raporuna yazılır; ADIM 3.4'teki tabloya işlenecek.
 ### Belirsizlikler (v1.0.0)
 
 1. Kalibrasyonun gerçek ölçümü (yukarıda, açık risk).
-2. UPIA'nın komut satırından Market dışı .ccx kurarken ne yaptığı belgesiz. Kurulamazsa kullanıcı .ccx'e çift tıklar.
+2. UPIA'nın komut satırından Market dışı .ccx kurarken ne yaptığı ve çıkış kodları belgesiz. Başarısızken 0 döndürürse özet yanlışlıkla
+   "bildirdi" der; bu yüzden özet UPIA'nın çıktısını ekranda bırakır ve "Menüde Spread yoksa: spread.ccx'e çift tıkla" satırı her zaman
+   görünür. `/list all` ile doğrulama çıktı biçimi belgesiz olduğu için eklenmedi (tahmin olurdu).
 3. UXP'de `sp-button`'ın `variant` özniteliğini çalışırken değiştirmek (vurgulu adım) ölçülmedi. Değişmezse yalnız vurgu kaybolur.
 4. Masaüstü yolu: OneDrive yönlendirmesi ve Türkçe klasör adı denenir; olmazsa veri klasörüne yazılır ve yol gösterilir.
+5. UXP'de `:root` CSS değişkenleri gerçek panelde ölçülmedi (ekran görüntüleri Chromium). Çalışmazsa renkler varsayılana düşer;
+   düzen ve düğmeler etkilenmez.
+6. Bilerek değiştirilmeyenler: yardımcıda `.debug` (uzak hata ayıklama, port 8098) 0.3.x'teki gibi pakette; KALDIR, KUR'un açtığı boş
+   `CSXS.11/12` anahtarlarını ve boş `CEP\extensions` klasörünü bırakır (içleri boş, zararsız); 0.3.x'in `.reg` dosyasıyla
+   PlayerDebugMode'u elle "1" yapan kullanıcıda `onceki.txt` "1" kaydeder ve KALDIR onu "1"e döndürür (doğru ama beklenmedik olabilir).
+
+### İnceleme #7 (bağımsız alt ajan, 7864351..9ce1dd8) ve düzeltmeler
+
+BLOCKER yok. Denetim 1 (mantık dosyalarında davranış farkı yok), 2 (kurulum yalnız HKCU / `%APPDATA%` / `%TEMP%`'e yazar),
+3 (KALDIR, KUR'u geri alır) → **PASS**. `npm run check` PASS (79 senaryo), regresyon PASS, zip bayt bayt yeniden üretilebilir.
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| M1 | Günlük dosyası her açılışta eziliyordu → çökme sonrası Sorun bildir'de son TOPLA / BAĞLA yok | ilk yazmadan önce eski dosya `spread-gunluk-onceki.txt`'ye alınır; son satırları raporda ayrı bölüm (en çok 500) |
+| M2 | Yardımcı paneli başarısız bağlamadan sonra yeşil "bağlandı" gösterebiliyordu; yapıştırılan planda sonuç kutusu hemen kayboluyordu | son BAĞLA (plan `createdAt` ya da "yapıştır") + sonucu tutulur; yeşil yalnız `ok`; başarısızsa kırmızı "Bağlama tamamlanmadı — nedeni aşağıda"; kutu yeni plan gelene kadar görünür. İncelemecinin jsdom repro'su (5 durum) doğru |
+| m1 | Sorun bildir işlem boyunca (onay beklerken de) kapalıydı | düğme hiç kapanmaz; işlem sürerken timeline okunmaz (Durum raporu atlanır), `reporting` kilidi çift tıklamayı engeller |
+| m2 | Arayüz çağrıları istisna güvenli değildi | `opStart` / `progress` / `opEnd` / `done` / `opFinish` try/catch içinde; `finally`'de önce `busy=false` |
+| m3 | Adım göstergesi: yeniden SPREAD'den sonra eski TOPLA ✓'ü; yardımcı panelinde bağlandıktan sonra hâlâ "bekliyor" | kayıt yalnız son SPREAD'den yeniyse kullanılır; BAĞLA ✓'ü `link-result.json` (`planCreatedAt` = kayıt, `ok`) ile; plan panelde zaten bağlandıysa BAĞLA sonucu "zaten bağlandı" gösterir (KES / plan akışı aynı) |
+| m4 | Onay özetleri 3–5 satırı aşıyordu; VETO "+N daha" yoktu; OTURUM SIRASI / ŞÜPHELİ ÜYE özetinde asıl bilgi yoktu | TOPLA / BAĞLA özetleri sıkıştırıldı (VETO / SESSİZ önce, "+N … daha (Ayrıntı)", tek "Not:" satırı: park, ŞÜPHELİ, kalibrasyon, köprü, kamerasız, uyarı sayısı); OTURUM SIRASI ve ŞÜPHELİ ÜYE için açık özet ("Hayır = oturumda kalsın" dahil). Soru metinleri (`q`) aynen |
+| m5 | Kesim bittikten sonra durunca ipucu "Ctrl+Z × N" diyordu, başlık "BAĞLA'ya tekrar bas" | `reportStop(…, { cutsDone })` (yalnız arayüz): "Kesim yerinde ve doğru. Yardımcıyı düzeltip BAĞLA'ya tekrar bas…" |
+| m6 | Eski metinler (`spread-helper-klasor.zip`, "SUNUCU BAŞLAMADI", "Planı elle bağla") | linker ipuçları → `Spread_Kurulum_v1.0.0.zip` / KUR.cmd, "Spread Helper çalışmıyor"; yardımcıdaki adlar Spread'in günlük metinlerine uyduruldu ("Planı yapıştır" + "BAĞLA") — smoke'un denetlediği günlük metinleri değişmedi |
+| m7 | KUR.cmd: `else ( … "%DEST%" … )` bloğu `%APPDATA%` ")" içerince cmd'yi bozar | özet yalnız tek satırlık `if`'ler; Wine'da ")" içeren `%APPDATA%` ile sınandı |
+| m8 | `onceki.txt` yazılamasa da kayıt defteri değişiyordu | yazılamazsa `:nostate` — hiçbir şeye dokunmadan durur |
+| m9 | UPIA sonucu çıkış kodundan "kuruldu" diyordu; `cls` UPIA çıktısını siliyordu | "Adobe kurucusu … **bildirdi** (çıktısı yukarıda)"; `cls` kaldırıldı; "Menüde Spread yoksa çift tıkla" her zaman (Belirsizlik 2) |
+| m10 | Wine sınamasında UPIA yolu hiç çalışmıyordu | sahte UPIA (çıkış 0 / 1), parantezli klasör, ")" içeren `%APPDATA%` eklendi — bu sınama ayrıca `findstr /b /c:` sorununu buldu (yukarıda) |
+| m11 | Sorun bildir dosya yolları "/" ile (denenmemiş biçim); `#report` eziliyordu | önce "\\" (linker'la aynı), sonra "/"; rapor kendi kutusunda (`#issue-text`) |
+| NIT | humanize kalıbı eşleşmiyordu; küçük harfle başlayan başlıklar; `#adv` JS'ten önce görünüyordu; açık temada koyu kart + koyu yazı | kalıp gerçek metne ("sequence yok", "proje yok"); başlığın ilk harfi büyük; CSS'te `display:none`; sabit koyu palet |
+| NIT | KALDIR veri klasörüne düşmüş raporları da siliyor | belgelendi (KURULUM_TR, OKU_BENI, KALDIR özeti) |
+| NIT | `.debug` pakette; boş anahtar / klasör kalıyor; `%APPDATA%` boşsa; `net session` Sunucu hizmeti kapalıysa "yönetici değil" der | değiştirilmedi (Belirsizlik 6); `%APPDATA%` Windows'ta etkileşimli kullanıcıda hep tanımlı |
 
 ---
 

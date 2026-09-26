@@ -18,7 +18,8 @@
   var hhmmss = function (iso) {
     return iso ? String(iso).slice(11, 19) : "—";
   };
-  var shownFor = null; // bu panelde BAĞLA'ya basılan planın createdAt'i (sonuç görünür kalsın)
+  // bu panelde son BAĞLA: hangi plan (createdAt; yapıştırılan plan → "yapıştır") ve sonucu — sonuç, yeni bir plan gelene kadar görünür
+  var last = null; // { at: string, ok: boolean|null }
   var busy = false;
 
   function renderStatus() {
@@ -59,14 +60,18 @@
     if (!app || !app.helper || typeof app.helper.planStatus !== "function") return;
     var p = app.helper.planStatus();
     var box = $("bindbox");
-    var visible = p.waiting || (shownFor !== null && p.createdAt === shownFor);
+    var mine = last !== null && (last.at === "yapıştır" || last.at === p.createdAt);
+    var visible = p.waiting || mine;
     if (box) box.style.display = visible ? "block" : "none";
-    if (p.waiting) {
+    if (mine && last.ok === true) {
+      set("bind-msg", "✓ " + (last.at === "yapıştır" ? "Yapıştırılan plan" : "\"" + p.sequence + "\" planı") + " bu panelde bağlandı.", "ok");
+      $("btn-bind").style.display = "none";
+    } else if (mine && last.ok === false) {
+      set("bind-msg", "Bağlama tamamlanmadı — nedeni aşağıda. Düzeltip yeniden BAĞLA'ya bas.", "bad");
+      $("btn-bind").style.display = "";
+    } else if (p.waiting) {
       set("bind-msg", "Spread bağlamayı bekliyor: \"" + p.sequence + "\" · " + p.groups + " grup. Premiere'de o sequence açıkken BAĞLA'ya bas.", "");
       $("btn-bind").style.display = "";
-    } else if (visible) {
-      set("bind-msg", "\"" + p.sequence + "\" planı bu panelde bağlandı.", "ok");
-      $("btn-bind").style.display = "none";
     }
   }
 
@@ -111,8 +116,9 @@
   function onBind() {
     if (!app || !app.helper || busy) return;
     busy = true;
+    var pasted = $("paste") && $("paste").value.trim() !== "";
     var p = typeof app.helper.planStatus === "function" ? app.helper.planStatus() : null;
-    shownFor = p && p.createdAt ? p.createdAt : null;
+    last = { at: pasted ? "yapıştır" : p && p.createdAt ? p.createdAt : "yapıştır", ok: null };
     var b1 = $("btn-bind");
     var b2 = $("btn-bind2");
     b1.disabled = b2.disabled = true;
@@ -120,9 +126,16 @@
     set("summary", "… bağlanıyor", "row warn");
     app.helper
       .bindFromPlan({ text: $("paste") ? $("paste").value : "" })
-      .then(renderResult, function (e) {
-        renderResult({ ok: false, summary: "✗ " + ((e && e.message) || e), rows: [], ignored: [], lines: [] });
-      })
+      .then(
+        function (out) {
+          last.ok = !!out.ok;
+          renderResult(out);
+        },
+        function (e) {
+          last.ok = false;
+          renderResult({ ok: false, summary: "✗ " + ((e && e.message) || e), rows: [], ignored: [], lines: [] });
+        }
+      )
       .then(function () {
         b1.disabled = b2.disabled = false;
         busy = false;

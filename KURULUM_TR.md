@@ -37,7 +37,8 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
 **Kaldırmak:** **KALDIR.cmd**'ye çift tıkla. Kurulumun yaptığı her şeyi geri alır:
 - paneli ve yardımcıyı kaldırır;
 - PlayerDebugMode'u kurulumdan önceki hâline döndürür;
-- Spread'in kayıtlarını siler. Masaüstündeki `SpreadRapor_…txt` dosyaları kalır.
+- Spread'in kayıtlarını siler. Masaüstündeki `SpreadRapor_…txt` dosyaları kalır; masaüstüne yazılamadığı için
+  `%APPDATA%\BadIdeaAgency\Spread\` altına düşmüş raporlar kayıtlarla birlikte silinir.
 
 ## 2) Panel
 
@@ -58,7 +59,9 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
   durumu ve son hata vardır.
   - Rapor panoya kopyalanır ve masaüstüne `SpreadRapor_<tarih>.txt` olarak kaydedilir. Masaüstüne yazılamazsa
     `%APPDATA%\BadIdeaAgency\Spread\` altına kaydedilir.
-  - Bir şey ters gittiğinde bunu bana gönder.
+  - Bir şey ters gittiğinde bunu bana gönder. Düğme işlem sürerken de (ör. onay beklerken) çalışır.
+  - Premiere çöktüyse ya da panel yeniden açıldıysa rapor **önceki oturumun günlüğünü** de içerir
+    (`spread-gunluk-onceki.txt`).
 - **Gelişmiş ▸** (varsayılan kapalı):
   - kaynak eşleme (hangi ses hangi A track'e, "Sil");
   - güçlü bağ eşiği ve oturum arası boşluk;
@@ -223,7 +226,7 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
   - Bir kısım grup bağlanamazsa hangilerinin bağlandığını tek tek yazar. Yeniden basmak güvenlidir.
   - Spread'in **Durum raporu** panelde yapılan bağlamayı da gösterir.
   - Plan dosyası yazılamadıysa Spread bunu söyler ve planı **Gelişmiş ▸ Durum raporu** kutusuna koyar. **Raporu kopyala** → Spread
-    Helper panelinde **Ayrıntı ▸** → planı yapıştır → **Planı elle bağla**.
+    Helper panelinde **Ayrıntı ▸** → **Planı yapıştır** kutusuna yapıştır → altındaki **BAĞLA**.
 - **KALİBRASYON** nedir: panel, Premiere'in dört kırpma komutunun (SetOutPoint, SetEnd, SetInPoint, SetStart) ne yaptığını
   tahmin etmez, **ölçer**.
   - Nasıl:
@@ -258,7 +261,7 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
 - **"düzen TOPLA düzeninde değil"** ya da **"Ayar TOPLA'dan sonra değişti"** derse: TOPLA'dan sonra bir klip yer değiştirmiş, eşleme
   ya da eşik değişmiş. Hiçbir şey değişmedi. TOPLA'ya bas, sonra BAĞLA'ya.
 - Bağlama adımında yardımcı düşerse (**"… grup bağlanamadı (kesme/silme doğru ve yerinde)"**), yardımcıyı düzelt ve **BAĞLA'ya tekrar bas**,
-  ya da Spread Helper panelindeki BAĞLA'ya bas. Panel kesimi hatırlar; bu kez **yalnız bağlar**. Yeniden kesmez, yedek almaz.
+  ya da Spread Helper panelinde **Ayrıntı ▸ → BAĞLA**'ya bas. Panel kesimi hatırlar; bu kez **yalnız bağlar**. Yeniden kesmez, yedek almaz.
 - **BAĞLA'dan sonra TOPLA** çalışmaz. Harici sesler kesildiği için oturumları bulduran tam kayıtlar artık yok; panel tahmin etmez.
   Yeniden toplamak istersen BAĞLA öncesi yedek sequence'ı kullan ya da BAĞLA'yı Ctrl+Z ile tamamen geri al.
 - **"… YARIM hâlde"** derse: önceki bir TOPLA ya da BAĞLA durmuş ve geri alınmamış. Önce o mesajdaki kadar Ctrl+Z bas (ya da yedeği kullan).

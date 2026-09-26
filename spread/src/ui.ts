@@ -241,26 +241,31 @@ export function setDoneHandler(fn: (step: StepId, kind: "ok" | "warn", text: str
   doneHandler = fn;
 }
 
+// Buradaki işlem göstergesi fonksiyonları ASLA fırlatmaz (runner'ların mantığına hata taşımasın).
 export function opStart(label: string): void {
   opActive = true;
   opEnded = false;
   opLabel = label;
   try {
     beginOp(label);
+    show("result", false);
   } catch {
-    /* günlük yoksa geç */
+    /* gösterge yoksa geç */
   }
-  show("result", false);
   progress(0.02, `${label}: sequence okunuyor…`);
 }
 
 /** İlerleme çubuğu + tek satır ne yapıldığı. frac: 0…1. */
 export function progress(frac: number, text: string): void {
   if (!opActive) return;
-  show("progress", !isAsking());
-  const f = maybe("progress-fill");
-  if (f) f.style.width = `${Math.round(Math.max(0.02, Math.min(1, frac)) * 100)}%`;
-  setText("progress-text", text);
+  try {
+    show("progress", !isAsking());
+    const f = maybe("progress-fill");
+    if (f) f.style.width = `${Math.round(Math.max(0.02, Math.min(1, frac)) * 100)}%`;
+    setText("progress-text", text);
+  } catch {
+    /* gösterge yoksa geç */
+  }
 }
 
 const CLASS: Record<ResultKind, string> = { ok: "result ok", warn: "result warn", err: "result err", cancel: "result dim", info: "result dim" };
@@ -270,6 +275,14 @@ const ICON: Record<ResultKind, string> = { ok: "✓", warn: "⚠", err: "✗", c
 export function opEnd(kind: ResultKind, headline: string, hint = "", details: string[] = []): void {
   if (!opActive || opEnded) return;
   opEnded = true;
+  try {
+    paintResult(kind, headline, hint, details);
+  } catch {
+    /* gösterge yoksa geç */
+  }
+}
+
+function paintResult(kind: ResultKind, headline: string, hint: string, details: string[]): void {
   show("progress", false);
   const r = maybe("result");
   if (r) r.className = CLASS[kind];
@@ -304,18 +317,18 @@ export function done(step: StepId, kind: "ok" | "warn", text: string, hint = "")
 
 /** İşlem wrapper'ı bitirir: sonuç yazılmadıysa son satırdan (iptal / bilgi). */
 export function opFinish(): void {
-  if (opActive && !opEnded) {
-    const last = [...currentOpLines()].reverse().find((l) => l.trim()) ?? "";
-    if (/İptal edildi/.test(last)) opEnd("cancel", "İptal edildi; hiçbir şey değişmedi.");
-    else opEnd("info", "Bitti.", "", []);
-  }
-  opActive = false;
-  show("progress", false);
   try {
+    if (opActive && !opEnded) {
+      const last = [...currentOpLines()].reverse().find((l) => l.trim()) ?? "";
+      if (/İptal edildi/.test(last)) opEnd("cancel", "İptal edildi; hiçbir şey değişmedi.");
+      else opEnd("info", "Bitti.", "", []);
+    }
+    show("progress", false);
     endOp();
   } catch {
     /* yoksa geç */
   }
+  opActive = false;
 }
 
 // ------------------------------------------------------------------ insan dilinde tek cümle
@@ -339,7 +352,7 @@ const HUMAN: [RegExp, string][] = [
   [/^Yedek sequence oluşmadı/, "Yedek sequence oluşturulamadı; hiçbir şey değişmedi."],
   [/doğrulaması tutmadı/, "Bir adımın sonucu beklendiği gibi değildi; işlem durdu."],
   [/Senkron sonucunda tutarsızlık/, "Senkron sonucunda tutarsızlık var; TOPLA başlamadı."],
-  [/Aktif sequence yok|Açık proje yok/, "Aktif sequence yok; timeline'a bir kez tıkla."],
+  [/sequence yok|proje yok/i, "Aktif sequence yok; timeline'a bir kez tıkla."],
 ];
 
 /** Durdurma mesajından tek cümle (bilinen durumlar elle; kalanı ilk cümle, BÜYÜK HARF başlık küçültülür). */
@@ -349,6 +362,7 @@ export function humanize(message: string): string {
   const m = /^([A-ZÇĞİÖŞÜ ]{6,}):\s/.exec(s);
   if (m) s = m[1];
   if (/^[A-ZÇĞİÖŞÜ\s]+$/.test(s)) s = s.charAt(0) + s.slice(1).toLocaleLowerCase("tr");
+  s = s.charAt(0).toLocaleUpperCase("tr") + s.slice(1);
   if (s.length > 160) s = s.slice(0, 157) + "…";
   return /[.!?…]$/.test(s) ? s : s + ".";
 }

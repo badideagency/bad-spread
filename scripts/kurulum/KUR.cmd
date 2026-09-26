@@ -38,10 +38,12 @@ echo.
 
 rem a) onceki PlayerDebugMode degerlerini (yalniz ILK kurulumda) sakla, sonra "1" yap
 if not exist "%STATE%" mkdir "%STATE%" >nul 2>&1
-if not exist "%STATE%\onceki.txt" (
-  call :saveprev 11
-  call :saveprev 12
-)
+if not exist "%STATE%\onceki.txt" call :saveprev 11
+if not exist "%STATE%\onceki.txt" goto :nostate
+call :has12
+if errorlevel 1 call :saveprev 12
+call :has12
+if errorlevel 1 goto :nostate
 reg add "HKCU\Software\Adobe\CSXS.12" /v PlayerDebugMode /t REG_SZ /d 1 /f >nul 2>&1
 reg add "HKCU\Software\Adobe\CSXS.11" /v PlayerDebugMode /t REG_SZ /d 1 /f >nul 2>&1
 rem sonuc cikis koduna degil, okunan degere gore
@@ -58,21 +60,23 @@ rem sonuc cikis koduna degil, kopyalanan dosyalara gore
 set "R_HELPER=OK"
 for %%F in ("CSXS\manifest.xml" ".debug" "index.html" "js\helper.js" "js\panel.js" "js\spread-core.js" "jsx\host.jsx") do if not exist "%DEST%\%%~F" set "R_HELPER=HATA"
 
-rem c) Spread paneli (spread.ccx) - Adobe'nin kurucusu
+rem c) Spread paneli (spread.ccx) - Adobe'nin kurucusu; ciktisi ekranda kalir (cls yok)
 set "R_PANEL=YOK"
-if defined UPIA (
-  echo Spread paneli kuruluyor ^(Adobe UnifiedPluginInstallerAgent^)...
-  "%UPIA%" /install "%CCX%"
-  if errorlevel 1 (set "R_PANEL=HATA") else (set "R_PANEL=OK")
-)
+if not defined UPIA goto :summary
+echo Spread paneli kuruluyor - Adobe UnifiedPluginInstallerAgent:
+"%UPIA%" /install "%CCX%"
+if errorlevel 1 (set "R_PANEL=HATA") else (set "R_PANEL=OK")
 
-cls
+:summary
+echo.
 echo ================================================================
 echo   Spread 1.0.0 kurulumu
 echo ================================================================
-if "%R_DEBUG%"=="OK" (echo   [tamam] Gelistirici kipi PlayerDebugMode = 1 ^(CSXS.11 ve CSXS.12^)) else (echo   [HATA ] PlayerDebugMode yazilamadi)
-if "%R_HELPER%"=="OK" (echo   [tamam] Spread Helper kopyalandi) else (echo   [HATA ] Spread Helper kopyalanamadi: %DEST%)
-if "%R_PANEL%"=="OK" echo   [tamam] Spread paneli kuruldu
+if "%R_DEBUG%"=="OK" echo   [tamam] Gelistirici kipi PlayerDebugMode = 1 - CSXS.11 ve CSXS.12
+if not "%R_DEBUG%"=="OK" echo   [HATA ] PlayerDebugMode yazilamadi
+if "%R_HELPER%"=="OK" echo   [tamam] Spread Helper kopyalandi
+if not "%R_HELPER%"=="OK" echo   [HATA ] Spread Helper kopyalanamadi - hedef: "%DEST%"
+if "%R_PANEL%"=="OK" echo   [tamam] Adobe kurucusu Spread panelini kurdugunu bildirdi ^(ciktisi yukarida^)
 if "%R_PANEL%"=="HATA" echo   [ !!  ] Spread paneli kurulamadi - spread.ccx dosyasina cift tikla ^(Creative Cloud kurar^)
 if "%R_PANEL%"=="YOK" echo   [ !!  ] Adobe kurucusu bulunamadi - spread.ccx dosyasina cift tikla ^(Creative Cloud kurar^)
 echo.
@@ -80,6 +84,7 @@ echo   Simdi:
 echo     1. Premiere Pro'yu KAPATIP yeniden ac.
 echo     2. Window ^> Extensions (Legacy) ^> Spread Helper   - kucuk paneli ac, acik birak.
 echo     3. Window ^> UXP Plugins ^> Spread                  - ana paneli ac.
+echo        Menude Spread yoksa: spread.ccx dosyasina cift tikla.
 echo.
 echo   Kaldirmak icin: KALDIR.cmd  -  Kullanim: OKU_BENI.txt
 echo ================================================================
@@ -91,6 +96,12 @@ rem PlayerDebugMode REG_SZ "1" mi (cikis 0 = evet) - regex yok, reg query ciktis
 set "ONE=1"
 for /f "tokens=2,*" %%A in ('reg query "HKCU\Software\Adobe\CSXS.%1" /v PlayerDebugMode 2^>nul ^| findstr "PlayerDebugMode"') do if /i "%%A"=="REG_SZ" if "%%B"=="1" set "ONE=0"
 exit /b %ONE%
+
+:has12
+rem onceki.txt'te CSXS.12 satiri var mi (cikis 0 = evet) - findstr yok, satirlar "=" ile bolunur
+set "HAS=1"
+for /f "usebackq tokens=1 delims==" %%K in ("%STATE%\onceki.txt") do if /i "%%K"=="CSXS.12" set "HAS=0"
+exit /b %HAS%
 
 :saveprev
 reg query "HKCU\Software\Adobe\CSXS.%1" /v PlayerDebugMode >nul 2>&1
@@ -106,6 +117,14 @@ for /f "tokens=2,*" %%A in ('reg query "HKCU\Software\Adobe\CSXS.%1" /v PlayerDe
 )
 >>"%STATE%\onceki.txt" echo CSXS.%1=%PREVT%;%PREV%
 goto :eof
+
+:nostate
+echo.
+echo  HATA: onceki ayarlar saklanamadi ^(%%APPDATA%%\BadIdeaAgency\SpreadKurulum^).
+echo  Kayit defterine dokunulmadi, hicbir sey kurulmadi.
+echo.
+pause
+exit /b 1
 
 :nozip
 echo.

@@ -308,8 +308,8 @@ class CepLinker implements Linker {
   installHint(): string[] {
     return [
       "Yardımcı: Premiere'de Window → Extensions (Legacy) → Spread Helper panelini aç; sunucu panel açıkken çalışır (paneli çalışma alanında açık bırak).",
-      "Menüde yoksa kurulu değil: KURULUM_TR.md → \"Yardımcıyı kur\" (release/spread-helper-klasor.zip → KUR.cmd), Premiere'i kapatıp aç.",
-      `Panel açık ama "SUNUCU BAŞLAMADI" diyorsa oradaki hatayı getir (ör. 127.0.0.1:${HELPER_PORT} kullanımda). Köprü kurulamasa da yardımcı paneldeki BAĞLA çalışır.`,
+      "Menüde yoksa kurulu değil: Spread_Kurulum_v1.0.0.zip → KUR.cmd (KURULUM_TR.md → \"Kurulum\"), Premiere'i kapatıp aç.",
+      `Panel açık ama kırmızı "Spread Helper çalışmıyor" diyorsa oradaki hatayı getir (ör. localhost:${HELPER_PORT} kullanımda). Köprü kurulamasa da yardımcı paneldeki BAĞLA çalışır.`,
     ];
   }
 }

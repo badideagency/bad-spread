@@ -7,7 +7,7 @@ rem   1) Spread paneli: Adobe UnifiedPluginInstallerAgent /remove "Spread" (bulu
 rem   2) Spread Helper klasoru: %APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper
 rem   3) PlayerDebugMode (HKCU\Software\Adobe\CSXS.11 / CSXS.12): KUR.cmd ONCESI degerlerine (onceki.txt) - yoksa silinir
 rem   4) Spread verileri: %APPDATA%\BadIdeaAgency\Spread, \SpreadHelper, \SpreadKurulum ve %TEMP%\spread-helper.log
-rem   Masaustundeki SpreadRapor_*.txt dosyalarina dokunulmaz.
+rem   Masaustundeki SpreadRapor_*.txt dosyalarina dokunulmaz (masaustune yazilamayip veri klasorune dusenler silinir).
 rem ---------------------------------------------------------------------------------------------------------------
 set "DEST=%APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper"
 set "BASE=%APPDATA%\BadIdeaAgency"
@@ -31,12 +31,13 @@ if not errorlevel 1 (
 echo Spread kaldiriliyor...
 echo.
 
-rem 1) Spread paneli
+rem 1) Spread paneli (Adobe kurucusunun ciktisi ekranda kalir)
 set "R_PANEL=YOK"
-if defined UPIA (
-  "%UPIA%" /remove "Spread"
-  if errorlevel 1 (set "R_PANEL=HATA") else (set "R_PANEL=OK")
-)
+if not defined UPIA goto :helper
+"%UPIA%" /remove "Spread"
+if errorlevel 1 (set "R_PANEL=HATA") else (set "R_PANEL=OK")
+
+:helper
 
 rem 2) Spread Helper
 set "R_HELPER=OK"
@@ -55,18 +56,19 @@ if exist "%TEMP%\spread-helper.log" del /q "%TEMP%\spread-helper.log" >nul 2>&1
 if "%R_DEBUG%"=="OK" if exist "%STATE%" rmdir /s /q "%STATE%" >nul 2>&1
 rmdir "%BASE%" >nul 2>&1
 
-cls
+echo.
 echo ================================================================
 echo   Spread 1.0.0 kaldirma
 echo ================================================================
-if "%R_PANEL%"=="OK" echo   [tamam] Spread paneli kaldirildi
+if "%R_PANEL%"=="OK" echo   [tamam] Adobe kurucusu Spread panelini kaldirdigini bildirdi ^(ciktisi yukarida^)
 if "%R_PANEL%"=="HATA" echo   [ !!  ] Spread paneli kaldirilamadi - Creative Cloud ^> Eklentiler'den kaldir
 if "%R_PANEL%"=="YOK" echo   [ !!  ] Adobe kurucusu bulunamadi - Creative Cloud ^> Eklentiler'den kaldir
-if "%R_HELPER%"=="OK" (echo   [tamam] Spread Helper silindi) else (echo   [HATA ] Spread Helper silinemedi - Premiere acik mi? Kapat, tekrar calistir)
+if "%R_HELPER%"=="OK" echo   [tamam] Spread Helper silindi
+if not "%R_HELPER%"=="OK" echo   [HATA ] Spread Helper silinemedi - Premiere acik mi? Kapat, tekrar calistir
 if "%R_DEBUG%"=="OK" echo   [tamam] PlayerDebugMode kurulum oncesi haline dondu
-if "%R_DEBUG%"=="HATA" echo   [HATA ] PlayerDebugMode geri yuklenemedi - %STATE%\onceki.txt dosyasina bak
+if "%R_DEBUG%"=="HATA" echo   [HATA ] PlayerDebugMode geri yuklenemedi - "%STATE%\onceki.txt" dosyasina bak
 if "%R_DEBUG%"=="BILINMIYOR" echo   [ !!  ] Kurulum oncesi PlayerDebugMode bilinmiyor ^(onceki.txt yok^) - degistirilmedi
-echo   [tamam] Spread verileri silindi ^(masaustundeki SpreadRapor dosyalari duruyor^)
+echo   [tamam] Spread verileri silindi - masaustundeki SpreadRapor dosyalari duruyor
 echo.
 echo   Premiere Pro'yu yeniden baslat.
 echo ================================================================

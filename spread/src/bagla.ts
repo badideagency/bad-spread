@@ -50,7 +50,7 @@ import {
 import { bindState, frameFromRecord, itemKey, itemOf, layoutState, misplacedAgainst, parkedFromRecord } from "./collect";
 import { analyze, compareLinkGroups, groupsFromLayout, partlyParked, type LayoutFrame } from "./sessions";
 import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
-import { getLinker, HELPER_VERSION, writeLinkPlan, type LinkGroupResult, type PingResult } from "./linker";
+import { getLinker, HELPER_VERSION, readPanelLinkResult, writeLinkPlan, type LinkGroupResult, type PingResult } from "./linker";
 import { big, fmtClip, relocate, secOf, settle, sleep, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
 import { assertSameSequence, requireActive, type SeqContext } from "./session";
 import {
@@ -236,6 +236,11 @@ async function handToPanel(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame, w
   } else {
     log(`KES planı dosyaya YAZILAMADI (${w.path}): ${w.detail}`, "warn");
     log("→ Plan aşağıdaki rapor kutusunda: 'Raporu kopyala' → Spread Helper panelinde 'Planı yapıştır' → BAĞLA.", "head");
+  }
+  const pr = readPanelLinkResult();
+  if (pr && pr.ok && pr.planCreatedAt === bind.at) {
+    done("bagla", "ok", "Gruplar Spread Helper panelinde zaten bağlandı.", "Yapılacak bir şey yok.");
+    return;
   }
   done(
     "bagla",
@@ -515,10 +520,18 @@ export async function runBind(): Promise<void> {
             ]
           : []),
         ...(plan.keptCamera.length ? [`KAMERA SESİ KORUNACAK: ${plan.keptCamera.length} aralıkta (harici ses parçası olmayan yerler).`] : []),
-        ...plan.silent.slice(0, 3).map((x) => `SESSİZ KALACAK: ${x}`),
-        ...(plan.silent.length > 3 ? [`SESSİZ KALACAK: … ${plan.silent.length - 3} aralık daha (Ayrıntı)`] : []),
-        ...(plan.cuts.length && !cached ? ["İlk kesim: önce kırpma komutları geçici kopyalarda ölçülür (7 adım, düzen değişmez)."] : []),
-        ...(ping.ok ? [] : ["Yardımcı kapalı: kesimden sonra Spread Helper panelinde BAĞLA'ya basacaksın."]),
+        ...(plan.silent.length
+          ? [`SESSİZ KALACAK: ${plan.silent[0]}${plan.silent.length > 1 ? ` (+${plan.silent.length - 1} aralık daha, Ayrıntı)` : ""}`]
+          : []),
+        ...((): string[] => {
+          const n = [
+            plan.cuts.length && !cached ? "ilk kesimde kırpma komutları önce geçici kopyalarda ölçülür (7 adım, düzen değişmez)" : "",
+            ping.ok ? "" : "yardımcı kapalı: kesimden sonra Spread Helper panelinde BAĞLA'ya basacaksın",
+            plan.camless.length ? `${plan.camless.length} kamerasız oturumun seslerine dokunulmaz` : "",
+            plan.warnings.length ? `${plan.warnings.length} uyarı (Ayrıntı)` : "",
+          ].filter(Boolean);
+          return n.length ? [`Not: ${n.join("; ")}.`] : [];
+        })(),
         edits ? `Önce yedek sequence alınır ("${ctx.name}" kopyası). Devam?` : "Kesme/silme yok; yalnız bağlanacak. Devam?",
       ]
     );
@@ -688,6 +701,6 @@ export async function runBind(): Promise<void> {
     // kalibrasyon kural vermedi ama düzen doğrulanarak eski hâlinde → "yarım iş" kaydı tutulmaz (başka bir kayda da dokunulmaz)
     if (executed.length && ctx && !cutsDone && !calRestored) await rememberStopped(ctx, "BAĞLA");
     else if (cutsDone) forgetStopped();
-    reportStop("BAĞLA", e, executed, backupName, !calRestored && executed.length ? [LINK_UNDO_NOTE] : []);
+    reportStop("BAĞLA", e, executed, backupName, !calRestored && executed.length ? [LINK_UNDO_NOTE] : [], { cutsDone });
   }
 }

@@ -8,9 +8,10 @@
   <style>
     /* Spread v1.0.0 — Premiere koyu temasına uyumlu, dar panelde (≥ 300 px) tek sütun. UXP sınırları: flex "gap", "font" kısaltması,
        animasyon ve <details> yok → boşluklar margin'le, katlı bölümler JS ile. */
+    /* sabit koyu palet: Premiere'in açık temasında da kartlar okunur kalsın (host rengi yalnız arka plan için kullanılmaz) */
     :root {
-      --bg: var(--uxp-host-background-color, #232323);
-      --fg: var(--uxp-host-text-color, #dddddd);
+      --bg: #232323;
+      --fg: #dddddd;
       --muted: #9a9a9a;
       --line: #3c3c3c;
       --card: #2b2b2b;
@@ -276,6 +277,19 @@
       font-size: 11px;
       margin: 4px 0 0 0;
     }
+    #issue-text {
+      display: none;
+      width: 100%;
+      height: 100px;
+      font-family: monospace;
+      font-size: 10px;
+      margin: 4px 0 0 0;
+    }
+    #adv,
+    #ask-more,
+    #result-more {
+      display: none;
+    }
 
     .label {
       margin: 10px 0 4px 0;
@@ -393,6 +407,7 @@
       <sp-button id="btn-issue" variant="secondary" quiet="true">Sorun bildir</sp-button>
     </div>
     <div id="issue-note"></div>
+    <textarea id="issue-text" readonly></textarea>
 
     <div id="adv-toggle" class="toggle section-toggle">Gelişmiş ▸</div>
     <div id="adv">

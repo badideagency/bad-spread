@@ -208,7 +208,13 @@ export async function runCollect(): Promise<void> {
         `ŞÜPHELİ ÜYE — güçlü bağın tek kanıtı, kısa bir klibin çok uzun bir kaydın içine düşmesi (oran kısa olana göre ölçüldüğü için %100):\n` +
           `${sus.map((x) => "  • " + x.line).join("\n")}\n` +
           "Senkron bu klibi eşleyemeyip rastgele bırakmış olabilir. Bunları oturumlarından çıkarıp park track'lerine (ZAMANI DEĞİŞMEDEN) koyayım mı?\n" +
-          "(Evet = park'a; Hayır = oturumda kalsın, BAĞLA onlara da ses keser)"
+          "(Evet = park'a; Hayır = oturumda kalsın, BAĞLA onlara da ses keser)",
+        [
+          `ŞÜPHELİ ÜYE: ${sus.length} kısa klip yalnız çok uzun bir kaydın içine düştüğü için oturuma bağlı görünüyor.`,
+          ...sus.slice(0, 2).map((x) => "  • " + x.line),
+          ...(sus.length > 2 ? [`  … ${sus.length - 2} tane daha (Ayrıntı)`] : []),
+          "Park track'ine (zamanı değişmeden) alınsınlar mı? Evet = park'a · Hayır = oturumda kalsın (işlem sürer)",
+        ]
       );
       if (ans === "Evet") {
         for (const x of sus) for (const c of x.rec.clips) exclude.add(c);
@@ -236,7 +242,15 @@ export async function runCollect(): Promise<void> {
         `OTURUM SIRASI cihaz sayaçlarından / kayıt saatlerinden ${a.orderIssue.kind === "conflict" ? "ÇELİŞKİLİ" : "BELİRLENEMEDİ"}:\n` +
           `${a.orderIssue.lines.map((l) => "  • " + l).join("\n")}\n` +
           `Onaylarsan KULLANILACAK sıra${a.orderIssue.kind === "ambiguous" ? " (bilinen bütün kısıtlara uyar; belirsiz yerde senkronun bıraktığı sıra)" : " (senkronun bıraktığı, timeline'daki sıra)"}:\n` +
-          `${a.sessions.map((x) => `  ${x.id}  ${x.label}`).join("\n")}\nBu sırayla dizilsin mi? (Hayır → hiçbir şey değişmez)`
+          `${a.sessions.map((x) => `  ${x.id}  ${x.label}`).join("\n")}\nBu sırayla dizilsin mi? (Hayır → hiçbir şey değişmez)`,
+        [
+          `OTURUM SIRASI ${a.orderIssue.kind === "conflict" ? "ÇELİŞKİLİ" : "BELİRLENEMEDİ"}: cihaz sayaçları / kayıt saatleri tek bir sıra vermiyor.`,
+          `Kullanılacak sıra: ${a.sessions
+            .slice(0, 4)
+            .map((x) => x.id)
+            .join(" → ")}${a.sessions.length > 4 ? ` → … (${a.sessions.length} oturum)` : ""} (her oturumun içeriği Ayrıntı'da).`,
+          "Bu sırayla dizilsin mi? Hayır → hiçbir şey değişmez.",
+        ]
       );
       if (ans !== "Evet") {
         log("İptal edildi — hiçbir şey değişmedi.", "warn");
@@ -285,14 +299,17 @@ export async function runCollect(): Promise<void> {
     if (bs === "applied") extra.push("DİKKAT: bu sequence BAĞLA'dan geçti (kesimsiz) — taşınan kliplerin bağları çözülür (clone); TOPLA'dan sonra BAĞLA'ya tekrar bas.");
     // onay penceresinin özeti (yalnız görünüm; tam metin "Ayrıntı ▸" altında)
     const nS = plan.layouts.length;
+    const notes = [
+      plan.parkedRecs.length ? `${plan.parkedRecs.length} sahipsiz kayıt park track'ine (zamanı değişmez)` : "",
+      userParked.length ? `ŞÜPHELİ üye, senin kararınla park'a: ${userParked.length} klip` : "",
+    ].filter(Boolean);
     const summary: string[] = plan.moves.length
       ? [
           `${nS} oturum çekim sırasıyla sequence başından dizilecek; ${plan.moves.length} klip taşınacak (oturum içi konumlar korunur).`,
           ...(dups.length ? [`ÇİFT KOPYA: ${drop.length} fazla kopya ilk adımda silinecek (${dups.map((d) => d.drop.map((c) => trackLabel(c.kind, c.track)).join("+")).join(", ")}).`] : []),
-          ...(plan.parkedRecs.length ? [`Park track'ine (zamanı değişmez): ${plan.parkedRecs.length} kayıt.`] : []),
-          ...a.vetoDecisions.slice(0, 2),
-          ...(userParked.length ? [`ŞÜPHELİ üye, senin kararınla park'a: ${userParked.length} klip.`] : []),
+          ...(a.vetoDecisions.length ? [`${a.vetoDecisions[0]}${a.vetoDecisions.length > 1 ? ` (+${a.vetoDecisions.length - 1} VETO daha, Ayrıntı)` : ""}`] : []),
           ...(bs === "applied" ? ["DİKKAT: bu sequence BAĞLA'dan geçti — TOPLA'dan sonra BAĞLA'ya tekrar bas."] : []),
+          ...(notes.length ? [`Not: ${notes.join("; ")}.`] : []),
           `Önce yedek sequence alınır ("${ctx.name}" kopyası)${newV + newA ? `; ${newV + newA} track açılır` : ""}. Devam?`,
         ]
       : [`Düzen zaten toplanmış; yalnız ${drop.length} çift kopya silinecek.`, dupText(dups), `Önce yedek sequence alınır ("${ctx.name}" kopyası). Devam?`];

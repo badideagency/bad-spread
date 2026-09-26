@@ -21,9 +21,10 @@ Kaldırmak: **KALDIR.cmd** (PlayerDebugMode dahil her şeyi kurulum öncesine d�
   - Onay penceresi 3–5 satırlık özet; dikkat gerektiren satırlar sarı.
   - "Gelişmiş ▸" altında kaynak eşleme, eşik, boşluk, Durum raporu ve günlük.
 - **Sorun bildir:** tek bir metin paketi hazırlar (sürümler, Durum raporu, son TOPLA/BAĞLA günlükleri, kalibrasyon sonucu, yardımcı
-  durumu, son hata). Panoya kopyalar ve masaüstüne `SpreadRapor_<tarih>.txt` olarak kaydeder. Ayrıntılı günlük her zaman arka planda
-  tutulur (bellek + dosya).
-- **Spread Helper:** tek durum satırı. Köprüsüz BAĞLA bölümü yalnız Spread "yardımcı panelinden bağla" dediğinde görünür.
+  durumu, son hata). Panoya kopyalar ve masaüstüne `SpreadRapor_<tarih>.txt` olarak kaydeder. Düğme işlem sürerken de çalışır.
+  Ayrıntılı günlük her zaman arka planda tutulur (bellek + dosya); Premiere çöktüyse rapor önceki oturumun günlüğünü de içerir.
+- **Spread Helper:** tek durum satırı. Köprüsüz BAĞLA bölümü yalnız Spread "yardımcı panelinden bağla" dediğinde görünür; sonucu
+  (başarılı ya da değil) bir sonraki plana kadar orada kalır. Planı elle yapıştırmak: Ayrıntı ▸ → Planı yapıştır → BAĞLA.
 - **Tek tık kurulum:** `KUR.cmd` / `KALDIR.cmd` / `OKU_BENI.txt`. Probe yayından çıkarıldı (repoda duruyor).
 
 ## Ekran görüntüleri (mock ortamı, 300 px ve 560 px panel)
@@ -66,4 +67,9 @@ Spread Helper:
 - KUR.cmd / KALDIR.cmd Wine'da sınandı (`scripts/test-kurulum-wine.sh`):
   - yalnız HKCU ve %APPDATA%'ya yazılır;
   - KALDIR PlayerDebugMode'u kurulum öncesi değerlerine döndürür;
-  - yönetici olarak çalıştırılınca hiçbir şey yazılmaz.
+  - yönetici olarak çalıştırılınca hiçbir şey yazılmaz;
+  - klasör adında boşluk + parantez, `%APPDATA%` içinde ")" ve Adobe kurucusunun üç durumu (yok / başarılı / başarısız) sınandı.
+  - Gerçek Adobe kurucusu (UnifiedPluginInstallerAgent) Wine'da yok; ilk gerçek kurulumda görülecek. Özet her zaman
+    "Menüde Spread yoksa: spread.ccx'e çift tıkla" der.
+- Bağımsız inceleme (#7): mantık dosyalarında davranış farkı yok; kurulum yalnız HKCU / %APPDATA% / %TEMP%'e yazar; KALDIR her şeyi
+  geri alır. Bulunan arayüz ve kurulum kusurları düzeltildi (liste: `handoff.md`).

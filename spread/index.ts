@@ -77,7 +77,6 @@ async function refresh(): Promise<void> {
     setSequenceLine(`Durum okunamadı: ${errText(e)}`, false);
   }
   for (const id of ACTIONS) setDisabled(id, busy || !ok);
-  setDisabled("btn-issue", busy && !isAsking());
   paintSteps();
 }
 
@@ -118,17 +117,17 @@ async function exclusive(label: string, fn: () => Promise<void>): Promise<void> 
     return;
   }
   busy = true;
-  await refresh();
-  opGuid = activeGuid;
-  opStart(label);
   try {
+    await refresh();
+    opGuid = activeGuid;
+    opStart(label);
     await fn();
   } catch (e) {
     log(`Beklenmeyen hata: ${errText(e)}`, "err");
     opEnd("err", `${label}: beklenmeyen hata.`, "Sorun bildir'e bas ve raporu gönder.", [errText(e)]);
   } finally {
+    busy = false; // önce kilit (gösterge hata verse de panel kilitli kalmasın)
     opFinish();
-    busy = false;
     await refresh();
   }
 }
@@ -168,8 +167,14 @@ async function copyReport(): Promise<void> {
   else log(`✗ Panoya kopyalanamadı (${r.how}). Rapor kutusuna tıkla, Ctrl+A / Ctrl+C.`, "err");
 }
 
-/** "Sorun bildir": tek metin paketi → panoya + masaüstüne. İşlem sürerken de çalışır (o zaman sequence okunmaz). */
+/**
+ * "Sorun bildir": tek metin paketi → panoya + masaüstüne. Hep basılabilir; işlem sürerken (ör. onay beklerken) de çalışır, o zaman
+ * sequence okunmaz. Rapor, Durum raporu kutusunu (KES planı olabilir) EZMEZ; kopyalanamazsa kendi kutusunda görünür.
+ */
+let reporting = false;
 async function reportIssue(): Promise<void> {
+  if (reporting) return;
+  reporting = true;
   const note = (t: string) => {
     try {
       byId("issue-note").textContent = t;
@@ -182,19 +187,26 @@ async function reportIssue(): Promise<void> {
   if (reading) busy = true;
   try {
     const text = await buildIssueReport(reading);
-    setReportText(text);
     const saved = await saveIssueReport(text);
     const copied = await copyText(text);
+    try {
+      const box = byId("issue-text") as HTMLTextAreaElement;
+      box.value = text;
+      box.style.display = copied.ok ? "none" : "block";
+    } catch {
+      /* yoksa geç */
+    }
     log(`Sorun raporu: ${text.split("\n").length} satır; ${saved.ok ? `kaydedildi: ${saved.path}` : `kaydedilemedi (${saved.detail})`}; ${copied.ok ? "panoya kopyalandı" : `panoya kopyalanamadı (${copied.how})`}.`, "head");
     note(
       saved.ok || copied.ok
         ? `✓ Rapor hazır${copied.ok ? ", panoya kopyalandı" : ""}${saved.ok ? ` ve kaydedildi: ${saved.path}` : ""}. Bana gönder (yapıştır ya da dosyayı ekle).`
-        : "✗ Rapor kopyalanamadı ve kaydedilemedi — Gelişmiş ▸ Durum raporu kutusundan Ctrl+A / Ctrl+C."
+        : "✗ Rapor kopyalanamadı ve kaydedilemedi — aşağıdaki kutuya tıkla, Ctrl+A / Ctrl+C."
     );
   } catch (e) {
     note(`✗ Rapor hazırlanamadı: ${errText(e)}`);
   } finally {
     if (reading) busy = false;
+    reporting = false;
   }
 }
 

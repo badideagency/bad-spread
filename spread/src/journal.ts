@@ -1,10 +1,13 @@
 // Arka plan günlüğü (v1.0.0) — arayüzde gizli, her zaman tutulur: bellekte (son satırlar) + dosyada. Premiere API'si YOK.
-// Dosya: Windows %USERPROFILE%/AppData/Roaming/BadIdeaAgency/Spread/spread-gunluk.txt,
+// Dosya: Windows %USERPROFILE%\AppData\Roaming\BadIdeaAgency\Spread\spread-gunluk.txt,
 //        macOS ~/Library/Application Support/BadIdeaAgency/Spread/spread-gunluk.txt (yardımcının klasörünün kardeşi).
+// Panel her açıldığında önceki oturumun dosyası spread-gunluk-onceki.txt'ye alınır ve son satırları "Sorun bildir"e girer (Premiere
+// çöktüyse / yeniden başladıysa son TOPLA / BAĞLA günlüğü kaybolmasın).
 // Dosyaya yazma gecikmeli ve toplu (UXP fs.writeFileSync); yazılamazsa sessizce bellekte kalır — günlük hiçbir işlemi durdurmaz.
 // "Sorun bildir" buradan okur: son işlemlerin günlükleri (TOPLA / BAĞLA / SPREAD), son hata ve ayrıntısı.
 
 interface UxpFs {
+  readFileSync(path: string, options: { encoding?: string }): string | ArrayBuffer;
   writeFileSync(path: string, data: string, options: { encoding?: string }): number;
   mkdir(path: string, options: { recursive?: boolean }): Promise<number>;
 }
@@ -22,17 +25,17 @@ let lastError: { at: string; op: string; headline: string; details: string[] } |
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let filePath: string | null | undefined; // undefined: henüz hesaplanmadı; null: yazılamıyor
 let dirReady = false;
+let previous: string[] = []; // önceki panel oturumunun günlüğü (dosyadan, ilk yazmadan önce)
 
 const stamp = () => new Date().toISOString().replace("T", " ").slice(0, 19);
 
 /**
- * Spread'in veri klasöründeki bir dosyanın yolu (yardımcının klasörünün kardeşi, "Spread" alt klasörü). Ayraç her yerde "/"
- * (Adobe'nin UXP dosya örneği Windows'ta da "C:/Users/…/Desktop/…" kullanır; Windows iki ayracı da kabul eder).
+ * Spread'in veri klasöründeki bir dosyanın yolu (yardımcının klasörünün kardeşi, "Spread" alt klasörü). Windows'ta ayraç "\\"
+ * (linker.ts'teki yardımcı dosyalarıyla aynı biçim).
  */
 export function spreadDataPath(platform: string, home: string, name: string): string {
-  const h = home.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (/^win/i.test(platform)) return `${h}/AppData/Roaming/BadIdeaAgency/Spread/${name}`;
-  return `${h}/Library/Application Support/BadIdeaAgency/Spread/${name}`;
+  if (/^win/i.test(platform)) return `${home.replace(/[\\/]+$/, "")}\\AppData\\Roaming\\BadIdeaAgency\\Spread\\${name}`;
+  return `${home.replace(/\/+$/, "")}/Library/Application Support/BadIdeaAgency/Spread/${name}`;
 }
 
 function logFile(): string | null {
@@ -59,6 +62,16 @@ async function flush(): Promise<void> {
         await fs.mkdir(p.replace(/[\\/][^\\/]+$/, ""), { recursive: true }); // uxp.d.ts:L9159 fs.mkdir
       } catch {
         /* zaten var */
+      }
+      // önceki oturumun dosyası → spread-gunluk-onceki.txt (+ son satırları bellekte, "Sorun bildir" için)
+      try {
+        const old = fs.readFileSync(p, { encoding: "utf-8" }); // uxp.d.ts:L8985 fs.readFileSync
+        if (typeof old === "string" && old.trim()) {
+          previous = old.split(/\r?\n/).filter((l) => l.trim()).slice(-1500);
+          fs.writeFileSync(p.replace(/\.txt$/, "-onceki.txt"), old, { encoding: "utf-8" }); // uxp.d.ts:L9022 fs.writeFileSync
+        }
+      } catch {
+        /* önceki dosya yok */
       }
       dirReady = true;
     }
@@ -111,9 +124,22 @@ export function noteError(op: string, headline: string, details: string[]): void
 
 export function snapshotJournal(): {
   lines: string[];
+  previous: string[];
   ops: { label: string; at: string; lines: string[] }[];
   lastError: typeof lastError;
   file: string | null;
 } {
-  return { lines: lines.slice(), ops: [...opLogs.entries()].map(([label, o]) => ({ label, at: o.at, lines: o.lines.slice() })), lastError, file: logFile() };
+  return {
+    lines: lines.slice(),
+    previous: previous.slice(),
+    ops: [...opLogs.entries()].map(([label, o]) => ({ label, at: o.at, lines: o.lines.slice() })),
+    lastError,
+    file: logFile(),
+  };
+}
+
+/** "Sorun bildir"den önce: bekleyen satırları dosyaya yaz (önceki oturum dosyası da o an alınmış olur). */
+export async function flushNow(): Promise<void> {
+  if (flushTimer) clearTimeout(flushTimer);
+  await flush();
 }

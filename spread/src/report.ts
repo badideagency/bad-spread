@@ -3,7 +3,7 @@
 // olarak kaydedilmeye çalışılır (olmazsa Spread'in veri klasörüne). Salt okuma: timeline'a dokunmaz.
 
 import { hostVersion } from "./calibrate";
-import { snapshotJournal, spreadDataPath } from "./journal";
+import { flushNow, snapshotJournal, spreadDataPath } from "./journal";
 import { getLinker } from "./linker";
 import { errText } from "./model";
 import { requireActive } from "./session";
@@ -44,6 +44,7 @@ export async function buildIssueReport(allowRead: boolean): Promise<string> {
     .catch((e: unknown) => ({ ok: false, detail: errText(e) }));
   L.push(`Sürümler: Spread ${SPREAD_VERSION} · Premiere ${host} · UXP ${uxpVersion()} · yardımcı: ${ping.ok ? ping.detail : "bağlı değil"}`);
   L.push(`Yardımcı durumu: ${ping.ok ? "bağlı" : "BAĞLI DEĞİL"} — ${ping.detail}`);
+  await flushNow().catch(() => undefined);
   const j = snapshotJournal();
   L.push(`Arka plan günlük dosyası: ${j.file ?? "yok"}`);
   L.push("");
@@ -92,6 +93,10 @@ export async function buildIssueReport(allowRead: boolean): Promise<string> {
   L.push("");
   L.push("---- AYRINTILI GÜNLÜK (son satırlar) ----");
   for (const l of tail(j.lines, 600)) L.push(l);
+  L.push("");
+  L.push("---- ÖNCEKİ PANEL OTURUMUNUN GÜNLÜĞÜ (Premiere yeniden başladıysa; son satırlar) ----");
+  if (j.previous.length) for (const l of tail(j.previous, 500)) L.push(l);
+  else L.push("(yok)");
   return L.join("\n");
 }
 
@@ -113,14 +118,18 @@ export async function saveIssueReport(text: string): Promise<{ ok: boolean; path
     return { ok: false, path: "?", detail: errText(e) };
   }
   const platform = os.platform(); // uxp.d.ts:L9198 OS.platform
-  const home = os.homedir().replace(/\\/g, "/").replace(/\/+$/, ""); // uxp.d.ts:L9232 OS.homedir
+  const home = os.homedir().replace(/[\\/]+$/, ""); // uxp.d.ts:L9232 OS.homedir
   const win = /^win/i.test(platform);
-  // ayraç "/" (Adobe'nin UXP dosya örneği gibi); OneDrive masaüstü yönlendirmesi de denenir
-  const targets = [
-    `${home}/Desktop/${name}`,
-    ...(win ? [`${home}/OneDrive/Desktop/${name}`, `${home}/OneDrive/Masaüstü/${name}`] : []),
-    spreadDataPath(platform, home, name),
-  ];
+  // Windows: önce "\\" (linker.ts'teki dosyalarla aynı biçim), sonra "/" (Adobe'nin UXP dosya örneği); OneDrive masaüstü de denenir
+  const targets = win
+    ? [
+        `${home}\\Desktop\\${name}`,
+        `${home}\\OneDrive\\Desktop\\${name}`,
+        `${home}\\OneDrive\\Masaüstü\\${name}`,
+        `${home.replace(/\\/g, "/")}/Desktop/${name}`,
+        spreadDataPath(platform, home, name),
+      ]
+    : [`${home}/Desktop/${name}`, spreadDataPath(platform, home, name)];
   for (let i = 0; i < targets.length; i++) {
     const p = targets[i];
     try {
