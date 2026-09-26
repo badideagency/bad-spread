@@ -36,5 +36,5 @@
     "typescript-eslint": "^8.70.1",
     "vite": "^8.3.1"
   },
-  "description": "Spread — Premiere Pro UXP eklentisi (Spread v0.3.2: SPREAD / TOPLA / BAĞLA) + görünür CEP yardımcı paneli (Spread Helper v0.3.2) + API yoklama paneli (Spread Probe v0.1.1)"
+  "description": "Spread — Premiere Pro UXP eklentisi (Spread v0.3.3: SPREAD / TOPLA / BAĞLA) + görünür CEP yardımcı paneli (Spread Helper v0.3.3) + API yoklama paneli (Spread Probe v0.1.1)"
 }
