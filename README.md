@@ -2,7 +2,7 @@
 
 | Bileşen | Durum | Paket |
 |---|---|---|
-| **Spread** v0.3.0 (`spread/`) | **SPREAD** (her klip kendi track'ine) → Premiere *Clip > Synchronize* → **TOPLA** (cihaz / kanal track'lerine yalnız dikey) → gözle kontrol → **BAĞLA** (harici sesi çapaya göre kes, kılavuz sesleri sil, her grubu tek bağ yap). **Durum raporu** + kanal ayarı. | [`release/spread.ccx`](release/spread.ccx) |
+| **Spread** v0.3.1 (`spread/`) | **SPREAD** (her klip kendi track'ine) → Premiere *Clip > Synchronize* → **TOPLA** (oturumları senkron sonucundan bulur: güçlü bağ + cihaz vetosu; çekim sırasıyla sequence başından dizer; cihaz → V, kaynak → A) → gözle kontrol → **BAĞLA** (oturum içinde harici sesi çapaya göre kes, kılavuz sesleri sil, her grubu tek bağ yap). **Durum raporu** (oturumlar dahil) + kaynak eşleme + eşik/boşluk ayarı. | [`release/spread.ccx`](release/spread.ccx) |
 | **Spread Helper** v0.3.0 (`cep-helper/`) | Görünmez CEP yardımcısı: BAĞLA için ExtendScript `Sequence.linkSelection()` (UXP'de link API'si yok). Yalnız 127.0.0.1:47731, token'lı. | [`release/spread-helper.zxp`](release/spread-helper.zxp) (kendinden imzalı) · [`release/spread-helper-klasor.zip`](release/spread-helper-klasor.zip) (yedek kurulum) |
 | Spread Probe v0.1.1 (kök `index.ts`, `src/`, `public/`) | API yoklama paneli (T1–T8). Bitti; arşiv. | [`release/spread-probe.ccx`](release/spread-probe.ccx) |
 

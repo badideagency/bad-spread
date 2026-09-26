@@ -1,6 +1,122 @@
-# handoff — Spread (ADIM 3: TOPLA + BAĞLA, v0.3.0) + geçmiş (ADIM 2 SPREAD, ADIM 1 Probe)
+# handoff — Spread (ADIM 3.1: oturum tespiti + kronolojik dizim, v0.3.1) + geçmiş (ADIM 3, ADIM 2, ADIM 1)
 
 ## Durum (tek bakışta)
+
+| | |
+|---|---|
+| Sürüm | **Spread v0.3.1** (`release/spread.ccx`). **Spread Helper v0.3.0 DEĞİŞMEDİ** (yeniden kurmaya gerek yok). |
+| Yapılan | Adlandırmadan bağımsız **oturum tespiti** (güçlü bağ + cihaz vetosu, `spread/src/sessions.ts` — TEK modül), **kronolojik yatay dizim** (TOPLA), oturum içi BAĞLA, **kaynak eşleme paneli** (A track / sil), eşik + boşluk ayarları, çift kopya durdurma, ilk oturum ölçümü |
+| Gerçek veri | Kullanıcının 12 Eylül raporu `spread/dev/fixtures/senkron-raporu-260912.txt`: çiftler varken DURUR (A26/A27, A29/A30); temizken 4 oturum, sıra 133224 → 141513 → 144207 → 151555 |
+| Bulutta doğrulanan | `npm run check` (tsc, eslint, d.ts 75 + uxp.d.ts 5, host.jsx, Probe smoke, **Spread smoke 46 senaryo** — gerçek yardımcı sunucusu + host.jsx dahil), bağımsız alt ajan incelemesi |
+| Dal | `claude/sweet-bell-do4j75` |
+
+## KANITLANMIŞ (kullanıcı, gerçek Premiere, 12 Eylül çekimi)
+
+- **Premiere Synchronize ilişkisiz grupları rastgele ve üst üste yerleştirir. Gruplama senkron sonucundan (güçlü bağ + cihaz vetosu)
+  yapılmalı, dosya adından değil.**
+  Ayrıntı: Synchronize her ilişkili grubu KENDİ İÇİNDE doğru hizaladı; ilişkisiz grupları üst üste koydu (144207 ile 133224 174 sn,
+  133224 ile 151555 89 sn çakışıyor), timeline sırası kronolojik değil.
+- v0.3.0'ın "zamanda çakışan kameralar = grup" kuralı YANLIŞ: 3 oturumdan 6 kamerayı tek grup yaptı (G7); BAĞLA 144207 sesinden 176 sn'yi
+  A038C001'e keserdi.
+- Güçlü bağ ölçütü gerçek veride: doğru eşleşmelerin en düşüğü **%97.96** (A038C002 ↔ 141513), yanlış çakışmaların en yükseği **%49**
+  (A038C009 ↔ 133224) → eşik %90 (ayar).
+- Probe'dan kalma ÇİFT KOPYALAR olabilir (260912_133224_Tr1 A26/A27, _Tr2 A29/A30).
+- İki kamera cihazının toplam süresi eşit olabilir (A ve C 5098.560 sn) → eşitlikte cihaz adı alfabetik.
+- (23 Eylül klasörü, yalnız adlandırma/sıra bilgisi) Zoom kanal seti oturumdan oturuma değişir; B kamera A ile kare kare aynı süreli
+  (birlikte kayda girer); A041C005 ~1 sn ve eşsiz; DJI kayıtları (16–27 dk) birden çok Zoom oturumunu kapsar → bir kameranın birden
+  fazla harici ses kaynağı olabilir; bazı çekimlerde Zoom yok (yaka mikrofonu) ya da hiç harici ses yok (kamera sesi asıl ses).
+
+## Kurallar ve tasarım (v0.3.1)
+
+**Kimlik** (`identity.ts`, yalnız kimlik ve SIRA için): sinema `^[A-Z]\d{3}C\d{3}_\d{6}\w{2}$` (cihaz = baş harf, sıra [makara, klip]),
+Sony `^C\d{4}$` (cihaz "Sony", sayaç), DJI `^DJI_\d+_\d{8}_\d{6}$` (sıra [tarih, saat, sayaç]), Zoom `^\d{6}_\d{6}_(Tr\w+)$` (kayıt =
+tarih_saat, kanal = TrX; aynı saat = TEK kayıt), bilinmeyen (rakamlar atılmış ad = cihaz, son sayı = sayaç). Kaynak anahtarı ("Zoom Tr1",
+"DJI") eşleme paneli içindir. Kamera iç saati / dosya mtime KULLANILMAZ.
+
+**Oturum** (`sessions.ts` — TOPLA, BAĞLA ve durum raporu bunu kullanır; yardımcı kendi başına gruplamaz, bu modülün çıktısını uygular):
+1. KAYIT örneği = (cihaz, kayıt, start, end): kamera dosyası (+ kılavuz sesleri) ya da harici kayıt (Zoom kanalları birlikte).
+2. GÜÇLÜ BAĞ: farklı cihazlardan iki kayıt çakışıyor VE çakışma ≥ eşik × kısa olanın süresi.
+3. OTURUM = güçlü bağların bağlı bileşeni (union-find).
+4. VETO: aynı cihazın iki FARKLI kaydı çakışamaz. Bileşende veto varsa en zayıf bağlar kesilir — **yalnız tek anlamlıysa**:
+   (a) kesilen en güçlü bağ, kalan en zayıf bağdan en az **VETO_MARGIN = 0.05** zayıf ve (b) kesim hiçbir kaydı sahipsiz bırakmıyor.
+   Değilse **tahmin yok** → TOPLA sorar ("AYRILAMAYAN OTURUM"): Hayır = hiçbir şey değişmez; Evet = o kayıtlar park'a (zaman aynı).
+   Karar (hangi bağlar hangi oranla kesildi) onay penceresinde ve günlükte.
+5. SAHİPSİZ: hiç güçlü bağı yok → silinmez; park track'lerine, zamanı değişmeden; raporlanır.
+6. SIRA: her cihazın sıra anahtarı aralığı oturumları sıralar (Kahn). Bir cihazın aralıkları iç içe ya da döngü = ÇELİŞKİ; ortak cihazı
+   olmayan oturumlar = BELİRSİZ → TOPLA sorar: Hayır = hiçbir şey; Evet = timeline'daki mevcut sıra (kullanıcının seçimi).
+7. ÇİFT KOPYA (aynı tür + kaynak + start/end/in/out; kamera kılavuz kanalları hariç) → TOPLA ve BAĞLA hiçbir şeye dokunmadan DURUR, listeler.
+
+**TOPLA** (`collect.ts`, `topla.ts`):
+- YATAY: oturumlar sırayla, sequence başından (0), aralarında G (ayar, 2 sn, kareye yukarı yuvarlanır). Bloğun ofseti
+  Δ = ceil_kare(imleç − blok başı) (kare katı → kare hizalı kameralar kare hizalı kalır; senkronun bıraktığı kare-altı WAV fazı korunur).
+  Bloğun TÜM klipleri aynı Δ ile → oturum içi göreli konumlar tick-exact (ayrıca `verifyRelative` denetler).
+- DİKEY (track ÇERÇEVESİ, BAĞLA da kullanır): V = cihazlar (toplam süre; eşitse ad) → V park; A = eşlenen kaynaklar (kullanıcının
+  seçtiği track'ler) → kılavuz sesler (cihaz sırasıyla) → "sil" kaynakları → A park. **"Sil" kaynakları kılavuzların ALTINDA**: BAĞLA
+  onları silince kılavuz track'leri kaymasın, yeniden BAĞLA'da çerçeve bozulmasın (kullanıcının "kılavuz en alta" isteğinden bilinçli
+  küçük sapma; ikisi de BAĞLA'da silinir).
+- Bilinmeyen öğeler (grafik) yerinde kalır; yeni düzende çakışırsa DUR (önce onu başka track'e al).
+- TOPLA düzenindeyse (her klip çerçevedeki yerinde ya da park bölgesinde) park bölgesi analize GİRMEZ — yoksa yeni düzende bir oturumun
+  uzun kaydının altına düşen sahipsiz 1 sn'lik klip güçlü bağ kurup o oturuma karışırdı. Aynısı BAĞLA'da.
+- Transaction'lar: yedek → [TX-A] → **ilk park (ölçüm, yalnız ilk oturum)** → park → **ilk yerleştirme (ölçüm)** → yerleştir.
+  P = max(bugünkü son, YENİ düzenin sonu) + 10 sn, kare hizalı (yerleştirme park kopyalarına değmez). Tutmazsa "İLK TAŞIMA TUTMADI".
+  Ctrl+Z: 4 (+1 track hazırlığı).
+- Onay penceresi (çok satırlı): oturum listesi (kameralar, sesler, yeni başlangıç, kayma), park'a gidenler, veto kararları, track çerçevesi.
+
+**BAĞLA** (`bind.ts`, `bagla.ts`): yalnız oturum içinde; grup = oturumdaki çakışan kameralar; çapa = en uzun (eşitlikte alt V track =
+V1 cihazı); her harici kaynak KENDİ oturumunun çapalarına kesilir; "sil" kaynakları silinir; **grubunda tutulan harici ses YOKSA
+kamera sesi korunur ve bağlanır** (kullanıcının "oturumda harici ses yoksa" kuralının grup düzeyinde, daha güvenli hâli: harici sesin
+kapsamadığı grupta ses kaybı olmaz). Ön koşullar: TOPLA düzeni (dikey; eşleme TOPLA'dan sonra değiştiyse "önce TOPLA"), oturumlar zamanda
+ayrık, çift kopya / ayrılamayan yok. Doğrulama: her parça kendi oturumunun bir çapasının içinde, çapa içi ses süresi aynı, kaynak kayması yok.
+
+**Ayarlar** (`settings.ts`, localStorage + try/catch): kaynak eşleme (`spread.sourceMap.v1`, kaynak → A index | "sil"; kayıtlı olmayana
+kullanılmayan en küçük A), eşik (`spread.threshold.v1`, 50–100, varsayılan 90), boşluk (`spread.gapSec.v1`, 0–600 sn, varsayılan 2).
+v0.3.0'ın "Tutulacak kanallar" ayarı kaldırıldı.
+
+### Gerçek 12 Eylül verisi (çiftler temizlenmiş) — mock sonucu
+
+| Oturum | Üyeler | Yeni yer |
+|---|---|---|
+| O1 | Zoom 133224 (Tr1/Tr2/TrLR) + A038C001 + C0142 | 0.000–1555.320 s |
+| O2 | Zoom 141513 + A038C002 + C0143 | 1557.320–2866.200 s |
+| O3 | Zoom 144207 + A038C003..009 + C0144..0150 | 2868.200–4798.920 s |
+| O4 | Zoom 151555 + A038C010, A038C011 + C0151, C0152 | 4800.920–5229.920 s |
+
+A → V1, Sony → V2 (toplamlar eşit → ad); TrLR "sil" seçilince Tr1 → A1, Tr2 → A2, kılavuzlar A3–A4, TrLR A5. BAĞLA: 11 grup; A038C001'in
+bağında yalnız 133224 parçaları (144207'den 176 sn KESİLMEDİ).
+
+### Yeni / değişen mock senaryoları (`spread/dev/smoke.cjs`; beklentiler plan kodundan BAĞIMSIZ hesaplanır)
+
+| Senaryo | Ne gösterir |
+|---|---|
+| `real0912dup` | gerçek rapor, çiftler varken → TOPLA DURUR, A26/A27 ve A29/A30 listelenir, hiçbir şey değişmez |
+| `real0912` | gerçek rapor, çiftsiz → 4 oturum, sıra, O3 üyeleri; TOPLA düzeni tick-exact (blok başına tek Δ), bloklar çakışmıyor, 5 transaction; BAĞLA oturum içi, 11 grup, oturum dışı bağ yok, A038C001'e 144207 kesilmedi |
+| `sep23` | 23 Eylül adlarıyla sentetik: senkron sırayı karıştırmış + bloklar üst üste; 6 oturum; DJI_02 iki Zoom kaydını tek oturumda toplar; A041C005 sahipsiz → park; Tr2'siz oturumlar; harici sesi olmayan oturumda kamera sesi korunur ve bağlanır |
+| `nested` | ilişkisiz iki grup iç içe (bütün bağlar %100) → SORULUR; Hayır = hiçbir şey; Evet = ayrılamayanlar park'ta, zamanı aynı |
+| `vetosplit` | çapraz bağlar %91, iç bağlar %100 → en zayıflar kesilir (tek anlamlı), karar onayda |
+| `orderconflict` | A sayaçları ile Zoom saatleri çelişiyor → SORULUR, cihaz başına sıralar gösterilir |
+| `firstmove` | sıfır dışı ofsetli clone 1 kare kayıyor → "İLK TAŞIMA TUTMADI (park, O1…)", yalnız O1 etkilenmiş, Ctrl+Z × 1 |
+| `sync` | sentetik 4 oturum; bütün ofsetler kare katı; eşleme TOPLA'dan sonra değişince BAĞLA "önce TOPLA" |
+| `identity`, `mapping`, `status2` | ad desenleri; kaynak eşleme paneli + localStorage; durum raporunda oturumlar/bağlar/çiftler |
+| (uyarlandı) | `wav2groups`, `outside`, `graphic`, `helperoff`, `setnoop`, `setmove`, `setendmove`, `linkfail`, `linksource`, `rebind`, `again`, `security`, `undomid`, `stale`, `notcollected`, `limits`, `reportparse` |
+
+### Belirsizlikler (v0.3.1)
+
+1. Sıfır dışı zaman ofsetli clone gerçek Premiere'de tick düzeyinde ölçülmedi → ilk oturum tek başına (park + yerleştirme ayrı ölçüm).
+2. Çok uzun ilişkisiz örtüşmelerde kısa bir klip ilgisiz uzun bir kaydın (DJI gibi) tamamen içine düşerse %100 "güçlü bağ" olur. İki
+   güvenlik ağı var: (a) VETO — birleşen oturumda aynı cihazın iki kaydı çakışıyorsa (çapraz bağlar en güçlüler olduğundan tek anlamlı
+   kesim çıkmaz → SORULUR); (b) SIRA — ilgisiz grup başka bir zamandan geldiği için birleşen oturumun cihaz sayaç aralığı diğer
+   oturumlarınkiyle iç içe geçer → ÇELİŞKİ → SORULUR. İkisi de tutmazsa (ör. zamanca komşu iki grup) yanlış birleşme onay penceresindeki
+   oturum listesinde ve durum raporundaki bağ listesinde görünür (TOPLA onay ister).
+3. Tek kameralı ve harici sessiz çekimde her kayıt sahipsiz olur (bağ kuracak ikinci cihaz yok) → hepsi park'a; dizim yapılmaz.
+4. Grafik vb. dokunulmayan öğe yeni düzende bir kamera/ses klibinin yerine denk gelirse TOPLA durur (öğeyi kullanıcı taşır).
+5. VETO_MARGIN (0.05) sabit; eşik ayarı gibi panelde değil.
+
+
+---
+
+## Geçmiş: ADIM 3 — TOPLA + BAĞLA v0.3.0
+
+### Durum (tek bakışta)
 
 | | |
 |---|---|
@@ -13,7 +129,7 @@
 | Eksik girdi | Kullanıcının **gerçek senkron sonucu durum raporu** bu turda gelmedi (mesajda yer tutucu kaldı). Mock'ta onun yerine adları/sayıları gerçek düzenden alınmış **sentetik** bir senkron sonucu var (`sync`). Rapor gelince `spread/dev/fixtures/senkron-raporu.txt`'e koy → `node spread/dev/smoke.cjs report` (okuyucu hazır ve `reportparse` ile sınandı). |
 | Dal | `claude/sweet-bell-do4j75` |
 
-## KANITLANMIŞ (kullanıcı, gerçek Premiere 26.x, ADIM 2 sonrası)
+### KANITLANMIŞ (kullanıcı, gerçek Premiere 26.x, ADIM 2 sonrası)
 
 - **SPREAD v0.2.0 gerçek projede çalıştı** ve ardından **Clip > Synchronize, panelin programla yaptığı seçimle DOĞRUDAN çalıştı**:
   Premiere komutları, timeline'da **görünmeyen programatik seçimi** kullanıyor (Probe T5'te "seçim görünmüyor" diye FAIL sayılan
@@ -21,7 +137,7 @@
 - (Dolaylı) SPREAD'in kullandığı yollar gerçek Premiere'de işledi: TX-A (park ofsetli clone ile ardışık track açma), TX-B (clone +
   remove(ripple=false) + overwrite aynı transaction'da), yedek sequence.
 
-## Kullanıcının kararları (DEĞİŞTİRME)
+### Kullanıcının kararları (DEĞİŞTİRME)
 
 - Senkronu Premiere yapar. Elle adım YOK; tek istisna TOPLA ile BAĞLA arasında gözle kontrol.
 - Bağlama: UXP'de link API'si yok → görünmez CEP yardımcısı ExtendScript `sequence.linkSelection()` çalıştırır; kullanıcı yalnız BAĞLA'ya basar.
@@ -29,7 +145,7 @@
   A1 Tr1, A2 Tr2 (A3 Tr3…); kamera kılavuz sesleri YOK (BAĞLA siler); her grup (aynı anda çeken kameralar + o aralıktaki harici ses
   parçaları) TEK bağ; gruplar senkronun bıraktığı zamanda, YATAY KAYDIRMA YOK, gruplar arası boşluk kapatılmaz.
 
-## TOPLA tasarımı (`spread/src/classify.ts`, `collect.ts`, `topla.ts`)
+### TOPLA tasarımı (`spread/src/classify.ts`, `collect.ts`, `topla.ts`)
 
 **Sınıflama** (dosya adı = proje öğesi adı):
 - KAMERA = video + video uzantısı + ayar katmanı değil; **cihaz** = ilk rakamdan önceki kısım (`A038C001_…` → `A`, `C0112` → `C`, `DJI_0001` → `DJI`).
@@ -60,7 +176,7 @@ hâldeyken tekrar basılırsa işlem BAŞLAMAZ (park kopyaları "çapa dışı s
 (`layout.compareLayout`) + son düzende track başına çakışma yok. Tutmazsa DUR + Ctrl+Z sayısı + yedek adı.
 **Bitiş:** "Kontrol et, sonra BAĞLA'ya bas."
 
-## BAĞLA tasarımı (`spread/src/bind.ts`, `bagla.ts`)
+### BAĞLA tasarımı (`spread/src/bind.ts`, `bagla.ts`)
 
 1. **Önce ping** — yardımcı yoksa HİÇBİR ŞEYE dokunmadan (yedek dahil) DUR + kurulum talimatı.
    **Ön koşul: TOPLA düzeni** (TOPLA planı "taşınacak klip yok" demeli; kanal sırası ayara bağlı olduğundan iki sıra da kabul) — değilse
@@ -98,7 +214,7 @@ hâldeyken tekrar basılırsa işlem BAŞLAMAZ (park kopyaları "çapa dışı s
    Tek öğeli grup atlanır. Kesme/silme yoksa yedek alınmaz (yalnız bağlama) → BAĞLA'yı tekrar basmak güvenli (idempotent).
    Ctrl+Z: kesme varsa 4 (+ yedek sayılmaz). **Bağlamanın geri alma geçmişine kaç kayıt eklediği ÖLÇÜLMEDİ** → mesajlar yedeği önerir.
 
-## CEP yardımcısı (`cep-helper/`)
+### CEP yardımcısı (`cep-helper/`)
 
 - **Görünmez CEP eklentisi** (Adobe CEP 12 Cookbook "Invisible HTML Extensions" + CEP 12 görünmez örneği): `Type=Custom`,
   `AutoVisible=false`, `<Menu>` yok; `StartOn`: `com.adobe.csxs.events.ApplicationActivate` (Premiere başlangıçta gönderir — Adobe örneği),
@@ -132,7 +248,7 @@ hâldeyken tekrar basılırsa işlem BAŞLAMAZ (park kopyaları "çapa dışı s
   Kurulum: aescripts ZXP/UXP Installer (UPIA kullanır) ya da `UnifiedPluginInstallerAgent.exe /install <zxp>` ya da `KUR.cmd`
   (imzalı klasörü `%APPDATA%\Adobe\CEP\extensions`'a kopyalar, kayıt defterine dokunmaz).
 
-### ExtendScript belge tablosu (her çağrı host.jsx'te `// docs:` ile; `npm run check:jsx` doğrular)
+#### ExtendScript belge tablosu (her çağrı host.jsx'te `// docs:` ile; `npm run check:jsx` doğrular)
 
 | Üye | Kaynak (github.com/docsforadobe/premiere-scripting-guide) |
 |---|---|
@@ -148,7 +264,7 @@ hâldeyken tekrar basılırsa işlem BAŞLAMAZ (park kopyaları "çapa dışı s
 | `ProjectItem.name` | docs/item/projectitem.md → #projectitemname |
 | `TrackItem.getLinkedItems()` | **kılavuzda yok** → Adobe-CEP/Samples PProPanel/jsx/PremierePro.23.0.d.ts#L1253 |
 
-### Yeni UXP (Premiere dışı) çağrılar — `uxp.d.ts` = `@adobe/cc-ext-uxp-types/uxp/index.d.ts`
+#### Yeni UXP (Premiere dışı) çağrılar — `uxp.d.ts` = `@adobe/cc-ext-uxp-types/uxp/index.d.ts`
 
 | satır | üye | nerede |
 |---|---|---|
@@ -167,7 +283,7 @@ açık bir hata kaydı (uxp-photoshop#321) bu biçimlerin "Permission denied" ve
 seçildi. Panel "Permission denied" gösterirse düzeltme tek satır: `"domains": "all"` (kod yine yalnız 127.0.0.1'e bağlanır).
 macOS'ta Premiere `http://`'yi engelliyor (Adobe ağ tarifi) — kullanıcı Windows'ta.
 
-## Bağlama modülü ve risk notu
+### Bağlama modülü ve risk notu
 
 - Bağlama **tek modülde** izole: `spread/src/linker.ts` (`Linker` arayüzü: `ping()`, `link(sequenceName, groups)`, `installHint()`).
   BAĞLA yalnız bu arayüzü görür. Başka bir yol (FCP XML dışa/içe aktarma ya da ileride çıkacak bir UXP link API'si) geldiğinde
@@ -181,7 +297,7 @@ macOS'ta Premiere `http://`'yi engelliyor (Adobe ağ tarifi) — kullanıcı Win
   dokunmadan durur. Plan: UXP'ye link API'si gelince `linker.ts`'e UXP uygulaması; gelmezse XML yolu.
 - ExtendScript API'sine 23.0'dan beri yeni özellik eklenmiyor (Scripting Guide changelog).
 
-## Bağımsız alt ajan incelemesi (v0.3.0)
+### Bağımsız alt ajan incelemesi (v0.3.0)
 
 İddialar (inceleme `a42b432`'ye karşı; `npm run check` iki kez geçti):
 
@@ -219,7 +335,7 @@ Bulgular ve yapılanlar:
 | L11 | Sequence yalnız adla; `file:C:/…` URL'si | Ad: belirsizlik 12; URL: `file:/C:/…` (Adobe tarifi) |
 | L12 | Zoom `_LR/_MS`, `_trim` sahte kanal; iki Sony gövdesi | Kanal kuralı sıkılaştı (`names`); cihaz çakışması belirsizlik 8 |
 
-## Dosya haritası (yeni / değişen)
+### Dosya haritası (yeni / değişen)
 
 ```
 spread/src/guard.ts     ortak güvenlik: runTx (ölçülü Ctrl+Z sayısı), expectState, makeBackup(op), prepareTracks (TX-A), parkBase, reportStop
@@ -244,7 +360,7 @@ scripts/package-helper.sh     imzalı ZXP + yedek klasör paketi;  scripts/helpe
 spread/dev/smoke.cjs          + sahte ExtendScript DOM, gerçek yardımcı sunucusu, TOPLA/BAĞLA senaryoları, durum raporu okuyucu
 ```
 
-### Komutlar
+#### Komutlar
 
 ```bash
 npm run check                                          # hepsi (≈3 dk)
@@ -253,7 +369,7 @@ ZXPSIGNCMD=$PWD/.signing/ZXPSignCmd.exe npm run package:helper   # Linux: apt in
 npm run package:spread
 ```
 
-### Mock senaryoları (v0.3.0, `spread/dev/smoke.cjs`) — panel → HTTP → gerçek yardımcı → gerçek host.jsx → sahte DOM
+#### Mock senaryoları (v0.3.0, `spread/dev/smoke.cjs`) — panel → HTTP → gerçek yardımcı → gerçek host.jsx → sahte DOM
 
 | Senaryo | Ne gösterir |
 |---|---|
@@ -284,7 +400,7 @@ npm run package:spread
 Mock'un set In/Out/Start/End anlamı TAHMİNDİR (`M.setSem`: trim / move / noop); ExtendScript DOM'u Adobe örneklerine göre
 (0 tabanlı koleksiyonlar, `getSelection()` dizi, `linkSelection()` boolean, `getLinkedItems()` bağ partnerleri — `linksource` diğer anlamı sınar).
 
-### Belirsizlikler (gerçek Premiere'de ilk koşuda ölçülecek)
+#### Belirsizlikler (gerçek Premiere'de ilk koşuda ölçülecek)
 
 1. **set In/Out/Start/End gerçek kırpma** — ilk parça ölçümü; tutmazsa QE razor yedek planı.
 2. **Negatif clone ofsetleri** (TOPLA `−P` zaman + yukarı dikey; BAĞLA `−(yuva − start)`) ilk kez kullanılıyor — API "offset from the
@@ -307,7 +423,7 @@ Mock'un set In/Out/Start/End anlamı TAHMİNDİR (`M.setSem`: trim / move / noop
 12. Yardımcı sequence'ı ADIYLA tanır (ExtendScript `sequenceID` ile UXP `guid`'in aynı olduğu kanıtlanmadı); UXP tarafı hemen önce
     guid ile aynı sequence'ta olduğunu denetler.
 
-### Sonraki adım
+#### Sonraki adım
 
 Kullanıcı: yardımcıyı kur → Save As kopyasında SPREAD → Synchronize → **Durum raporu (bana getir)** → TOPLA → kontrol → BAĞLA.
 Gelecek raporlar: `spread/dev/fixtures/senkron-raporu.txt` → `node spread/dev/smoke.cjs report`. İlk parça tutmazsa: QE razor yolu
@@ -315,9 +431,9 @@ Gelecek raporlar: `spread/dev/fixtures/senkron-raporu.txt` → `node spread/dev/
 
 ---
 
-## Geçmiş: ADIM 2 — SPREAD v0.2.0
+### Geçmiş: ADIM 2 — SPREAD v0.2.0
 
-### Durum (tek bakışta)
+#### Durum (tek bakışta)
 
 | | |
 |---|---|
@@ -328,7 +444,7 @@ Gelecek raporlar: `spread/dev/fixtures/senkron-raporu.txt` → `node spread/dev/
 | Doğrulanamayan | Gerçek Premiere davranışı — kullanıcının koşusu bekleniyor ([KURULUM_TR.md](KURULUM_TR.md)) |
 | Dal | `claude/sweet-bell-do4j75` |
 
-### Yoklamanın kanıtladıkları (Premiere 26.5.1, Probe v0.1.1 gerçek raporu)
+#### Yoklamanın kanıtladıkları (Premiere 26.5.1, Probe v0.1.1 gerçek raporu)
 
 - `createCloneTrackItemAction`: hedef track yoksa açıyor (V ve A). Kopya start/end/in/out/speed tick düzeyinde birebir.
   Kopya **TEK öğe**: bağlı partner gelmez, kopyalar birbirine **BAĞLI DEĞİL**.
@@ -341,7 +457,7 @@ Gelecek raporlar: `spread/dev/fixtures/senkron-raporu.txt` → `node spread/dev/
 - Seçim: `getSelection + addItem + setSelection` programla doğru ama timeline'da **GÖRÜNMÜYOR**.
 - **Link/unlink API'si YOK.** Harici ses kameraya bağlanamaz.
 
-### SPREAD tasarımı (v0.2.0)
+#### SPREAD tasarımı (v0.2.0)
 
 **Birimler** (`spread/src/plan.ts`, saf fonksiyon): KAMERA = video + aynı kaynaklı, aynı start/end/in/out'lu ses klip(ler)i (çok kanal
 olabilir); SADECE-VİDEO; SES = kamera birimine ait olmayan her ses klibi. Start'a göre sıralı (eşitlikte track, sonra ad).
@@ -401,7 +517,7 @@ Synchronize (Audio)." + geri alma bilgisi.
 eşleşmesi — her ses birimi için zamanda çakıştığı kameralar (çakışma tick/saniye/%), her kamera için çakışan sesler; makine okunur
 `CLIP;…` ve `OVERLAP;…` satırları. Kullanıcı bunu **Synchronize'dan SONRA** getirecek → RE-STACK bu veriyle tasarlanacak.
 
-#### Spread dosya haritası
+##### Spread dosya haritası
 
 ```
 spread/index.ts        giriş: SPREAD / Durum raporu / Raporu kopyala, aktif sequence göstergesi, meşgul kilidi
@@ -417,7 +533,7 @@ spread/public/         manifest.json (com.badideagency.spread, 0.2.0), index.htm
 spread/dev/smoke.cjs   mock Premiere + 12 senaryo
 ```
 
-#### Komutlar
+##### Komutlar
 
 ```bash
 npm run build:spread     # spread/dist
@@ -426,7 +542,7 @@ npm run package:spread   # release/spread.ccx (+ zip kontrolü)
 npm run check            # iki eklenti: typecheck + lint + check:api + Probe smoke + Spread smoke
 ```
 
-#### Spread smoke (`spread/dev/smoke.cjs`) — mock yalnız KANITLANMIŞ davranışı uygular
+##### Spread smoke (`spread/dev/smoke.cjs`) — mock yalnız KANITLANMIŞ davranışı uygular
 
 Kanıtlanmamış olanlarda mock **hata verir**: clone hedefi > track sayısı ("atlamalı" açma), overwrite olmayan track'e, `createEmptySelection`,
 bayat referans. Böylece Spread'in bunlara dayanmadığı da sınanır. set In/Out/Start/End'in anlamı mock'ta TAHMİNDİR.
@@ -452,7 +568,7 @@ bayat referans. Böylece Spread'in bunlara dayanmadığı da sınanır. set In/O
 | `extrach` | proje öğesinde timeline'dakinden fazla ses kanalı → overwrite fazla kanal üretir → doğrulama "2 klip var" ile DUR |
 | `plan` | saf plan testleri: hedefte çakışan asıl → hata; hız≠1 kamera → hata; birebir olmayan kamera sesi → hata; çakışmayan kamera kaynaklı ses → uyarı; WAV hedefinde silinmemiş kamera sesi → hata; dağıtılmış düzen → iş yok |
 
-#### Kullanılan Premiere API'leri (iki eklenti; `premierepro.d.ts` 26.5.0; `npm run api:table`)
+##### Kullanılan Premiere API'leri (iki eklenti; `premierepro.d.ts` 26.5.0; `npm run api:table`)
 
 | d.ts satırı | API | d.ts'teki satır |
 |---|---|---|
@@ -531,7 +647,7 @@ bayat referans. Böylece Spread'in bunlara dayanmadığı da sınanır. set In/O
 | L4692 | `Constants.MediaType` | `export enum MediaType {` |
 | L4804 | `Constants.TrackItemType` | `export enum TrackItemType {` |
 
-#### Bilinen belirsizlikler (kullanıcının ilk gerçek koşusunda bakılacaklar)
+##### Bilinen belirsizlikler (kullanıcının ilk gerçek koşusunda bakılacaklar)
 
 1. **Tek transaction'da ardışık track açma** (TX-A, V 19 + A 31 yardımcı): ölçülmedi. Çalışmazsa TX-A doğrulaması DURDURUR; asıllar
    güvende (yalnız park edilmiş yardımcılar eklenmiş olur → tek Ctrl+Z). O zaman: track'leri tek tek açan yol (çok adım) ya da
@@ -543,7 +659,7 @@ bayat referans. Böylece Spread'in bunlara dayanmadığı da sınanır. set In/O
 4. **Kamera klip efektleri** overwrite'la taşınmaz (onay metninde yazıyor); ham klipler varsayıldı.
 5. **Seçim görünmüyor** (kanıtlı) → talimat Ctrl+A ile.
 
-#### Bağımsız alt ajan incelemesi (v0.2.0, salt okuma; tüm spread/ kaynakları okundu, kendi mock senaryolarıyla sınandı)
+##### Bağımsız alt ajan incelemesi (v0.2.0, salt okuma; tüm spread/ kaynakları okundu, kendi mock senaryolarıyla sınandı)
 
 | İddia | Sonuç |
 |---|---|
@@ -563,20 +679,20 @@ yeniden adlandırma uyarısı; (8) okuma uyarıları doğrulamada yok sayılıyo
 `expectState`; (10) kullanılmayan `timeKey` silindi; ayrıca kopyası alınmış asılın üstüne aynı transaction'da clone (kanıtsız) → plan hatası.
 Düzeltmeler yeni mock senaryolarıyla (falsetx, subframe, badbackup, undobetween, notype, extrach) doğrulandı; ikinci inceleme turu yapılmadı.
 
-#### Graphify
+##### Graphify
 
 Ortamda **kurulu değil** (PATH'te `graphify` yok, npm global'de yok, Claude skill/komut listesinde yok) → `/graphify .` **atlandı**.
 
-#### Sonraki adım
+##### Sonraki adım
 
 1. Kullanıcı gerçek projenin **Save As** kopyasında, orijinal sequence'ta SPREAD'i dener; sonucu (başarı ya da DURDU satırları) getirir.
 2. Synchronize sonrası **Durum raporu**nu getirir → RE-STACK (interval packing: video V1'den, ses A1'den, zamana dokunmadan) tasarlanır.
 
 ---
 
-### Geçmiş: Spread Probe (ADIM 1 / 1b, v0.1.1)
+#### Geçmiş: Spread Probe (ADIM 1 / 1b, v0.1.1)
 
-#### ⚠ ADIM 1b bulgusu (Premiere 26.5.1, v0.1.0 gerçek raporu)
+##### ⚠ ADIM 1b bulgusu (Premiere 26.5.1, v0.1.0 gerçek raporu)
 
 > **TrackItem referansları transaction sonrası geçersiz olur. Spread/Re-stack bütün taşımaları TEK transaction'da yapmalı.**
 
@@ -599,7 +715,7 @@ Ortamda **kurulu değil** (PATH'te `graphify` yok, npm global'de yok, Claude ski
 önce: sequence'ı baştan oku → seçimi Adobe kalıbıyla kur → setSelection sonrası tekrar oku → o referanslarla action'ları üret. Arada
 kullanıcı etkileşimi, Ctrl+Z ya da başka bir transaction olursa her şey baştan okunur.
 
-#### Durum (tek bakışta)
+##### Durum (tek bakışta)
 
 | | |
 |---|---|
@@ -610,7 +726,7 @@ kullanıcı etkileşimi, Ctrl+Z ya da başka bir transaction olursa her şey ba�
 | Doğrulanamayan | Gerçek Premiere davranışı — kullanıcının v0.1.1 raporu bekleniyor ([KURULUM_TR.md](KURULUM_TR.md)) |
 | Dal | `claude/sweet-bell-do4j75` |
 
-#### Dosya haritası
+##### Dosya haritası
 
 ```
 index.ts               giriş: butonlar, PROBE_ durum çubuğu (1,5 sn'de bir), meşgul kilidi, koşu sabitleme, rapor kopyalama
@@ -626,7 +742,7 @@ dev/smoke.cjs          sahte premierepro ile dist/'i Node'da uçtan uca çalış
 release/               spread-probe.ccx
 ```
 
-#### Komutlar
+##### Komutlar
 
 ```bash
 npm ci
@@ -635,7 +751,7 @@ npm run package      # build → release/spread-probe.ccx → verify-ccx.py
 npm run api:table    # kullanılan her API'nin d.ts satırı + kullanıldığı yerler
 ```
 
-#### Mimari kararlar
+##### Mimari kararlar
 
 - **Tek API kaynağı:** `node_modules/@adobe/premierepro/src/premierepro.d.ts` (26.5.0). Her çağrının yanında `// d.ts:L<satır> Tip.üye`;
   `scripts/check-api-refs.mjs` satırın o üyeyi içerdiğini ve o tipin gövdesinde olduğunu kontrol eder. `tsc --strict`, `any` yok.
@@ -665,7 +781,7 @@ npm run api:table    # kullanılan her API'nin d.ts satırı + kullanıldığı 
   sonucuna (ya da kullanıcı gözlemine) verilir. Güvenlik iptalleri (seçim uygun değil → silme yapılmadı) `belirsiz`tir.
   **Yalnız `api` sınıfı engel (CEP gerekçesi) olabilir**; `kod`/`belirsiz` kararı "GEÇİCİ" yapar.
 
-#### Testler — v0.1.1
+##### Testler — v0.1.1
 
 "Hepsini çalıştır" sırası: **T1, T2, T4, T3, T6, T8, T5, T7**. Her test başında sequence'ı baştan okur; önceki testten referans devralmaz.
 
@@ -686,7 +802,7 @@ T3 hedef track yokken başka klip değiştiyse belirsiz (T2'nin bulgusu iki kez 
 T1/T5/T6/T8 FAIL → workaround.
 `kod`/`belirsiz`/eksik varsa öneri "GEÇİCİ". Rapor ÖZET'inde her FAIL `[API]` / `[KOD]` / `[BELİRSİZ]` etiketlidir.
 
-#### Kullanılan Premiere API'leri (hepsi `premierepro.d.ts` 26.5.0)
+##### Kullanılan Premiere API'leri (hepsi `premierepro.d.ts` 26.5.0)
 
 `npm run api:table` ile üretildi (67 benzersiz referans, 0 hata). v0.1.0'a göre **çıkanlar:** `TrackItemSelectionStatic.createEmptySelection`,
 `Application.version`. **Eklenenler:** `Sequence.clearSelection`, `SequenceEditor.createOverwriteItemAction`, `TickTimeStatic.createWithTicks`,
@@ -765,7 +881,7 @@ her iki track item tipinde `createSetInPointAction / createSetOutPointAction / c
 Premiere dışı (UXP): `navigator.clipboard.setContent / writeText` (`@adobe/cc-ext-uxp-types` 7.3.1), `require("uxp").versions.uxp`,
 `require("uxp").host.name/version` (rapordaki Premiere sürümü).
 
-#### Doğrulama (bulutta yapılan)
+##### Doğrulama (bulutta yapılan)
 
 - `npm run typecheck` — strict, 0 hata. `npm run lint` — Adobe premierepro kuralları dahil 0 hata. `npm run check:api` — 67 referans, 0 hata.
 - `npm run smoke` — `dev/smoke.cjs`. Mock, 26.5.1'de ölçülen tek kesin davranışı uygular: **işlenen transaction'dan sonra eski
@@ -804,12 +920,12 @@ Premiere dışı (UXP): `navigator.clipboard.setContent / writeText` (`@adobe/cc
     kimlikleriyle (track, start, end, kaynak) karşılaştırılıyor.
   - Bu düzeltmeler yeni mock modlarıyla (linked, filter, yeniden tanımlanan grim) doğrulandı; ikinci bir alt ajan turu yapılmadı.
 
-#### Önceki tur (v0.1.0) incelemesinden düzeltilenler (özet)
+##### Önceki tur (v0.1.0) incelemesinden düzeltilenler (özet)
 
 T1'in kullanıcı çıkışını geri zorlaması; "Hepsini çalıştır"ın sequence'ı sabitlememesi; önbellekli ad; kilit kontrolsüz seçim yedek yolu;
 paylaşılan canlı seçim; koşular arası kalan sonuçlar; T6'nın track açmayla karışması; `decide()` eksik sayımı — hepsi v0.1.0'da düzeltildi.
 
-#### Bilinen belirsizlikler / riskler
+##### Bilinen belirsizlikler / riskler
 
 1. **d.ts'te "bağlı mı" (link) sorgusu yok.** Bağ, kullanıcının tıklaması + `getSelection`/`getIsSelected` okumasıyla ölçülür (T3, T8).
 2. **`createRemoveItemsAction` `mediaType` anlamı belgelenmemiş.** T3 video+ses birlikte silerken VIDEO veriyor (Adobe örneği); ses silinmezse
@@ -823,11 +939,11 @@ paylaşılan canlı seçim; koşular arası kalan sonuçlar; T6'nın track açma
 7. **Autosave:** panel kaydetmez; Premiere autosave'i olabilir → deneme projesi önerisi.
 8. `settle()` = 400 ms. Snapshot eski durumu görürse (rapor "(yok)" derken timeline'da varsa) artırılmalı.
 
-#### Graphify
+##### Graphify
 
 Ortamda **kurulu değil** (PATH'te `graphify` yok, npm global'de yok, Claude skill/komut listesinde yok) → `/graphify .` **atlandı**.
 
-#### Sonraki adım
+##### Sonraki adım
 
 1. Kullanıcı v0.1.1 raporunu getirir (önce eski sürümü kaldırıp yenisini kurar, V2+/A4+ temizler).
 2. Özellikle T3 (tek transaction'da taşı), T6 (tek Ctrl+Z), T8 (bağlı doğurma + set* anlamı) sonuçlarına göre SPREAD'in taşıma yolu seçilir:
