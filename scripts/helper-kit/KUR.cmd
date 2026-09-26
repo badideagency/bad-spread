@@ -24,9 +24,9 @@ echo.
 reg query "HKCU\Software\Adobe\CSXS.12" /v PlayerDebugMode 2>nul | findstr /r /c:"PlayerDebugMode *REG_SZ *1" >nul
 if errorlevel 1 (
   echo DIKKAT: PlayerDebugMode ayarli DEGIL. Yardimci imzasiz oldugu icin Premiere onu YUKLEMEZ.
-  echo   -> PlayerDebugMode_CSXS12.reg dosyasina cift tikla, Evet de.
+  echo   Cozum: PlayerDebugMode_CSXS12.reg dosyasina cift tikla, Evet de.
 ) else (
-  echo PlayerDebugMode = "1" (tamam).
+  echo PlayerDebugMode = "1" - tamam.
 )
 echo.
 echo Simdi: Premiere Pro'yu KAPATIP yeniden ac.

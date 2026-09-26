@@ -2,8 +2,8 @@
 
 | Bileşen | Durum | Paket |
 |---|---|---|
-| **Spread** v0.3.1 (`spread/`) | **SPREAD** (her klip kendi track'ine) → Premiere *Clip > Synchronize* → **TOPLA** (oturumları senkron sonucundan bulur: güçlü bağ + cihaz vetosu; çekim sırasıyla sequence başından dizer; cihaz → V, kaynak → A) → gözle kontrol → **BAĞLA** (oturum içinde harici sesi çapaya göre kes, kılavuz sesleri sil, her grubu tek bağ yap). **Durum raporu** (oturumlar dahil) + kaynak eşleme + eşik/boşluk ayarı. | [`release/spread.ccx`](release/spread.ccx) |
-| **Spread Helper** v0.3.0 (`cep-helper/`) | Görünmez CEP yardımcısı: BAĞLA için ExtendScript `Sequence.linkSelection()` (UXP'de link API'si yok). Yalnız 127.0.0.1:47731, token'lı. | [`release/spread-helper.zxp`](release/spread-helper.zxp) (kendinden imzalı) · [`release/spread-helper-klasor.zip`](release/spread-helper-klasor.zip) (yedek kurulum) |
+| **Spread** v0.3.2 (`spread/`) | **SPREAD** (her klip kendi track'ine) → Premiere *Clip > Synchronize* → **TOPLA** (oturumları senkron sonucundan bulur: güçlü bağ + cihaz vetosu; çekim sırasıyla sequence başından dizer; cihaz → V, kaynak → A) → gözle kontrol → **BAĞLA** = **KES** (oturum içinde harici sesi çapaya göre kes, kılavuz sesleri sil) + bağla (köprüyle tek tık ya da yardımcı paneldeki BAĞLA). **Durum raporu** (oturumlar dahil) + kaynak eşleme + eşik/boşluk ayarı; yardımcı bağlantısında gerçek hata. | [`release/spread.ccx`](release/spread.ccx) |
+| **Spread Helper** v0.3.2 (`cep-helper/`) | GÖRÜNÜR CEP paneli (Window → Extensions (Legacy) → Spread Helper): sunucu durumu, son istek, Premiere sürümü; köprü (localhost:47731, token'lı) ve köprüsüz **BAĞLA** düğmesi (KES planı + aktif sequence → Spread'in AYNI modülüyle grupla → ExtendScript `linkSelection`). | [`release/spread-helper-klasor.zip`](release/spread-helper-klasor.zip) (imzasız klasör + `KUR.cmd` + PlayerDebugMode `.reg`) |
 | Spread Probe v0.1.1 (kök `index.ts`, `src/`, `public/`) | API yoklama paneli (T1–T8). Bitti; arşiv. | [`release/spread-probe.ccx`](release/spread-probe.ccx) |
 
 - Kurulum ve kullanım: **[KURULUM_TR.md](KURULUM_TR.md)**
@@ -14,9 +14,11 @@
 ```bash
 npm ci
 npm run check            # typecheck + eslint (Adobe premierepro kuralları) + d.ts / uxp.d.ts satır kontrolü
-                         # + host.jsx ES3/belge kontrolü + Probe smoke + Spread smoke (mock Premiere + gerçek yardımcı sunucusu)
+                         # + host.jsx ES3/belge kontrolü + check:core (yardımcıdaki derlenmiş modül = kaynak)
+                         # + Probe smoke + Spread smoke (mock Premiere + gerçek yardımcı sunucusu + yardımcı paneldeki BAĞLA)
 npm run package:spread   # build → release/spread.ccx (+ zip kontrolü)
-ZXPSIGNCMD=/yol/ZXPSignCmd.exe npm run package:helper   # release/spread-helper.zxp (+ yedek zip); Linux'ta Wine gerekir
+npm run build:core       # spread/src/helper-core.ts → cep-helper/js/spread-core.js (TEK modül, yardımcı panele)
+npm run package:helper   # release/spread-helper-klasor.zip (imzasız); ZXPSIGNCMD=… verilirse ve zaman damgası alınırsa .zxp
 ```
 
 Kurallar: Premiere UXP API'si yalnız `node_modules/@adobe/premierepro/src/premierepro.d.ts` (26.5.0) dosyasından kullanılır

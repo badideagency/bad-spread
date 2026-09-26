@@ -1,6 +1,150 @@
-# handoff — Spread (ADIM 3.1: oturum tespiti + kronolojik dizim, v0.3.1) + geçmiş (ADIM 3, ADIM 2, ADIM 1)
+# handoff — Spread (ADIM 3.2: görünür yardımcı paneli + bağlantıdan bağımsız BAĞLA, v0.3.2) + geçmiş (ADIM 3.1, 3, 2, 1)
 
-## Durum (tek bakışta)
+## Durum (tek bakışta) — ADIM 3.2
+
+| | |
+|---|---|
+| Sürüm | **Spread v0.3.2** (`release/spread.ccx`) + **Spread Helper v0.3.2** (`release/spread-helper-klasor.zip`, İMZASIZ klasör + `KUR.cmd` + `.reg`). **`.zxp` YOK** (aşağıda neden). |
+| Kullanıcının gerçek durumu | Windows, Premiere 26.5.1: `.zxp` aescripts ZXP/UXP Installer'da kodsuz "was not installed"; klasör + PlayerDebugMode=1 ile de yardımcı BAŞLAMADI (`127.0.0.1:47731` tarayıcıda hiç açılmıyor → sunucu hiç çalışmadı). |
+| Yapılan | (1) Spread gerçek hatayı adımıyla yazar; (2) yardımcı GÖRÜNÜR panel (Window → Extensions (Legacy) → Spread Helper: sunucu durumu, adresler, Premiere/Node sürümü, son istek, günlük) + `.debug` (PPRO, 8098); (3) BAĞLA = KES (Spread) + BAĞLA (köprüyle tek tık ya da yardımcı paneldeki düğme; plan dosyası / yapıştırma); (4) UXP ağ izni `localhost` (IP yazılı izin reddediliyor), sunucu 127.0.0.1 + ::1; (5) klasör kiti imzasız + PlayerDebugMode, `.zxp` yalnız zaman damgalı imzayla |
+| Bulutta doğrulanan | `npm run check` (tsc, eslint, d.ts 75 + uxp.d.ts 11, host.jsx ES3 + belge, **check:core** (yardımcıdaki derlenmiş modül = kaynak), Probe smoke, **Spread smoke 65 senaryo**), yeni korumaların mutasyon sınaması, bağımsız alt ajan incelemesi |
+| Dal | `claude/sweet-bell-do4j75` |
+
+### Kök neden analizi (kanıt + kaynak; kesin neden kullanıcının CEP günlüğüyle kapanacak)
+
+**A) Yardımcı hiç yüklenmedi / başlamadı** (port hiç açılmadı). İki aday, ikisi de bu sürümde ortadan kaldırıldı:
+1. **Gizli başlatma (StartOn) Premiere'de güvenilir değil.**
+   - Adobe CEP 12 Cookbook'un standart olaylar tablosunda `applicationActivate` için Premiere Pro sütunu **"Yes on macOS; No on Windows"** diyor.
+   - Aynı Cookbook'un görünmez eklenti örneği "Premiere Pro dispatches this event on startup" diyerek `com.adobe.csxs.events.ApplicationActivate` gösteriyor.
+   - Adobe'nin PProPanel örnek manifesti ise aynı olay için "Premiere Pro dispatches this event whenever it gains focus from the OS" diyor, yani açılışta değil odakta.
+   - Adobe forumunda "Premiere Pro doesn't send ApplicationActivate on launch, just when it gets (re-)activated" denmiş. Bu doğrulanamadı: sayfa bu ortamdan açılamadı, yalnız arama özeti görüldü.
+   - `com.adobe.csxs.events.ApplicationInitialized` için Premiere belgesi bulunamadı.
+   - → **Karar:** yardımcı artık `Type=Panel` + `<Menu>`, `StartOn` yok. Cookbook: Panel türü "participates in workspaces … and is re-opened at start-up if open at shutdown".
+2. **İmza doğrulanamadı.**
+   - v0.3.0 paketi zaman damgasız kendinden imzalıydı: `-tsa` başarısız olunca betik damgasız imzaya düşüyordu.
+   - Bu ortamda `ZXPSignCmd` damga alamayınca kendisi şunu yazdı: **"the timestamp returned from the chosen TSA could not be verified, so the ZXP created is likely to be rejected by other tools"**.
+   - Adobe imzalama teknik notu: "the package must be signed with a valid certificate and time-stamped".
+   - Klasör kiti de bu imzayı (`META-INF`) taşıyordu.
+   - Üçüncü taraf rapor (After Effects 26.3, Windows, eklenti `%APPDATA%`'da): PlayerDebugMode String olarak doğru ayarlıyken bile CEP günlüğünde "Signature verification failed", `CEPHtmlEngine` hiç başlamamış.
+   - → **Karar:** klasör kiti **imzasız** (`META-INF` yok; paketleme betiği denetler) ve PlayerDebugMode=1 ile yükleniyor. Bu, Adobe'nin belgelediği geliştirici yolu (Cookbook "Debugging Unsigned Extensions": HKCU\Software\Adobe\CSXS.12, `PlayerDebugMode` **string** "1").
+   - `.zxp` yalnız doğrulanabilir zaman damgasıyla üretilir. Bu ortamda `timestamp.digicert.com`, `time.certum.pl`, `timestamp.sectigo.com` ve `ts.ssl.com` ağ politikasınca engelli (403) → `.zxp` üretilmedi, eskisi release'den kaldırıldı.
+   - Kesin neden için `CEP_GUNLUK_AC.reg` eklendi: `LogLevel` "6" (Adobe CEP 12 Debugging Handbook). Günlük `%TEMP%\CEP12-PPRO.log` dosyasında.
+
+**B) Yardımcı çalışsaydı bile UXP isteği büyük ihtimalle reddedilecekti.**
+- Spread'in manifest izni `http://127.0.0.1(:47731)` idi.
+- Adobe Premiere UXP ağ tarifi: "Any request to an unlisted domain will fail with a permission error". Belgede yalnız alan adı örnekleri var, IP örneği yok.
+- Üçüncü taraf, Premiere 26.5 Windows: "Numeric loopback manifest declarations with and without port failed with `Permission denied ... Manifest entry not found` … `http://localhost` in the manifest and `http://localhost:47856/health` in fetch succeeded".
+- Başka bir Premiere eklentisi: "UXP rejects IP literals in network permissions", "localhost can resolve to ::1 first".
+- → **Karar:**
+  - izin `http://localhost` + `http://localhost:47731`, istek `http://localhost:47731`;
+  - yardımcı 127.0.0.1 **ve** ::1'i dinler. ::1 açılamazsa bildirilir ve sunucu 127.0.0.1'le devam eder; bu yol burada sınandı, çünkü sandbox'ta IPv6 yok.
+  - İzin reddi Spread'de ayrıca tanınır ("UXP İZİN REDDİ", ham hata her zaman yazılır).
+
+### Tasarım (v0.3.2)
+
+**Teşhis** (`spread/src/linker.ts`): ping, "bağlı değil" yerine hatayı adımıyla yazar:
+- `[bilgi dosyası]`: yardımcı hiç başlamamış. Yol, ham fs hatası ve "Window → Extensions (Legacy) → Spread Helper panelini aç" yazılır.
+- `[bağlantı]`: istek yardımcıya ulaşmadı.
+  - İzin reddiyse "UXP İZİN REDDİ" diye ayrı tanınır.
+  - Değilse bilgi dosyasındaki başlama zamanı ve süreç numarası yazılır, ardından "yardımcı paneldeki *son istek* değişmediyse istek hiç ulaşmadı" ipucu.
+- `[yanıt]`: HTTP ya da JSON hatası; 401'de "token eski".
+
+UXP'nin gerçek hata metinleri ölçülmedi. Sınıflama metin sezgisidir, ham hata ise **her zaman** yazılır.
+
+**Yardımcı paneli** (`cep-helper/`):
+- `CSXS/manifest.xml`: Type=Panel, Menu "Spread Helper", AutoVisible=true, 340×460, CSXS 12, PPRO [25.0,99.9], `--enable-nodejs --mixed-context`.
+- `.debug`: Id = manifestteki Extension Id `com.badideagency.spread.helper.panel`, Host PPRO, Port 8098 → Chrome/Edge'de `http://localhost:8098`.
+- `index.html` + `js/panel.js`: yalnız arayüz; dosyadan ya da plandan gelen metinler yalnız `textContent` ile yazılır.
+- `js/helper.js`: sunucu + BAĞLA mantığı; Node testleri aynı kodu çalıştırır.
+- `js/spread-core.js`: TEK modülün derlenmiş hâli.
+- Panel şunları gösterir: sunucu (dinliyor / BAŞLAMADI + hata; EADDRINUSE açıklamalı), adresler, Premiere sürümü (açılışta ExtendScript ping'i), Node, son istek (yöntem, yol, durum, süre, toplam), son BAĞLA, günlük (ayrıca `%TEMP%\spread-helper.log`).
+- Node yoksa panel "Node.js bu panelde kapalı" der.
+- Panel kapanınca sunucu durur ve bilgi dosyası silinir. Premiere'de "persistent" yalnız PS/ID/IC için belgeli (Cookbook).
+
+**BAĞLANTIDAN BAĞIMSIZ BAĞLA:**
+- **KES** (Spread, `bagla.ts`): v0.3.1 oturum mantığı aynen. Kesme/silme tick düzeyinde doğrulanır, kayda (`stage: "cut"`) yazılır, **KES planı** (`link-plan.json`) yardımcının klasörüne yazılır.
+  - Plan: `{v:1, kind:"spread-link-plan", sequence{name,guid}, frame{vPark,aPark,silTracks}, groups[{id,label,items[{kind,track,start,end,name}]}]}`.
+  - Yazılamazsa (UXP dosya izni) ham hata gösterilir ve plan rapor kutusuna konur → yardımcı panelde "Planı yapıştır".
+- **Köprü varsa**: KES'ten sonra hemen tek tıkla bağlanır (değişmedi).
+- **Köprü yoksa**: BAĞLA durmaz. KES yapılır ve "✓ KES tamam — N grup bağlanmayı bekliyor … Spread Helper panelindeki BAĞLA'ya bas" yazılır. Kayıt `cut` kalır; Spread'de tekrar BAĞLA yalnız bağlama yapar (köprü varsa).
+- **Yardımcı paneldeki BAĞLA** (`helper.js bindFromPlan`):
+  1. planı doğrular (`cleanPlan`: tür, sürüm, ad ve track sınırları, grup ve öğe biçimi; köprüdeki `cleanGroup` ile AYNI);
+  2. aktif sequence'ı ExtendScript `spreadHelper_read()` ile okur (salt okuma; yeni DOM üyesi yalnız `ProjectItem.nodeId`, belgeli);
+  3. sequence adı planla aynı olmalı;
+  4. klipleri **Spread'in `classify` + `groupsFromLayout`**'u ile gruplar;
+  5. **planla birebir** karşılaştırır (`compareLinkGroups`: öğe kümeleri, tick);
+  6. aynıysa köprünün kullandığı AYNI `spreadHelper_link` ile 8'lik partiler hâlinde bağlar (setSelected + linkSelection + getLinkedItems doğrulaması);
+  7. sonucu grup grup yazar. Uyuşmazlıkta hiçbir şey yapmaz.
+- **TEK modül**: `spread/src/sessions.ts` içindeki `groupsFromLayout` + `compareLinkGroups`.
+  - Derleme: `spread/src/helper-core.ts` → `npm run build:core` → `cep-helper/js/spread-core.js` (IIFE, global `SpreadCore`; Premiere API bağımlılığı yok, saf yardımcılar `spread/src/core.ts`'e taşındı).
+  - `npm run check:core` derlenmiş dosyanın kaynakla bayt bayt aynı olduğunu denetler.
+  - Spread aynı kuralı iki kez uygular:
+    - **KES'ten ÖNCE**, beklenen son düzende (`bind.ts expectedFinalClips`). Kural planın gruplarını bulamayacaksa hiçbir şeye dokunmadan plan hatası.
+    - **KES'ten SONRA**, gerçek düzende.
+  - Böylece iki yol birbirinden sapamaz.
+- **Kural** (düzenden gruplar):
+  - Ana kamera videoları (V < vPark) zamanda çakışanlar → grup; çapa = en uzun. TOPLA oturumları ayrık dizdiği için çakışan kameralar aynı oturumdadır.
+  - Harici ses (A < aPark) **çapanın içindeyse** o grubun.
+    - Kullanıcının "start/end çapayla BİREBİR" tarifi, ses çapayı kapsadığında tam budur.
+    - Kapsamadığında KES parçası çapanın içinde daha kısadır: gerçek veride O1 2.320 sn, O2 41.840 sn ("SESSİZ KALACAK"). Birebir kuralı bunları bağlamazdı; köprülü yol ise bağlar, yani iki yol ayrışırdı.
+    - Bu yüzden tick düzeyindeki birebirlik **KES planına karşı** aranır: her öğe planda tick düzeyinde aynı olmalı.
+  - Kamera sesi: grubunda harici ses yoksa korunur ve bağlanır; varsa HATA (KES silmemiş).
+  - "sil" track'inde klip → HATA.
+  - Hiçbir kameraya değmeyen ses (kamerasız oturum) → dokunulmaz.
+  - Park track'leri (V ≥ vPark, A ≥ aPark) → girmez.
+
+**Paket** (`scripts/package-helper.sh`):
+- Klasör kiti her zaman üretilir: imzasız eklenti + `KUR.cmd` (PlayerDebugMode'u okur ve uyarır, kayıt defterine yazmaz) + `PlayerDebugMode_CSXS12.reg` + `CEP_GUNLUK_AC.reg` + `BENIOKU.txt`, CRLF.
+- `.zxp` yalnız `ZXPSIGNCMD` verilip zaman damgası doğrulanırsa üretilir: imzada TimeStamp aranır, damgasız imza üretilmez.
+
+### Mock senaryoları (v0.3.2, `spread/dev/smoke.cjs`)
+
+| Senaryo | Ne gösterir |
+|---|---|
+| `bridgeoff` | aynı başlangıç: (A) köprü açık → tek tık; (B) köprü kapalı → BAĞLA DURMAZ, KES yapılır (tick), bağlanmaz, "Spread Helper panelindeki BAĞLA'ya bas"; gösterge `[bilgi dosyası] …`; yardımcı paneldeki BAĞLA → **A ile B son düzen (tick) ve bağlar BİREBİR aynı**; sonra Spread'de BAĞLA yalnız bağlar |
+| `bridgeoff_real` | aynı eşdeğerlik **gerçek 12 Eylül** (44 klip, 11 bağ), **23 Eylül** sentetik (50 klip, 10 bağ; harici sessiz oturumda korunan kamera sesi), **kamerasız oturum** (dokunulmayan 2 ses) |
+| `bridgeoff_paste` | plan dosyası yazılamaz (izin) → ham hata + plan rapor kutusunda; panelde plan yokken BAĞLA ne yapılacağını söyler; yapıştırılan planla bağlar |
+| `panel_guard` | paneldeki BAĞLA hiçbir şey yapmaz: başka sequence aktif; KES'ten sonra 1 kare kayan parça; silinen parça ("planda var, düzende YOK"); KES geri alınmış |
+| `core_rules` | yardımcıya SEVK EDİLEN derlenmiş modülde kuralın dalları: birebir / kısa parça, kılavuz (harici sesli → HATA, sessiz → korunur), çapa dışı → HATA, kamerasız → dokunulmaz, "sil" → HATA, park → girmez, planla karşılaştırma |
+| `diag` | `[bilgi dosyası]` (yardımcı yok), `[bağlantı]` (bilgi dosyası var, sunucu yok, ham TypeError), **UXP İZİN REDDİ** (istek yardımcıya ULAŞMADI: son istek yok), bağlı → yardımcıda son istek `POST /v1/ping → 200`, Premiere sürümü |
+| (güncellendi) | `security` (GET 405 yardımcıyı tanıtır; ::1 yetkisi), `rebind`, `linkfail` (tekrar bas → yalnız bağla), eski `helperoff` (durma) → `bridgeoff` (KES) |
+
+Mutasyon: planla karşılaştırmayı kaldırmak → `panel_guard` düşer; "harici sesli grupta kılavuz" hatasını kaldırmak → `core_rules`
+düşer (ikisi de ilk denemede YAKALANMAMIŞTI — başka korumaların arkasında kalıyordu; senaryolar eklendi).
+
+### Belirsizlikler (v0.3.2 — gerçek Premiere'de bakılacak)
+
+1. Yardımcının v0.3.0'da neden yüklenmediği kesin değil: gizli başlatma mı, imza mı? `CEP12-PPRO.log` söyleyecek. Yeni kurulum ikisini de ortadan kaldırıyor.
+2. "Window → **Extensions (Legacy)**" adı Adobe belgesinde bulunamadı; üçüncü taraf README'ler Premiere 2026 için böyle diyor. Eski sürümlerde "Window → Extensions".
+3. UXP'nin `localhost` izniyle istek atabildiği yalnız üçüncü taraf kanıtla (Premiere 26.5 Windows). Hata metinleri ölçülmedi; ham hata yazılır.
+4. ::1 dinleme bu ortamda sınanamadı (IPv6 yok); açılamazsa sunucu 127.0.0.1'le devam eder (sınandı).
+5. CEP'in Premiere'deki geleceği: Adobe PProPanel ReadMe (Kasım 2025): "the plan is to support both CEP and UXP for a calendar year, after which we will remove support for CEP extensibilty". Bağlama tek modülde (`linker.ts`); UXP'ye link API'si gelince yalnız o değişir.
+6. `.zxp`: zaman damgası sunucuları bu bulut ortamının ağ politikasınca engelli. Ortamın izinli alan adlarına `timestamp.digicert.com` eklenirse `ZXPSIGNCMD=… npm run package:helper` zaman damgalı `.zxp` üretir. Adobe'nin 2024 bilinen sorununa göre ZXPInstaller/UPIA ile kurulumda imza doğrulaması sembolik bağlar yüzünden başarısız olabilir; paketimizde sembolik bağ yok.
+
+### Kaynaklar (ADIM 3.2)
+
+- Adobe CEP 12 HTML Extension Cookbook (standart olaylar tablosu, görünmez eklentiler, Panel türü, `<Menu>`, uzaktan hata ayıklama `.debug`, PlayerDebugMode):
+  <https://github.com/Adobe-CEP/CEP-Resources/blob/master/CEP_12.x/Documentation/CEP%2012%20HTML%20Extension%20Cookbook.md>
+- Adobe CEP 12 Debugging Handbook (LogLevel, `%TEMP%` günlükleri): <https://github.com/Adobe-CEP/CEP-Resources/blob/master/CEP_12.x/Documentation/Debugging%20Handbook.md>
+- Adobe PProPanel örnek manifesti ("whenever it gains focus from the OS"): <https://github.com/Adobe-CEP/Samples/blob/master/PProPanel/CSXS/manifest.xml>
+- Adobe PProPanel ReadMe (CEP desteğinin kaldırılma planı, `-tsa http://timestamp.digicert.com/` örneği): <https://github.com/Adobe-CEP/Samples/blob/master/PProPanel/ReadMe.md>
+- Adobe ZXPSignCmd imzalama teknik notu ("signed with a valid certificate and time-stamped"): <https://github.com/Adobe-CEP/CEP-Resources/blob/master/ZXPSignCMD/SigningTechNote_CC.pdf>
+- Adobe ZXPSignCmd bilinen sorun 2024 (UPIA/ZXPInstaller + sembolik bağ): <https://github.com/Adobe-CEP/CEP-Resources/blob/master/ZXPSignCMD/KnownIssue2024.md>
+- Adobe Getting Started — `.debug` Id'si manifestle aynı olmalı: <https://github.com/Adobe-CEP/Getting-Started-guides/blob/master/Client-side%20Debugging/readme.md>
+- Adobe UXP Premiere manifest (network.domains biçimi): <https://github.com/AdobeDocs/uxp-premiere-pro/blob/main/src/pages/plugins/concepts/manifest/index.md>
+- Adobe UXP Premiere ağ tarifi ("Any request to an unlisted domain will fail with a permission error"): <https://github.com/AdobeDocs/uxp-premiere-pro/blob/main/src/pages/resources/recipes/network/index.md>
+- Üçüncü taraf, Premiere 26.5 Windows, IP yazılı izin reddi / localhost çalışıyor: <https://github.com/jeremyrunningphotography/lightflow-studio/blob/94c7ea5c13e782a9bf02cfb39185b67d21bbb172/docs/research/premiere-uxp/README.md>
+- Üçüncü taraf, "UXP rejects IP literals", "localhost can resolve to ::1 first": <https://github.com/ubermensch1218/premiere-pro-agent/blob/b89b739325f0320b8f51957508149054a5cf2482/plugin/main.js>
+- Üçüncü taraf, AE 26.3 Windows, PlayerDebugMode doğruyken "Signature verification failed": <https://github.com/Engine-Room-Games/after-effects-mcp/issues/91>
+- Üçüncü taraf, "Premiere 2026 and later … Window > Extensions (Legacy)": <https://github.com/SysAdminDoc/OpenCut/blob/7f08cf22ba6caabda8a39b33b29972b274f5a8e5/README.md>
+- Açık ZXPInstaller hata kodu eşlemesi (402 imza, 403/411 uyumsuz): <https://github.com/elements-storage/ZXPInstaller/blob/master/app/src/messages.js>
+
+---
+
+
+## Geçmiş: ADIM 3.1 — oturum tespiti + kronolojik dizim (v0.3.1)
+
+### Durum (tek bakışta)
 
 | | |
 |---|---|
@@ -10,7 +154,7 @@
 | Bulutta doğrulanan | `npm run check` (tsc, eslint, d.ts 75 + uxp.d.ts 5, host.jsx, Probe smoke, **Spread smoke 59 senaryo** — gerçek yardımcı sunucusu + host.jsx dahil), iki bağımsız alt ajan incelemesi (#2 ve #3 bulguları düzeltildi), yeni senaryoların mutasyon sınaması (9 koruma bozuldu, 9'u da yakalandı) |
 | Dal | `claude/sweet-bell-do4j75` |
 
-## KANITLANMIŞ (kullanıcı, gerçek Premiere, 12 Eylül çekimi)
+### KANITLANMIŞ (kullanıcı, gerçek Premiere, 12 Eylül çekimi)
 
 - **Premiere Synchronize ilişkisiz grupları rastgele ve üst üste yerleştirir. Gruplama senkron sonucundan (güçlü bağ + cihaz vetosu)
   yapılmalı, dosya adından değil.**
@@ -26,7 +170,7 @@
   (birlikte kayda girer); A041C005 ~1 sn ve eşsiz; DJI kayıtları (16–27 dk) birden çok Zoom oturumunu kapsar → bir kameranın birden
   fazla harici ses kaynağı olabilir; bazı çekimlerde Zoom yok (yaka mikrofonu) ya da hiç harici ses yok (kamera sesi asıl ses).
 
-## Kurallar ve tasarım (v0.3.1)
+### Kurallar ve tasarım (v0.3.1)
 
 **Kimlik** (`identity.ts`, yalnız kimlik ve SIRA için): sinema `^[A-Z]\d{3}C\d{3}_\d{6}\w{2}$` (cihaz = baş harf, sıra [makara, klip]),
 Sony `^C\d{4}$` (cihaz "Sony", sayaç), DJI `^DJI_\d+_\d{8}_\d{6}$` (sıra [tarih, saat, sayaç]), Zoom `^\d{6}_\d{6}_(Tr\w+)$` (kayıt =
@@ -114,7 +258,7 @@ alındı) her şey baştan çalışır (`adv_after`).
 kullanılmayan en küçük A), eşik (`spread.threshold.v1`, 50–100, varsayılan 90), boşluk (`spread.gapSec.v1`, 0–600 sn, varsayılan 2).
 v0.3.0'ın "Tutulacak kanallar" ayarı kaldırıldı.
 
-### Gerçek 12 Eylül verisi (çiftler temizlenmiş) — mock sonucu
+#### Gerçek 12 Eylül verisi (çiftler temizlenmiş) — mock sonucu
 
 | Oturum | Üyeler | Yeni yer |
 |---|---|---|
@@ -126,7 +270,7 @@ v0.3.0'ın "Tutulacak kanallar" ayarı kaldırıldı.
 A → V1, Sony → V2 (toplamlar eşit → ad); TrLR "sil" seçilince Tr1 → A1, Tr2 → A2, kılavuzlar A3–A4, TrLR A5. BAĞLA: 11 grup; A038C001'in
 bağında yalnız 133224 parçaları (144207'den 176 sn KESİLMEDİ).
 
-### Yeni / değişen mock senaryoları (`spread/dev/smoke.cjs`; beklentiler plan kodundan BAĞIMSIZ hesaplanır)
+#### Yeni / değişen mock senaryoları (`spread/dev/smoke.cjs`; beklentiler plan kodundan BAĞIMSIZ hesaplanır)
 
 | Senaryo | Ne gösterir |
 |---|---|
@@ -155,7 +299,7 @@ bağında yalnız 133224 parçaları (144207'den 176 sn KESİLMEDİ).
 | `identity`, `mapping`, `status2` | ad desenleri; kaynak eşleme paneli + localStorage; durum raporunda oturumlar/bağlar/çiftler |
 | (uyarlandı) | `wav2groups`, `outside`, `graphic`, `helperoff`, `setnoop`, `setmove`, `setendmove`, `linkfail`, `linksource`, `rebind`, `again`, `security`, `undomid`, `stale`, `notcollected`, `limits`, `reportparse` |
 
-### Bağımsız alt ajan incelemeleri (v0.3.1)
+#### Bağımsız alt ajan incelemeleri (v0.3.1)
 
 **#2** (A tahmin yok / B oturum içi senkron / D park: İHLAL; C ad kuralı, E: TUTUYOR) — 13 bulgu, hepsi düzeltildi:
 
@@ -187,7 +331,7 @@ bağında yalnız 133224 parçaları (144207'den 176 sn KESİLMEDİ).
 | 6 | ölçüm, park'taki kameranın video/kılavuzunu ayırabiliyordu (geçici) | ölçüm ve birlikte-taşıma kuralı park'takilerde de (kaynak + start/end) |
 | 7 | taşınmamış kameranın bağlı kılavuzu silinince "sonra TOPLA" döngüsü | mesaj düzeltildi; belgelendi |
 
-### Belirsizlikler (v0.3.1)
+#### Belirsizlikler (v0.3.1)
 
 1. Sıfır dışı zaman ofsetli clone gerçek Premiere'de tick düzeyinde ölçülmedi → ilk oturum tek başına (park + yerleştirme ayrı ölçüm).
 2. Çok uzun ilişkisiz örtüşmelerde kısa bir klip ilgisiz uzun bir kaydın (DJI gibi) tamamen içine düşerse %100 "güçlü bağ" olur. İki

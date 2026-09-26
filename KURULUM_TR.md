@@ -1,6 +1,6 @@
-# Spread v0.3.1 — Kurulum ve Kullanım (Türkçe, adım adım)
+# Spread v0.3.2 — Kurulum ve Kullanım (Türkçe, adım adım)
 
-**Spread v0.3.1**'in işleri. Sıra hep aynı:
+**Spread v0.3.2**'nin işleri. Sıra hep aynı:
 
 1. **SPREAD**: her klibi kendi track'ine dağıtır. Zamanlar değişmez.
 2. **Clip → Synchronize**: senkronu Premiere yapar.
@@ -11,44 +11,66 @@
    - Bir oturumun içindeki klipler birbirine göre hiç kaymaz.
    - Kameraları kendi V track'lerine, sesleri seçtiğin A track'lerine koyar.
 4. **Gözle kontrol**: tek elle adım bu.
-5. **BAĞLA**:
-   - Her oturumun içinde harici sesleri o oturumun kamerasına göre keser. Bir oturumun sesi başka oturumun kamerasına asla kesilmez.
-   - Kamera seslerini ve "Sil" dediğin kaynakları siler. Oturumda harici ses yoksa kamera sesini korur.
-   - Sonra her grubu (kameralar + ses parçaları) **tek bağ** yapar.
+5. **BAĞLA** iki aşamadır:
+   - **KES** (Spread paneli): her oturumun içinde harici sesleri o oturumun kamerasına göre keser. Bir oturumun sesi başka oturumun
+     kamerasına asla kesilmez. Kamera seslerini ve "Sil" dediğin kaynakları siler. Oturumda harici ses yoksa kamera sesini korur.
+   - **BAĞLA**: her grubu (kameralar + ses parçaları) **tek bağ** yapar. Bunu yardımcı yapar (Premiere'in UXP'sinde bağlama komutu yok).
+     Yardımcıya köprü çalışıyorsa Spread'deki BAĞLA ikisini **tek tıkla** yapar. Çalışmıyorsa Spread KES'i yapar ve
+     "**Spread Helper panelindeki BAĞLA'ya bas**" der.
 
-Bağlama için Premiere'in UXP'sinde komut yok. Bu yüzden bir kez **görünmez bir yardımcı (Spread Helper)** kuracaksın. Yardımcının penceresi yok; Premiere açılınca arka planda kendiliğinden başlar. Sen yalnız paneldeki **BAĞLA**'ya basarsın.
+**Spread Helper** artık **görünür, küçük bir panel**: **Window → Extensions (Legacy) → Spread Helper**. Bir kez kurarsın, açarsın,
+açık bırakırsın; Premiere onu çalışma alanında hatırlar. Panel neyin çalışıp neyin çalışmadığını açıkça gösterir.
 
 Her işlem önce onay sorar ve **önce yedek sequence** alır. Her adımdan sonra her klibin zamanını tek tek karşılaştırır. Bir şey tutmazsa **durur**, ne olduğunu ve **kaç kez Ctrl+Z** basacağını yazar. Kendi başına düzeltme yapmaz.
 
 ---
 
-## 1) Spread panelini güncelle (v0.3.1)
+## 1) Spread panelini güncelle (v0.3.2)
 
 - İndir: <https://github.com/badideagency/bad-spread/raw/claude/sweet-bell-do4j75/release/spread.ccx>
 - `spread.ccx`'e **çift tıkla**, Creative Cloud'da **Install / Yükle**'ye bas. Eski Spread'in üstüne kurulur.
   Hata verirse: önce Creative Cloud → **Manage plugins** → Spread → **Uninstall**, sonra tekrar çift tıkla.
-- **Premiere Pro'yu kapatıp aç.** Paneli aç: **Window → UXP Plugins → Spread**. Başlıkta **"Spread v0.3.1"** yazmalı.
-- Kurulumda "dosya sistemi / ağ izni" sorulursa **izin ver**. Panel yalnız bilgisayarın içindeki yardımcıyla konuşur (127.0.0.1), internete çıkmaz.
+- **Premiere Pro'yu kapatıp aç.** Paneli aç: **Window → UXP Plugins → Spread**. Başlıkta **"Spread v0.3.2"** yazmalı.
+- Kurulumda "dosya sistemi / ağ izni" sorulursa **izin ver**. Panel yalnız bilgisayarın içindeki yardımcıyla konuşur
+  (`localhost:47731`), internete çıkmaz.
 
-## 2) Yardımcıyı kur (bir kez)
+## 2) Yardımcıyı kur (bir kez) — Spread Helper paneli
 
-**Yol A (en kolay):**
-- İndir: <https://github.com/badideagency/bad-spread/raw/claude/sweet-bell-do4j75/release/spread-helper.zxp>
-- aescripts **ZXP/UXP Installer**'ı aç (<https://aescripts.com/learn/zxp-installer/>). `spread-helper.zxp`'i penceresine **sürükle-bırak**.
+`.zxp` bu sürümde YOK: ZXP Installer'ın reddettiği v0.3.0 paketinin imzasında zaman damgası yoktu ve Adobe'nin imzalama aracı
+böyle paketin "diğer araçlarca büyük ihtimalle reddedileceğini" söylüyor. Ana yol **klasör kurulumu**:
 
-**Yol B (ZXP Installer yoksa):**
-- İndir: <https://github.com/badideagency/bad-spread/raw/claude/sweet-bell-do4j75/release/spread-helper-klasor.zip>
-- Zip'i bir klasöre **çıkart**, içindeki **`KUR.cmd`**'ye çift tıkla. Windows "bilinmeyen yayıncı" derse: **Ek bilgi → Yine de çalıştır**.
-  Betik, yardımcıyı `%APPDATA%\Adobe\CEP\extensions\` altına kopyalar.
+1. İndir: <https://github.com/badideagency/bad-spread/raw/claude/sweet-bell-do4j75/release/spread-helper-klasor.zip>
+   ve bir klasöre **çıkart**.
+2. **`PlayerDebugMode_CSXS12.reg`**'e çift tıkla → **Evet**. Bunu daha önce yaptıysan tekrar yapman zararsız.
+   - Bu adım artık **gerekli**, çünkü yardımcı imzasız.
+   - Bu ayar senin hesabındaki bütün CEP eklentilerinin imza denetimini gevşetir. Nasıl geri alınacağı BENIOKU.txt'te.
+3. **`KUR.cmd`**'ye çift tıkla. Windows "bilinmeyen yayıncı" derse **Ek bilgi → Yine de çalıştır**'a bas.
+   - Betik, eski yardımcıyı siler ve yenisini `%APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper` altına kopyalar.
+   - PlayerDebugMode'u da kontrol eder: "DIKKAT" yazarsa adım 2'yi yap.
+4. **Premiere Pro'yu tamamen kapatıp aç.**
+5. **Window → Extensions (Legacy) → Spread Helper**'ı aç. Paneli açık bırak ya da bir yere yerleştir; Premiere çalışma alanıyla birlikte
+   hatırlar. **Panel kapanınca sunucusu da durur.** Panelde şunlar görünmeli:
+   - yeşil **"● dinliyor: localhost:47731 (127.0.0.1 …)"**;
+   - Premiere sürümü, yardımcı sürümü (0.3.2), Node sürümü;
+   - **son istek**: Spread panelinden gelen son istek. Spread'de **Yardımcıyı kontrol et**'e basınca burada `POST /v1/ping → 200` görünür.
+6. Spread panelinin üstünde **"Yardımcı: bağlı — (yardımcı 0.3.2, Premiere …)"** yazmalı.
 
-Sonra:
-- **Premiere Pro'yu kapatıp aç.**
-- Spread panelinin üstünde yeşil **"Yardımcı: bağlı — (yardımcı 0.3.0, Premiere …)"** yazmalı. Yazmıyorsa **Yardımcıyı kontrol et**'e bas.
-- Hâlâ **"bağlı değil"** diyorsa:
-  - Zip'teki **`PlayerDebugMode_CSXS12.reg`**'e çift tıkla → **Evet**. Premiere'i kapatıp aç.
-    Bu ayar, senin hesabındaki **bütün** CEP eklentilerinin imza denetimini gevşetir (BENIOKU.txt'te nasıl geri alınacağı yazıyor).
-    Yardımcı imzalı olduğu için büyük ihtimalle gerekmez.
-  - Yine olmazsa panelde yazan satırı ve `%TEMP%\spread-helper.log` dosyasını bana getir.
+**Çalışmazsa** panel artık gerçek hatayı yazar. Satırı aynen bana getir:
+- **Menüde Spread Helper yok** ya da panel boş → yardımcı yüklenmemiş.
+  - Önce PlayerDebugMode'a (adım 2) bak ve Premiere'i tamamen kapatıp açtığından emin ol.
+  - Sonra zip'teki **`CEP_GUNLUK_AC.reg`**'e çift tıkla → Evet ve Premiere'i kapatıp aç.
+  - `%TEMP%` klasöründeki **`CEP12-PPRO.log`** dosyasını bana getir. Neden yüklenmediğini yazar, ör. "Signature verification failed".
+- Panel açık ama **"✗ SUNUCU BAŞLAMADI: …"** → oradaki hatayı getir.
+  - Örneğin "EADDRINUSE" portun kullanımda olduğunu gösterir: ikinci bir Spread Helper paneli açıktır ya da başka bir program 47731'i kullanıyordur.
+- Panel **"Node.js bu panelde kapalı"** diyor → satırı getir.
+- Spread'de **"Yardımcı: bağlı değil — [bilgi dosyası] …"** → yardımcı hiç başlamamış. Spread Helper panelini aç.
+- Spread'de **"[bağlantı] UXP İZİN REDDİ …"** → Spread'in ağ izni sorunu. Satırı getir.
+- Spread'de **"[bağlantı] … Ham hata …"** → yardımcı paneldeki "son istek" değişmediyse istek hiç ulaşmamıştır. Satırı getir.
+- **Uzaktan konsol**: Spread Helper paneli açıkken Chrome ya da Edge'de **<http://localhost:8098>** adresini aç, "Spread Helper"a tıkla
+  ve Console sekmesine bak.
+- **Köprü hiç çalışmasa da BAĞLA yapılabilir**: Spread'de BAĞLA KES'i yapar, sonra Spread Helper panelindeki **BAĞLA**'ya basarsın (bkz. 3e).
+- Tarayıcıyla hızlı deneme: <http://localhost:47731/> açılıyorsa ve `{"ok":false,"error":"yalnız POST","helper":"Spread Helper 0.3.2"}`
+  yazıyorsa sunucu çalışıyor. Hiç açılmıyorsa yardımcı başlamamıştır.
 
 ## 3) Testi GÜVENLİ yerde yap
 
@@ -130,10 +152,10 @@ Sonra:
 - Oturum içinde Zoom ile kamera, senkronun bıraktığı gibi hizalı kalmalı.
 - Beğenmezsen: panelde yazan sayıda **Ctrl+Z** bas (genelde 4) ya da yedek sequence'ı kullan.
 
-### e) BAĞLA
+### e) BAĞLA (KES + bağla)
 
-- **BAĞLA**'ya bas.
-  - Önce yardımcıya bakar. Yardımcı yoksa **hiçbir şeye dokunmadan** durur ve kurulumu anlatır.
+- Spread panelinde **BAĞLA**'ya bas.
+  - Önce yardımcıya (köprü) bakar. Köprü yoksa **durmaz**: günlüğe gerçek hatayı yazar ve yalnız KES yapacağını söyler.
   - Sonra planı yazar: oturumlar, her oturumun grupları, çapalar (grubun en uzun kamera klibi) ve ses parçaları. Ardından sorar.
   - Kesim **yalnız oturum içinde**: bir Zoom/DJI kaydı sadece kendi oturumundaki kameraların çapasına göre kesilir.
   - Oturumda harici ses yoksa (ör. sadece iki kamera) kamera sesi **korunur** ve kameralarla bağlanır.
@@ -146,17 +168,26 @@ Sonra:
   - **ilk parça**: bir ölçüm, bkz. aşağı;
   - **parçalar**;
   - **yerleştir**;
-  - **bağla**.
+  - **KES planı** yazılır: yardımcının klasöründeki `link-plan.json`.
+- Sonra:
+  - **Köprü çalışıyorsa** gruplar hemen bağlanır, sonuç yeşil **`✓ BAĞLA tamam: N grup bağlandı …`**.
+  - **Köprü çalışmıyorsa** yeşil **`✓ KES tamam … N grup bağlanmayı bekliyor`** ve "**Spread Helper panelini aç ve oradaki BAĞLA'ya bas**" yazar.
+- **Spread Helper panelindeki BAĞLA**:
+  - KES planını okur ve aktif sequence'ı kendisi okur.
+  - Grupları Spread'in **aynı** kuralıyla bulur: zamanda çakışan kameralar + çapanın içindeki ses parçaları.
+  - Planla **birebir** karşılaştırır (tick düzeyinde). Aynıysa bağlar ve grup grup sonucu yazar: ✓ tamam / ⚠ doğrulanamadı / ✗ neden.
+  - Aynı değilse **hiçbir şey yapmaz** ve farkı yazar. Örnekler: KES'ten sonra bir parça kaydırılmış ya da silinmiş, başka bir sequence açık, KES geri alınmış.
+  - Plan dosyası yazılamadıysa Spread bunu söyler ve planı rapor kutusuna koyar. **Raporu kopyala** → Spread Helper panelinde
+    **"Plan dosyası okunamıyorsa: planı yapıştır"** → yapıştır → **BAĞLA**.
 - **"İLK PARÇA TUTMADI"** yazarsa: Premiere kırpmayı beklenen biçimde yapmamıştır ve panel orada durmuştur. **Ctrl+Z × 2** (ya da yedek sequence) ile geri dön ve raporu bana getir. Kesme için yedek yöntem hazırlanacak.
-- Sonunda yeşil **`✓ BAĞLA tamam: N grup bağlandı …`**.
 - Sarı **`⚠ BAĞLA bitti ama … bağı DOĞRULANAMADI`** görürsen: Premiere "bağlandı" dedi ama panel bunu okuyarak teyit edemedi.
   Bu durumda aşağıdaki kontrol yeterli; bağ yoksa satırları bana getir.
 - **"Önce TOPLA'ya bas: bu sequence için TOPLA kaydı yok"** derse: BAĞLA yalnız TOPLA'nın bu panelde, **bu sequence'ta** tamamladığı
   düzende çalışır. Yedek sequence'ta çalışıyorsan orada da önce TOPLA'ya bas.
 - **"düzen TOPLA düzeninde değil"** ya da **"Ayar TOPLA'dan sonra değişti"** derse: TOPLA'dan sonra bir klip yer değiştirmiş, eşleme
   ya da eşik değişmiş. Hiçbir şey değişmedi. TOPLA'ya bas, sonra BAĞLA'ya.
-- Bağlama adımında yardımcı düşerse (**"… grup bağlanamadı (kesme/silme doğru ve yerinde)"**), yardımcıyı düzelt ve **BAĞLA'ya tekrar bas**.
-  Panel kesimi hatırlar; bu kez **yalnız bağlar**. Yeniden kesmez, yedek almaz.
+- Bağlama adımında yardımcı düşerse (**"… grup bağlanamadı (kesme/silme doğru ve yerinde)"**), yardımcıyı düzelt ve **BAĞLA'ya tekrar bas**,
+  ya da Spread Helper panelindeki BAĞLA'ya bas. Panel kesimi hatırlar; bu kez **yalnız bağlar**. Yeniden kesmez, yedek almaz.
 - **BAĞLA'dan sonra TOPLA** çalışmaz. Harici sesler kesildiği için oturumları bulduran tam kayıtlar artık yok; panel tahmin etmez.
   Yeniden toplamak istersen BAĞLA öncesi yedek sequence'ı kullan ya da BAĞLA'yı Ctrl+Z ile tamamen geri al.
 - **"… YARIM hâlde"** derse: önceki bir TOPLA ya da BAĞLA durmuş ve geri alınmamış. Önce o mesajdaki kadar Ctrl+Z bas (ya da yedeği kullan).
@@ -175,7 +206,8 @@ Sonra:
 - **Panel kurulmuyor / "UPI status -160":** aescripts ZXP/UXP Installer'a `spread.ccx`'i sürükle-bırak, Premiere'i yeniden başlat.
 - **Düğmeler gri:** aktif sequence yok → timeline'a bir kez tıkla, 2 sn bekle.
 - **"Plan kurulamadı":** panel başlamadan önce bir sorun gördü; hiçbir şey değişmedi. `HATA:` satırlarını getir.
-- **"Yardımcı: bağlı değil — … Permission denied / izin":** Premiere, panelin 127.0.0.1'e bağlanmasına izin vermedi. Satırı aynen getir, izin ayarını düzelteceğim.
+- **"Yardımcı: bağlı değil — [bağlantı] UXP İZİN REDDİ …":** Premiere, panelin `localhost:47731`'e bağlanmasına izin vermedi. Satırı aynen getir, izin ayarını düzelteceğim.
+  Bu arada bağlama için Spread Helper panelindeki **BAĞLA**'yı kullan; köprü gerekmez.
 - **Geri dönmek:** her `✓ … tamam` ya da `✗ … DURDU` satırının altında kaç kez Ctrl+Z basacağın yazar. Ya da `… Copy` adlı yedek sequence'ı kullan.
   Bağlama adımı Premiere'in geri alma geçmişine ayrıca kayıt ekleyebilir (ölçülmedi). En güvenli dönüş yedek sequence'tır.
-- **Yardımcıyı kaldırmak:** `%APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper` klasörünü sil (ZXP Installer ile kurduysan oradan kaldır).
+- **Yardımcıyı kaldırmak:** `%APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper` klasörünü sil. Eskiden ZXP Installer ile kurduysan oradan da kaldır.
