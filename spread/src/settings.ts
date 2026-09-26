@@ -4,6 +4,7 @@
 //   - GÜÇLÜ BAĞ EŞİĞİ: çakışma / kısa olan kaydın süresi (varsayılan %90)
 //   - OTURUM ARASI BOŞLUK: TOPLA'da oturum blokları arasında (varsayılan 2 sn, kareye hizalanır)
 
+import { chooseRule, SET_ACTS, type TrimCal, type Vec } from "./trimcal";
 import { log } from "./ui";
 
 export type Target = number | "sil";
@@ -293,4 +294,45 @@ export function recordDrift(rec: CollectRecord, mapping: Map<string, Target>, th
     if (was.get(k) !== mapping.get(k)) out.push(`kaynak eşlemesi: ${k} TOPLA'da ${show(was.get(k))}, şimdi ${show(mapping.get(k))}`);
   if (rec.thresholdPct !== thresholdPct) out.push(`güçlü bağ eşiği: TOPLA'da %${rec.thresholdPct}, şimdi %${thresholdPct}`);
   return out;
+}
+
+// ------------------------------------------------------------------ kırpma kalibrasyonu (sequence başına, v0.3.4)
+// BAĞLA'nın ilk çalışmasında ölçülen set action etkileri + seçilen kural (trimcal.ts). Premiere sürümü değişirse yeniden ölçülür;
+// kalibre edilmiş kural bir kırpmada tutmazsa kayıt silinir (bir sonraki BAĞLA yeniden ölçer).
+
+const CAL_KEY = "spread.trimCal.v1";
+
+function allCals(): Record<string, TrimCal> {
+  try {
+    const raw = read(CAL_KEY);
+    const j: unknown = raw ? JSON.parse(raw) : {};
+    return j && typeof j === "object" ? (j as Record<string, TrimCal>) : {};
+  } catch {
+    return {};
+  }
+}
+
+const vecOk = (v: unknown): v is Vec => Array.isArray(v) && v.length === 4 && v.every((x) => x === -1 || x === 0 || x === 1);
+
+/** Geçerli (biçimi doğru, aynı Premiere sürümünde ölçülmüş, kuralı ölçümden yeniden çıkan) kalibrasyon ya da null. */
+export function loadTrimCal(guid: string, host: string): TrimCal | null {
+  const c = allCals()[guid];
+  if (!c || c.v !== 1 || c.guid !== guid || c.host !== host || !c.vec || !c.rule || typeof c.delta !== "string") return null;
+  if (!SET_ACTS.every((a) => vecOk(c.vec[a]))) return null;
+  const again = chooseRule(c.vec).rule;
+  if (!again || again.tail !== c.rule.tail || again.head.join("+") !== (Array.isArray(c.rule.head) ? c.rule.head.join("+") : "")) return null;
+  return c;
+}
+
+export function saveTrimCal(c: TrimCal): void {
+  const all = allCals();
+  all[c.guid] = c;
+  write(CAL_KEY, JSON.stringify(all));
+}
+
+export function forgetTrimCal(guid: string): void {
+  const all = allCals();
+  if (!(guid in all)) return;
+  delete all[guid];
+  write(CAL_KEY, JSON.stringify(all));
 }

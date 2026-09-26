@@ -13,7 +13,7 @@
 // Bağlama: seçimi temizle → grubun kliplerini setSelected(true, true) → seçimi say → Sequence.linkSelection() → seçimi temizle →
 // her klibin getLinkedItems() sonucu gruptaki diğer bütün klipleri içeriyor mu (doğrulama).
 
-var SPREAD_HELPER_JSX = "0.3.3";
+var SPREAD_HELPER_JSX = "0.3.4";
 
 function spreadHelper_q(s) {
   var out = "\"";

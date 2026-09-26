@@ -1,6 +1,6 @@
-# Spread v0.3.3 — Kurulum ve Kullanım (Türkçe, adım adım)
+# Spread v0.3.4 — Kurulum ve Kullanım (Türkçe, adım adım)
 
-**Spread v0.3.3**'ün işleri. Sıra hep aynı:
+**Spread v0.3.4**'ün işleri. Sıra hep aynı:
 
 1. **SPREAD**: her klibi kendi track'ine dağıtır. Zamanlar değişmez.
 2. **Clip → Synchronize**: senkronu Premiere yapar.
@@ -23,14 +23,33 @@ açık bırakırsın; Premiere onu çalışma alanında hatırlar. Panel neyin �
 
 Her işlem önce onay sorar ve **önce yedek sequence** alır. Her adımdan sonra her klibin zamanını tek tek karşılaştırır. Bir şey tutmazsa **durur**, ne olduğunu ve **kaç kez Ctrl+Z** basacağını yazar. Kendi başına düzeltme yapmaz.
 
+**v0.3.4'te ne değişti** (senin 12 Eylül BAĞLA denemene göre):
+- **BAĞLA'nın kırpması düzeltildi.** v0.3.3 ilk parçada durmuştu: Premiere, bir klibin kuyruğunu kısaltan iki komutu (SetEnd ve SetOutPoint)
+  aynı adımda **iki kez** uyguladı (out = −1548.16 sn). Artık:
+  - her kenara **tek** komut gider;
+  - hangi komutun ne yaptığı tahmin edilmez, **ölçülür** (aşağıda "KALİBRASYON").
+- **Çift kopya TOPLA'yı durdurmaz.** Aynı dosya aynı yerde iki kez varsa TOPLA ilk adımında fazlasını siler; en küçük numaralı
+  track'teki kalır. Onay penceresinde yazar.
+- **Kılavuz sesler en altta.** Track sırası:
+  1. seçtiğin kaynaklar;
+  2. korunan kamera sesi;
+  3. "Sil" dediğin kaynaklar;
+  4. kamera kılavuz sesleri.
+
+  BAĞLA'nın boşalttığı track'ler ("Sil" ve kılavuzlar) en altta kalır.
+- **1 kareden kısa kamera sesi parçası yok.** Örnek: 12 Eylül'de C0143'ün 0.04 sn'si. Böyle bir parça, yanındaki kameranın sesine katılır.
+  Yanındaki kamera orayı kapsamıyorsa atlanır ve günlüğe yazılır.
+- **SPREAD, kırpılmış kamera klibi varsa başlamaz.** Kırpılmış kamera = başı ya da sonu kesilmiş kamera klibi. Eski "kırpma eşitlemesi"
+  adımı da aynı çift kırpma hatasını taşıyordu. Kamera klipleri tam boyken SPREAD eskisi gibi çalışır.
+
 ---
 
-## 1) Spread panelini güncelle (v0.3.3)
+## 1) Spread panelini güncelle (v0.3.4)
 
 - İndir: <https://github.com/badideagency/bad-spread/raw/claude/sweet-bell-do4j75/release/spread.ccx>
 - `spread.ccx`'e **çift tıkla**, Creative Cloud'da **Install / Yükle**'ye bas. Eski Spread'in üstüne kurulur.
   Hata verirse: önce Creative Cloud → **Manage plugins** → Spread → **Uninstall**, sonra tekrar çift tıkla.
-- **Premiere Pro'yu kapatıp aç.** Paneli aç: **Window → UXP Plugins → Spread**. Başlıkta **"Spread v0.3.3"** yazmalı.
+- **Premiere Pro'yu kapatıp aç.** Paneli aç: **Window → UXP Plugins → Spread**. Başlıkta **"Spread v0.3.4"** yazmalı.
 - Kurulumda "dosya sistemi / ağ izni" sorulursa **izin ver**. Panel yalnız bilgisayarın içindeki yardımcıyla konuşur
   (`localhost:47731`), internete çıkmaz.
 
@@ -54,9 +73,9 @@ Ana yol **klasör kurulumu**:
 5. **Window → Extensions (Legacy) → Spread Helper**'ı aç. Paneli açık bırak ya da bir yere yerleştir; Premiere çalışma alanıyla birlikte
    hatırlar. **Panel kapanınca sunucusu da durur.** Panelde şunlar görünmeli:
    - yeşil **"● dinliyor: localhost:47731 (127.0.0.1 …)"**;
-   - Premiere sürümü, yardımcı sürümü (0.3.3), Node sürümü;
+   - Premiere sürümü, yardımcı sürümü (0.3.4), Node sürümü;
    - **son istek**: Spread panelinden gelen son istek. Spread'de **Yardımcıyı kontrol et**'e basınca burada `POST /v1/ping → 200` görünür.
-6. Spread panelinin üstünde **"Yardımcı: bağlı — (yardımcı 0.3.3, Premiere …)"** yazmalı.
+6. Spread panelinin üstünde **"Yardımcı: bağlı — (yardımcı 0.3.4, Premiere …)"** yazmalı.
 
 **Çalışmazsa** panel artık gerçek hatayı yazar. Satırı aynen bana getir:
 - **Menüde Spread Helper yok** ya da panel boş → yardımcı yüklenmemiş.
@@ -73,7 +92,7 @@ Ana yol **klasör kurulumu**:
 - **Uzaktan konsol**: Spread Helper paneli açıkken Chrome ya da Edge'de **<http://localhost:8098>** adresini aç, "Spread Helper"a tıkla
   ve Console sekmesine bak.
 - **Köprü hiç çalışmasa da BAĞLA yapılabilir**: Spread'de BAĞLA KES'i yapar, sonra Spread Helper panelindeki **BAĞLA**'ya basarsın (bkz. 3e).
-- Tarayıcıyla hızlı deneme: <http://localhost:47731/> açılıyorsa ve `{"ok":false,"error":"yalnız POST","helper":"Spread Helper 0.3.3"}`
+- Tarayıcıyla hızlı deneme: <http://localhost:47731/> açılıyorsa ve `{"ok":false,"error":"yalnız POST","helper":"Spread Helper 0.3.4"}`
   yazıyorsa sunucu çalışıyor. Hiç açılmıyorsa yardımcı başlamamıştır.
 
 ## 3) Testi GÜVENLİ yerde yap
@@ -85,6 +104,9 @@ Ana yol **klasör kurulumu**:
 ### a) SPREAD → Synchronize (bu kopyada daha önce yapmadıysan)
 
 - **SPREAD** → **Evet**. Sonra **Clip → Synchronize**. Menü gri ise: timeline'a tıkla, **Ctrl+A**, sağ tık → **Synchronize → Audio**.
+- **"N kamera klibi kırpılmış … Spread BAŞLAMADI"** derse, o kamera kliplerinin başı ya da sonu kesilmiş demektir. Hiçbir şey değişmedi.
+  - Kırpmayı kaldır: klibi tam boy yap.
+  - Ya da o kameraları SPREAD'den ayrı tut.
 
 ### b) Ses kaynakları ve ayarlar (TOPLA'dan ÖNCE)
 
@@ -106,11 +128,15 @@ Ana yol **klasör kurulumu**:
     O1  Zoom 260912_133224 + A: A038C001_260912BD + Sony: C0142  → 0.000 s'den başlar
     O2  Zoom 260912_141513 + A: A038C002_260912RQ + Sony: C0143  → 1557.320 s'den başlar
     …
-  Track'ler: A → V1, Sony → V2; Zoom Tr1 → A1, Zoom Tr2 → A2, Zoom TrLR → A6 (sil); korunan kamera sesi (BAĞLA'da, harici sesin olmadığı aralıklar) → A3; kılavuz sesler → A4–A5.
+  ÇİFT KOPYA — ilk adımda silinecek (…): A27 "260912_133224_Tr1.WAV" (A26 kalır); A30 "260912_133224_Tr2.WAV" (A29 kalır)
+  Track'ler: A → V1, Sony → V2; Zoom Tr1 → A1; Zoom Tr2 → A2; korunan kamera sesi (BAĞLA'da, harici sesin olmadığı aralıklar) → A3; Zoom TrLR → A4 (sil); kılavuz sesler → A5–A6.
   ```
   Oturumların sırası kamera sayaçlarından (A038C001, C0142…) ve Zoom saatlerinden (133224…) gelir. Hepsi aynı sırayı vermezse panel sorar.
-- **Çift kopya** varsa (aynı dosya aynı yerde iki kez) panel hiçbir şeye dokunmadan durur ve hangi track'ler olduğunu yazar.
-  Fazla olanı sil, sonra tekrar bas. 12 Eylül verinde A26/A27 ve A29/A30 böyle.
+- **Çift kopya** = aynı dosya, aynı start/end/in/out, iki ayrı track'te.
+  - Panel en küçük numaralı track'tekini tutar. Ötekileri **ilk adımda** siler (yedekten hemen sonra; diğer klipler kaymaz).
+  - Onay penceresinde "ÇİFT KOPYA — ilk adımda silinecek" satırında hangisinin silinip hangisinin kaldığı yazar.
+  - 12 Eylül verinde A27 ve A30 silinir; A26 ve A29 kalır.
+  - Aynı dosyanın **başka bir yerdeki** kopyası çift sayılmaz.
 - **Sahipsiz** kayıt, hiçbir şeyle eşleşmeyen kayıttır (ör. 1 sn'lik tek kamera klibi). Silinmez: en alttaki "park" track'lerine konur, zamanı değişmez.
   Panel park ettiklerini **hatırlar**. Sonraki TOPLA ve BAĞLA onları oturumlara karıştırmaz, yeni düzende uzun bir kaydın altına denk gelseler bile.
 - **"PARK KAYDI"** sorusu: son TOPLA'dan sonra düzeni elle değiştirmişsin ve panel, park ettiği klipleri hâlâ park'ta tutup tutmayacağını soruyor.
@@ -166,10 +192,11 @@ Ana yol **klasör kurulumu**:
 - **A1, A2, …**: seçtiğin kaynaklar.
   - Altında **boş** bir "korunan kamera sesi" track'i durur. Kamera birden çok ses kanalı kaydediyorsa kanal başına bir track olur.
     BAĞLA, harici sesin olmadığı yerlerde kamera sesini buraya koyar.
-  - Onun altında kamera kılavuz sesleri durur (kontrol için; BAĞLA siler), en altta da "Sil" dediğin kaynaklar.
+  - Onun altında "Sil" dediğin kaynaklar, en altta kamera kılavuz sesleri durur. İkisi de kontrol için orada; BAĞLA siler.
+    BAĞLA'dan sonra boşalan bu track'ler en altta kalır.
 - En altta park track'lerinde sahipsizler, zamanları değişmeden.
 - Oturum içinde Zoom ile kamera, senkronun bıraktığı gibi hizalı kalmalı.
-- Beğenmezsen: panelde yazan sayıda **Ctrl+Z** bas (genelde 4) ya da yedek sequence'ı kullan.
+- Beğenmezsen: panelde yazan sayıda **Ctrl+Z** bas ya da yedek sequence'ı kullan. Genelde 4 kez; çift kopya silindiyse 5 kez.
 
 ### e) BAĞLA (KES + bağla)
 
@@ -186,10 +213,13 @@ Ana yol **klasör kurulumu**:
       "çapa dışında" yazar.
     - Oralarda kamera sesi silinmez. Kamera sesi **yalnız o aralığa** kesilir, "korunan kamera sesi" track'ine konur ve gruba bağlanır.
     - Aralığı birden çok kamera kapsıyorsa grubun en uzun kamerasının sesi kullanılır.
-    - 12 Eylül verinde üç satır çıkar:
+    - **1 kareden kısa** parça olmaz. Böyle bir parça, yanındaki kameranın sesine katılır. Yanındaki kamera orayı kapsamıyorsa atlanır ve
+      günlüğe "≤ 1 kare → korunan kamera sesi parçası OLUŞTURULMADI" diye yazılır.
+    - 12 Eylül verinde iki satır çıkar:
       - A038C001'in başı, 2.3 sn;
-      - A038C002'nin sonu, 41.8 sn;
-      - C0143'ün çapadan 1 kare (0.04 sn) sonra bitmesi. O son kareyi yalnız C0143 kapsadığı için oradaki ses onun kamera sesinden gelir.
+      - A038C002'nin sonu, 41.8 sn.
+
+      C0143, çapadan 1 kare (0.04 sn) sonra bitiyor. Bu son kare atlanır ve günlükte uyarı olarak görünür.
   - **"SESSİZ KALACAK"** satırı iki durumda çıkar. BAĞLA'dan sonra orada ses kalmaz; kabul etmiyorsan **Hayır** de, hiçbir şey değişmez.
     - O aralıkta sesi olan hiçbir kamera yoktur (ör. sessiz kaydeden bir kamera).
     - Her biri 1 sn'den kısa boşlukların toplamı 1 sn'yi geçer. Bunlar senkron kenar payı sayılır ve kamera sesi korunmaz.
@@ -198,6 +228,7 @@ Ana yol **klasör kurulumu**:
   - **"TOPLA'ya tekrar bas (v0.3.3 track çerçevesi)"** derse: sequence eski sürümle toplanmış ve korunan kamera sesi track'i yok.
     TOPLA'ya bir kez bas (track'leri düzenler), sonra BAĞLA'ya.
 - **Evet** → yedek sequence → sırasıyla:
+  - **KALİBRASYON**: yalnız bu sequence'taki ilk kesimde yapılır; ayrıntısı aşağıda;
   - **kesim hazırlığı**: kılavuz sesler (harici sesi olan gruplarda; korunacak aralıklar kesilmek üzere ayrılır) ve "Sil" dediğin kaynaklar silinir;
   - **ilk parça**: bir ölçüm, bkz. aşağı;
   - **parçalar**;
@@ -215,7 +246,28 @@ Ana yol **klasör kurulumu**:
   - Spread'in **Durum raporu** panelde yapılan bağlamayı da gösterir.
   - Plan dosyası yazılamadıysa Spread bunu söyler ve planı rapor kutusuna koyar. **Raporu kopyala** → Spread Helper panelinde
     **"Plan dosyası okunamıyorsa: planı yapıştır"** → yapıştır → **BAĞLA**.
-- **"İLK PARÇA TUTMADI"** yazarsa: Premiere kırpmayı beklenen biçimde yapmamıştır ve panel orada durmuştur. **Ctrl+Z × 2** (ya da yedek sequence) ile geri dön ve raporu bana getir. Kesme için yedek yöntem hazırlanacak.
+- **KALİBRASYON** (v0.3.4) nedir: panel, Premiere'in dört kırpma komutunun (SetOutPoint, SetEnd, SetInPoint, SetStart) ne yaptığını
+  tahmin etmez, **ölçer**.
+  - Nasıl:
+    - Kesilecek ilk sesin 4 geçici kopyasını sequence sonunun ötesine koyar.
+    - Her kopyada **tek** komutu **ayrı bir adımda** dener ve sonucu okur.
+    - Kopyaları siler. Düzenin eskisiyle birebir aynı olduğunu doğrular.
+  - Toplam **6 adım** sürer ve geri alma geçmişine 6 kayıt ekler. Düzeni değiştirmez.
+  - Sonuç bu sequence için saklanır. Sonraki BAĞLA'lar yeniden ölçmez; Premiere sürümü değişirse yeniden ölçer.
+  - Günlükte yeşil **"KALİBRASYON SONUCU (kanıtlanmış — Premiere …)"** bloğu çıkar. **Bu bloğu bana getir**; handoff'a gerçek ölçüm
+    olarak işleyeceğim. Aynı bilgi Durum raporunda da var.
+  - Sonra kırpma, ölçülen kurala göre yapılır:
+    - kuyruk için tek komut (SetOutPoint ya da SetEnd);
+    - baş için tek komut (SetInPoint ya da SetStart; ikisi de tek başına işe yaramıyorsa ikisi birlikte);
+    - değişmeyen kenara hiç komut gitmez.
+- **"KALİBRASYON TUTARLI BİR KURAL VERMEDİ"** yazarsa hiçbir kesim yapılmamıştır.
+  - Geçici kopyalar silinmiş, timeline BAĞLA öncesiyle birebir aynıdır. Geri alman gerekmez.
+  - Mesaj **yedek planın** (Spread Helper'da QE razor) gerektiğini yazar. Bu sürüm yedek planı **çalıştırmaz**, çünkü o komut Adobe
+    belgelerinde yok (tahminle kesim yapılmaz).
+  - Mesajdaki ölçümleri bana getir.
+- **"İLK PARÇA TUTMADI"** yazarsa: ölçülen kural ilk parçada tutmamıştır ve panel orada durmuştur.
+  - Panelin yazdığı kadar **Ctrl+Z** bas (ya da yedek sequence'ı kullan) ve raporu bana getir. Bu sayıya kalibrasyonun 6 adımı da dahil.
+  - Kalibrasyon kaydı silinir; bir sonraki BAĞLA yeniden ölçer.
 - Sarı **`⚠ BAĞLA bitti ama … bağı DOĞRULANAMADI`** görürsen: Premiere "bağlandı" dedi ama panel bunu okuyarak teyit edemedi.
   Bu durumda aşağıdaki kontrol yeterli; bağ yoksa satırları bana getir.
 - **"Önce TOPLA'ya bas: bu sequence için TOPLA kaydı yok"** derse: BAĞLA yalnız TOPLA'nın bu panelde, **bu sequence'ta** tamamladığı

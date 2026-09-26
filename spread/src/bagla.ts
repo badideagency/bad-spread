@@ -11,9 +11,13 @@
 // panelindeki BAĞLA'ya basar. İki yol aynı grupları kullanır: gruplar tek modülden (sessions.ts) — KES'ten ÖNCE beklenen düzende, SONRA
 // gerçek düzende "düzenden gruplar" kuralıyla (yardımcı panelin kullandığı kural) planla birebir karşılaştırılır.
 //
-// Transaction'lar (yalnız gerekenler): [yedek] → TX-1 kesim hazırlığı (park kopyaları + silme) → TX-2 ilk parça (ÖLÇÜM) →
-// TX-3 parçalar → TX-4 yerleştir → bağlama (yardımcı).
+// Transaction'lar (yalnız gerekenler): [yedek] → [KALİBRASYON: sequence'ta ilk kesimde, 6 adım — calibrate.ts] → TX-1 kesim
+// hazırlığı (park kopyaları + silme) → TX-2 ilk parça (ÖLÇÜM) → TX-3 parçalar → TX-4 yerleştir → bağlama (yardımcı).
+// v0.3.4 — KIRPMA: set action'lar tek transaction'da klibin İLK hâlinden fark olarak uygulanıp aynı kenarda BİRİKİYOR (kanıtlandı,
+// trimcal.ts). Kırpma kalibre edilmiş kuralla: her kenara TEK action (farkı 0 olan kenara hiç), sonuç transaction'dan ÖNCE
+// "fark ilk hâlden, etkiler toplanır" varsayımıyla hesaplanır; tutarlı kural yoksa kesim yapılmaz (YEDEK PLAN mesajı).
 
+import { applySet, calibrateTrim, edgesOf, hostVersion } from "./calibrate";
 import { selectExactly } from "./edit";
 import {
   expectBindFinal,
@@ -49,9 +53,21 @@ import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
 import { getLinker, HELPER_VERSION, writeLinkPlan, type LinkGroupResult, type PingResult } from "./linker";
 import { big, fmtClip, relocate, secOf, settle, sleep, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
 import { assertSameSequence, requireActive, type SeqContext } from "./session";
-import { getThreshold, loadRecord, mappingFor, recordDrift, saveBindRecord, type BindRecord, type CollectRecord, type LinkItemRec } from "./settings";
+import {
+  forgetTrimCal,
+  getThreshold,
+  loadRecord,
+  loadTrimCal,
+  mappingFor,
+  recordDrift,
+  saveBindRecord,
+  saveTrimCal,
+  type BindRecord,
+  type CollectRecord,
+  type LinkItemRec,
+} from "./settings";
+import { describeCal, fmtRule, planTrim, type TrimCal } from "./trimcal";
 import { log, setHelperStatus, setReportText } from "./ui";
-import type { TxOps } from "./edit";
 
 const LINK_UNDO_NOTE =
   "Not: bağlama adımı (yardımcı) Premiere'in geri alma geçmişine ayrıca kayıt ekleyebilir (ölçülmedi); en güvenli dönüş yedek sequence'tır.";
@@ -83,13 +99,17 @@ function printBindPlan(plan: BindPlan, s: Snapshot): void {
   for (const e of plan.errors) log(`HATA: ${e}`, "err");
 }
 
-function trim(ops: TxOps, c: ClipInfo, sl: Slot): void {
+const FALLBACK =
+  "YEDEK PLAN (Spread Helper'da QE razor) gerekiyor — bu sürümde ÇALIŞTIRILMADI: QE DOM'un razor'u Adobe belgelerinde yok (yalnız " +
+  "üçüncü taraf kaynaklar) ve zaman kodu alır (kare hassasiyeti); kare arasına düşen ses kenarları tick düzeyinde doğrulanamaz, " +
+  "kanıtsız yöntemle kesim yapılmaz. Bu raporu getir (ölçümler yukarıda).";
+
+/** Kalibre edilmiş kuralla bir park kopyasının kırpma adımları — transaction'dan ÖNCE, sonucu önceden hesaplanarak. */
+function trimSteps(c: ClipInfo, sl: Slot, cal: TrimCal) {
   const t = trimmedAtSlot(sl);
-  // Sıra End → Start → In → Out (bkz. bind.ts): "kenar kırpma" ve "start taşır" anlamlarında aynı sonuç
-  ops.setEnd(c, ticks(t.end));
-  ops.setStart(c, ticks(t.start));
-  ops.setIn(c, ticks(t.inPt));
-  ops.setOut(c, ticks(t.outPt));
+  const p = planTrim(edgesOf(c), { start: t.start, end: t.end, inPt: t.inPt, outPt: t.outPt }, cal.rule, cal.vec);
+  if (p.problem) throw new SpreadStop(`Kırpma kurulamadı (${where(c)} → [${secOf(t.start)}s–${secOf(t.end)}s]): ${p.problem}. Bu adımda hiçbir şey yapılmadı.`);
+  return p.steps;
 }
 
 /** Park kopyasını (tam boy ya da kırpılmış) okunan düzende bulur. */
@@ -110,13 +130,17 @@ async function trimTx(
   plan: BindPlan,
   slots: Slot[],
   doneBefore: Set<Slot>,
-  now: Slot[]
+  now: Slot[],
+  cal: TrimCal
 ): Promise<Snapshot> {
   const sPre = await snapshot(ctx);
   const taken = new Set<ClipInfo>();
-  const work = now.map((sl) => ({ sl, c: parkedClip(sPre, sl, false, taken) }));
+  const work = now.map((sl) => {
+    const c = parkedClip(sPre, sl, false, taken);
+    return { c, steps: trimSteps(c, sl, cal) };
+  });
   await runTx(ctx, executed, label, `BAĞLA: ${label}`, (ops) => {
-    for (const { sl, c } of work) trim(ops, c, sl);
+    for (const { c, steps } of work) for (const st of steps) applySet(ops, c, st.act, st.value);
   });
   await settle();
   const s = await snapshot(ctx);
@@ -124,11 +148,14 @@ async function trimTx(
   const probs = compareLayout(expectParked(s0, plan, slots, done), s);
   if (probs.length) {
     const first = label === "ilk parça";
+    forgetTrimCal(ctx.guid); // kural bu kırpmada tutmadı → bir sonraki BAĞLA yeniden ölçer
     throw new SpreadStop(
-      first
-        ? "İLK PARÇA TUTMADI: set End/Start/In/Out Premiere'de beklenen kırpmayı yapmadı (UXP'de kırpma ilk kez ölçüldü). " +
-            "Kalan parçalar kesilmedi. Yedek plan (CEP yardımcısında QE razor) handoff.md'de — bu raporu getir."
-        : `"${label}" doğrulaması tutmadı.`,
+      (first
+        ? `İLK PARÇA TUTMADI: kalibre edilmiş kırpma (${fmtRule(cal.rule)}) ilk parçada beklenen sonucu vermedi ("fark ilk hâlden, ` +
+          "etkiler toplanır\" varsayımı bu kırpmada tutmuyor). Kalan parçalar kesilmedi. "
+        : `"${label}" doğrulaması tutmadı (kural: ${fmtRule(cal.rule)}). `) +
+        "Kalibrasyon kaydı silindi (bir sonraki BAĞLA yeniden ölçer). " +
+        FALLBACK,
       probs
     );
   }
@@ -300,6 +327,7 @@ export async function runBind(): Promise<void> {
   let backupName: string | null = null;
   let ctx: SeqContext | null = null;
   let cutsDone = false; // kesme/silme doğrulandıysa, bağlama hatasında tekrar basmak GÜVENLİ (yarım iş sayılmaz)
+  let calRestored = false; // kalibrasyon kural vermedi ama düzen birebir eski hâlinde (doğrulandı) → yarım iş değil
   const linker = getLinker();
   log("▶ BAĞLA", "head");
   try {
@@ -343,7 +371,7 @@ export async function runBind(): Promise<void> {
     const frame = frameFromRecord(rec.frame);
     const parked = parkedFromRecord(items, rec);
     const a = analyze(s0, items, { threshold: rec.thresholdPct / 100, exclude: parked });
-    const plan = makeBindPlan(a, mapping, { base: frame.keptBase, count: frame.keptCount });
+    const plan = makeBindPlan(a, mapping, { base: frame.keptBase, count: frame.keptCount }, await frameTicks(ctx));
     // Ön koşullar (hepsi plan hatası → hiçbir şey değişmez):
     //  - TOPLA düzeni (dikey, KAYITLI çerçeveye göre): TOPLA taşıdığı kamera/kılavuz çiftlerini clone ile AYIRIR; kılavuzu hâlâ
     //    kamerasına bağlı bir düzende kılavuz silmek bağlı kamerayı da silebilir (kanıtlanmadı). Park'takiler analize girmez.
@@ -362,7 +390,7 @@ export async function runBind(): Promise<void> {
           .map((m) => where(m.clip))
           .join(", ")}) — önce TOPLA'ya bas`
       );
-    for (const d of a.duplicates) pre.push(`çift kopya: ${d}`);
+    for (const d of a.duplicates) pre.push(`çift kopya: ${d} — önce TOPLA'ya bas (fazla kopyaları ilk adımında siler)`);
     for (const e of a.errors) pre.push(e);
     for (const o of a.orphans) pre.push(`oturumsuz kayıt park dışında: ${o.label} [${secOf(o.start)}s–${secOf(o.end)}s] — TOPLA'dan sonra değişmiş; önce TOPLA'ya bas`);
     for (const u of a.unresolved) pre.push(`ayrılamayan kayıtlar (önce TOPLA): ${u.lines[0]}`);
@@ -413,6 +441,8 @@ export async function runBind(): Promise<void> {
     const nPieces = extCuts.reduce((n, c) => n + c.pieces.length, 0);
     const nKept = plan.pieces.filter((p) => p.camera).length;
     const edits = deletes.length + plan.cuts.length > 0;
+    const host = hostVersion();
+    const cached = plan.cuts.length ? loadTrimCal(ctx.guid, host) : null;
 
     const ans = await askUser(
       `BAĞLA: ${plan.groups.length} grup (çapa = gruptaki en uzun kamera klibi). ` +
@@ -438,6 +468,11 @@ export async function runBind(): Promise<void> {
               .map((x) => "  • " + x)
               .join("\n")}${plan.silent.length > 8 ? `\n  … ${plan.silent.length - 8} tane daha (günlükte)` : ""}\n`
           : "") +
+        (plan.cuts.length
+          ? cached
+            ? `Kırpma: bu sequence'ta ölçülmüş kural (${fmtRule(cached.rule)}; ${cached.at}). `
+            : "Kırpma: bu sequence'ta ilk kesim → önce KALİBRASYON (set action'lar park alanındaki geçici kopyalarda AYRI adımlarda tek tek ölçülür; 6 adım, kopyalar sonra silinir). "
+          : "") +
         `${edits ? "Önce yedek sequence oluşturulacak." : "Kesme/silme yok → yalnız bağlama (yedek alınmaz)."} Devam?`
     );
     if (ans !== "Evet") {
@@ -449,8 +484,29 @@ export async function runBind(): Promise<void> {
     if (edits) {
       const backup = await makeBackup(ctx, "BAĞLA");
       backupName = backup.name;
-      const s1 = await snapshot(ctx);
+      let s1 = await snapshot(ctx);
       if (!multisetEqual(s0, s1)) throw new SpreadStop("Yedek alınırken asıl sequence'ın klipleri değişti. Durduruldu.");
+
+      // KALİBRASYON (sequence'ta ilk kesimde): set action'ların etkisi geçici kopyalarda ölçülür, kural seçilir, kopyalar silinir
+      let cal: TrimCal | null = cached;
+      if (plan.cuts.length && !cal) {
+        await expectState(ctx, s1, null, executed);
+        const co = await calibrateTrim(ctx, executed, s1, firstSlot(makeSlots(plan, 0n))!.piece.src, ctx.guid, host);
+        s1 = co.after;
+        if (!co.cal) {
+          calRestored = true;
+          throw new SpreadStop(
+            "KALİBRASYON TUTARLI BİR KURAL VERMEDİ — hiçbir kesim yapılmadı; kalibrasyon kopyaları silindi, timeline BAĞLA öncesiyle birebir " +
+              "aynı (doğrulandı). " +
+              FALLBACK,
+            [...co.lines, ...co.why]
+          );
+        }
+        cal = co.cal;
+        saveTrimCal(cal);
+        log(`KALİBRASYON SONUCU (kanıtlanmış — Premiere ${host}; bu sequence için saklandı, handoff.md'ye işlenecek):`, "ok");
+        for (const l of describeCal(cal)) log(`   ${l}`, "ok");
+      } else if (cal) log(`Kırpma kuralı (bu sequence'ta ${cal.at} ölçüldü, Premiere ${cal.host}): ${fmtRule(cal.rule)}.`, "dim");
 
       // TX-1 kesim hazırlığı: park kopyaları + silme (tek seçim)
       await expectState(ctx, s1, null, executed);
@@ -488,19 +544,23 @@ export async function runBind(): Promise<void> {
       log(`✓ TX-1 doğrulandı: ${deletes.length + plan.cuts.length} klip silindi, ${slots.length} park kopyası yerinde.`, "ok");
 
       if (slots.length) {
+        if (!cal) throw new SpreadStop("iç hata: kesilecek parça var ama kırpma kuralı yok (raporu getir).");
         // TX-2 ilk parça (ölçüm) → TX-3 kalanlar → TX-4 yerleştir. Her adımdan önce: timeline beklenen hâlde mi (geri alınan adım düşülür)
         const first = firstSlot(slots)!;
         let prev = s1;
         await expectState(ctx, s, prev, executed);
-        log(`TX-2 (ilk parça — ölçüm): "${first.piece.src.name}" → [${secOf(first.piece.start)}s–${secOf(first.piece.end)}s] set End → Start → In → Out.`);
+        log(
+          `TX-2 (ilk parça — ölçüm): "${first.piece.src.name}" → [${secOf(first.piece.start)}s–${secOf(first.piece.end)}s] ` +
+            `(${fmtRule(cal.rule)}; kenar başına tek action, farkı 0 olan kenara action yok).`
+        );
         prev = s;
-        s = await trimTx(ctx, executed, "ilk parça", s0, plan, slots, new Set(), [first]);
+        s = await trimTx(ctx, executed, "ilk parça", s0, plan, slots, new Set(), [first], cal);
         const rest = slots.filter((x) => x !== first);
         if (rest.length) {
           await expectState(ctx, s, prev, executed);
           log(`TX-3 (parçalar): ${rest.length} parça kırpılıyor.`);
           prev = s;
-          s = await trimTx(ctx, executed, "parçalar", s0, plan, slots, new Set([first]), rest);
+          s = await trimTx(ctx, executed, "parçalar", s0, plan, slots, new Set([first]), rest, cal);
         }
         await expectState(ctx, s, prev, executed);
         const taken = new Set<ClipInfo>();
@@ -566,8 +626,14 @@ export async function runBind(): Promise<void> {
     reportLinked(groups.length, unverified, executed);
     if (executed.length) log(`Beğenmezsen: yedek sequence "${backupName}"i kullan (ya da Ctrl+Z; ${LINK_UNDO_NOTE})`, "dim");
   } catch (e) {
-    if (executed.length && ctx && !cutsDone) await rememberStopped(ctx, "BAĞLA");
-    else if (cutsDone) forgetStopped();
-    reportStop("BAĞLA", e, executed, backupName, executed.length ? [LINK_UNDO_NOTE] : []);
+    if (executed.length && ctx && !cutsDone && !calRestored) await rememberStopped(ctx, "BAĞLA");
+    else if (cutsDone || calRestored) forgetStopped();
+    reportStop(
+      "BAĞLA",
+      e,
+      executed,
+      backupName,
+      calRestored ? ["Kalibrasyon adımları düzeni değiştirmedi (birebir aynı, doğrulandı) — geri alman gerekmez."] : executed.length ? [LINK_UNDO_NOTE] : []
+    );
   }
 }

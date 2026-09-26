@@ -1,26 +1,19 @@
 // Doğrulama — SAF fonksiyonlar (Premiere çağrısı yok). Her transaction'dan sonra çağrılır; bir şey tutmazsa Spread DURUR.
-// Kontroller (TX-B/TX-C sonrası):
+// Kontroller (TX-B sonrası):
 //   1) klip sayısı aslıyla aynı
 //   2) her klibin start/end/in/out (+speed) aslıyla tick düzeyinde aynı
 //   3) her track'te ≤ 1 klip
 //   4) kamera birimlerinde video ve ses(ler) aynı start/end'de
 //   5) her klip planladığı track'te ve doğru kaynaktan
-// Tek istisna — "kırpma eşitlemesi" adayı (TX-C): kırpılmış bir kamera aslı, overwrite ile BEKLENEN biçimde kırpılmamış
-// yerleşmişse: doğru track + doğru kaynak + start AYNI + in=0 + out=medya süresi (biliniyorsa) + hız aynı.
-// Başka her fark (ör. kaymış start, yanlış uzunluk) → DUR (kendi başına düzeltme yok).
+// Her fark → DUR (kendi başına düzeltme yok). v0.3.4: "kırpma eşitlemesi" istisnası (TX-C) kaldırıldı — set action'lar tek
+// transaction'da aynı kenarda birikiyor (kanıtlandı, trimcal.ts); kırpılmış kamera SPREAD'de baştan reddedilir (spread.ts).
 
 import { keyFull, secOf, trackLabel, type ClipInfo, type Kind, type Snapshot } from "./model";
 import type { Plan } from "./plan";
 
-export interface TrimFix {
-  orig: ClipInfo;
-  now: ClipInfo;
-}
-
 export interface VerifyResult {
   ok: boolean;
   problems: string[];
-  trimFix: TrimFix[];
 }
 
 const TIME_FIELDS: (keyof ClipInfo)[] = ["start", "end", "inPt", "outPt", "speed"];
@@ -44,12 +37,8 @@ function diffTimes(a: ClipInfo, b: ClipInfo): string[] {
 
 const trackKey = (k: Kind, t: number) => `${k}|${t}`;
 
-/**
- * @param allowTrimFix true → yalnız kamera kırpma farklarını trimFix listesine koy (TX-B sonrası); false → her fark sorun (TX-C sonrası)
- */
-export function verifySpread(plan: Plan, fin: Snapshot, allowTrimFix: boolean): VerifyResult {
+export function verifySpread(plan: Plan, fin: Snapshot): VerifyResult {
   const problems: string[] = [];
-  const trimFix: TrimFix[] = [];
   // okuma bütünlüğü: boş dönen track, okuma sırasında değişen kuşak, klip okuma hatası → güvenilir değil → DUR
   for (const w of fin.warnings) problems.push(`okuma uyarısı: ${w}`);
 
@@ -80,32 +69,25 @@ export function verifySpread(plan: Plan, fin: Snapshot, allowTrimFix: boolean): 
     }
     matched.add(now);
     const d = diffTimes(p.clip, now);
-    if (!d.length) continue;
-    // medya süresi BİLİNMİYORSA eşitleme adayı yok (kırpılmamış bir klibe set action çalışmasın) → DUR
-    const fullPlacement =
-      p.clip.mediaDur !== null && now.start === p.clip.start && now.inPt === "0" && now.outPt === p.clip.mediaDur && p.clip.speed === now.speed;
-    const origTrimmed = p.clip.inPt !== now.inPt || p.clip.outPt !== now.outPt;
-    if (allowTrimFix && p.unit.kind === "camera" && !p.unit.stays && fullPlacement && origTrimmed) trimFix.push({ orig: p.clip, now });
-    else problems.push(`"${p.clip.name}" (${trackLabel(p.clip.kind, p.target)}) zamanı aslıyla aynı değil: ${d.join("; ")}`);
+    if (d.length)
+      problems.push(`"${p.clip.name}" (${trackLabel(p.clip.kind, p.target)}) zamanı aslıyla aynı değil: ${d.join("; ")}`);
   }
   for (const c of fin.clips)
     if (!matched.has(c)) problems.push(`planda olmayan klip: ${trackLabel(c.kind, c.track)} "${c.name}" [${secOf(c.start)}s–${secOf(c.end)}s]`);
 
   // 4) kamera: video ve ses(ler) aynı start/end
-  if (!allowTrimFix || trimFix.length === 0) {
-    for (const u of plan.units) {
-      if (u.kind !== "camera") continue;
-      const v = (byTrack.get(trackKey("V", u.vTarget!)) ?? []).find((c) => c.projId === u.video!.projId);
-      if (!v) continue; // yukarıda raporlandı
-      u.audio.forEach((_, k) => {
-        const a = (byTrack.get(trackKey("A", u.aTarget! + k)) ?? []).find((c) => c.projId === u.video!.projId);
-        if (a && (a.start !== v.start || a.end !== v.end))
-          problems.push(`kamera "${u.label}": video [${v.start}–${v.end}] ile ses ${trackLabel("A", a.track)} [${a.start}–${a.end}] aynı start/end'de değil`);
-      });
-    }
+  for (const u of plan.units) {
+    if (u.kind !== "camera") continue;
+    const v = (byTrack.get(trackKey("V", u.vTarget!)) ?? []).find((c) => c.projId === u.video!.projId);
+    if (!v) continue; // yukarıda raporlandı
+    u.audio.forEach((_, k) => {
+      const a = (byTrack.get(trackKey("A", u.aTarget! + k)) ?? []).find((c) => c.projId === u.video!.projId);
+      if (a && (a.start !== v.start || a.end !== v.end))
+        problems.push(`kamera "${u.label}": video [${v.start}–${v.end}] ile ses ${trackLabel("A", a.track)} [${a.start}–${a.end}] aynı start/end'de değil`);
+    });
   }
 
-  return { ok: problems.length === 0 && trimFix.length === 0, problems, trimFix };
+  return { ok: problems.length === 0, problems };
 }
 
 /**

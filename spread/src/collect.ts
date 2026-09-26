@@ -6,9 +6,10 @@
 // DİKEY (track ÇERÇEVESİ, BAĞLA da aynısını kullanır):
 //   V: kamera cihazları (toplam süre uzun → V1; eşitse cihaz adı alfabetik) → sonra V PARK track'leri
 //   A: eşlenen kaynaklar (kullanıcının seçtiği A track'leri) → KORUNAN KAMERA SESİ track'leri (v0.3.3; kılavuz kanalı başına bir,
-//      TOPLA boş bırakır, BAĞLA harici sesin olmadığı aralıklara kesilen kamera sesini buraya koyar) → kamera kılavuz sesleri (cihaz
-//      sırasıyla, kanal kanal) →
-//      "sil" seçilen kaynaklar (kontrol için; BAĞLA siler) → A PARK track'leri
+//      TOPLA boş bırakır, BAĞLA harici sesin olmadığı aralıklara kesilen kamera sesini buraya koyar) → "sil" seçilen kaynaklar
+//      (kontrol için; BAĞLA siler) → kamera kılavuz sesleri (cihaz sırasıyla, kanal kanal) → A PARK track'leri.
+//      v0.3.4: kılavuzlar BÜTÜN harici kanalların ("sil" dahil) ve korunan kamera sesinin ALTINDA → BAĞLA'nın boşalttığı track'ler
+//      ("sil" + kılavuz) çerçevenin en altında kalır. Eski kayıtların çerçevesi kayıttan okunur (guideBase / silTrack açık).
 //   PARK: sahipsiz kayıtlar ve (kullanıcı onaylarsa) ayrılamayan kayıtlar — zamanı değişmeden, çakışmayacak biçimde.
 //   Bilinmeyen öğeler (grafik…) YERİNDE kalır; hedef yerle çakışırsa plan HATASI.
 // Taşıma (topla.ts): park (+P) → yerleştir (Δ − P, dikey). İlk oturum hem park'ta hem yerleştirmede TEK BAŞINA (ölçüm).
@@ -70,13 +71,14 @@ export function makeFrame(items: Classified[], mapping: Map<string, Target>): Fr
   const guideBase = new Map<string, number>();
   // korunan kamera sesi yalnız harici sesli grupta olur → eşlenen (silinmeyecek) harici kaynak yoksa track ayrılmaz
   const keptCount = srcTrack.size && guideCh.size ? Math.max(...guideCh.values()) : 0;
-  let base = mappedCount + keptCount;
+  const silTrack = new Map(silSources.map((s, i) => [s, mappedCount + keptCount + i]));
+  const g0 = mappedCount + keptCount + silSources.length;
+  let base = g0;
   for (const d of devices) {
     guideBase.set(d.key, base);
     base += guideCh.get(d.key) ?? 0;
   }
-  const guideCount = base - mappedCount - keptCount;
-  const silTrack = new Map(silSources.map((s, i) => [s, base + i]));
+  const guideCount = base - g0;
   return {
     devices,
     devTrack,
@@ -91,7 +93,7 @@ export function makeFrame(items: Classified[], mapping: Map<string, Target>): Fr
     guideCh,
     guideCount,
     vPark: devices.length,
-    aPark: base + silSources.length,
+    aPark: base,
   };
 }
 
@@ -419,13 +421,18 @@ export function verifyRelative(plan: CollectPlan, fin: Snapshot): string[] {
   return problems;
 }
 
+/** Çerçeve, track sırasıyla (kayıttan okunan eski çerçevede de gerçek yerleriyle). */
 export function describeFrame(f: Frame): string {
+  const A = (t: number) => trackLabel("A", t);
+  const range = (a: number, n: number) => (n > 1 ? `${A(a)}–${A(a + n - 1)}` : A(a));
   const dev = f.devices.map((d) => `${d.key} → ${trackLabel("V", f.devTrack.get(d.key)!)}`).join(", ");
-  const src = f.sources.map((s) => `${s} → ${f.srcTrack.has(s) ? trackLabel("A", f.srcTrack.get(s)!) : `${trackLabel("A", f.silTrack.get(s)!)} (sil)`}`).join(", ");
-  const g0 = f.keptBase + f.keptCount;
-  const guides = f.guideCount ? `kılavuz sesler → ${trackLabel("A", g0)}–${trackLabel("A", g0 + f.guideCount - 1)}` : "kılavuz ses yok";
-  const kept = f.keptCount
-    ? `korunan kamera sesi (BAĞLA'da, harici sesin olmadığı aralıklar) → ${f.keptCount > 1 ? `${trackLabel("A", f.keptBase)}–${trackLabel("A", f.keptBase + f.keptCount - 1)}` : trackLabel("A", f.keptBase)}; `
-    : "";
-  return `${dev}; ${src || "harici kaynak yok"}; ${kept}${guides}`;
+  const parts: [number, string][] = [];
+  for (const [s, t] of f.srcTrack) parts.push([t, `${s} → ${A(t)}`]);
+  if (f.keptCount) parts.push([f.keptBase, `korunan kamera sesi (BAĞLA'da, harici sesin olmadığı aralıklar) → ${range(f.keptBase, f.keptCount)}`]);
+  for (const [s, t] of f.silTrack) parts.push([t, `${s} → ${A(t)} (sil)`]);
+  const gb = [...f.guideBase.values()];
+  if (f.guideCount && gb.length) parts.push([Math.min(...gb), `kılavuz sesler → ${range(Math.min(...gb), f.guideCount)}`]);
+  else parts.push([Number.MAX_SAFE_INTEGER, "kılavuz ses yok"]);
+  const a = parts.sort((x, y) => x[0] - y[0]).map((x) => x[1]);
+  return `${dev}; ${f.srcTrack.size + f.silTrack.size ? "" : "harici kaynak yok; "}${a.join("; ")}`;
 }

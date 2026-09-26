@@ -16,7 +16,7 @@
 export const HELPER_PORT = 47731;
 /** manifest.json requiredPermissions.network.domains ile AYNI ad (IP değil). */
 export const HELPER_URL = `http://localhost:${HELPER_PORT}`;
-export const HELPER_VERSION = "0.3.3";
+export const HELPER_VERSION = "0.3.4";
 const PING_TIMEOUT_MS = 3000;
 /** Bağlama grupları yardımcıya parti parti gönderilir (uzun çekimlerde tek istek zaman aşımına uğramasın). */
 const LINK_BATCH = 8;

@@ -27,7 +27,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "0.3.3";
+  var VERSION = "0.3.4";
   var PORT = 47731;
   var MAX_BODY = 1024 * 1024;
   // Panelle AYNI sınırlar (spread/src/linker.ts LINK_LIMITS) — panel BAĞLA planında kesmeden ÖNCE denetler

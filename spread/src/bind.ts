@@ -14,17 +14,20 @@
 //    (çapa kuralı: en uzun, eşitlikte alt track) kılavuz sesi YALNIZ o aralığa kesilir, TOPLA'nın ayırdığı "korunan kamera sesi"
 //    track'ine (harici kanal track'lerinin hemen altı; kanal başına bir track) konur ve gruba bağlanır. Onayda "KAMERA SESİ KORUNACAK".
 //    Kılavuz sesi olan kamera yoksa o aralık "SESSİZ KALACAK" diye listelenir.
+//    v0.3.4: ≤ 1 KARE'lik korunan kamera sesi parçası YOK (ör. 12 Eylül C0143'ün çapadan 1 kare taşan 0.040 sn'si): o dilim, komşu
+//    dilimin kamerası onu da kapsıyorsa komşuya katılır; kapsamıyorsa atlanır — ikisi de günlüğe yazılır (uyarı).
 // Sahipsizler, park track'lerindekiler ve dokunulmayan öğeler BAĞLA'ya girmez. KAMERASIZ oturumun (ör. Zoom + DJI, kamera yok) sesleri
 // de olduğu gibi kalır (çapa yok → kesilmez, silinmez, bağlanmaz; bildirilir).
 //
-// UXP'de razor yok → parça = createCloneTrackItemAction + set End/Start/In/Out, sonra aslı silinir. Yöntem (tümü AYNI track'te):
+// UXP'de razor yok → parça = createCloneTrackItemAction + set action'lar (v0.3.4: KALİBRE edilmiş kural, kenar başına tek action —
+// trimcal.ts), sonra aslı silinir. Yöntem (tümü AYNI track'te):
 //   TX-1 "kesim hazırlığı": her parça için sesin tam boy kopyası sequence sonunun ötesindeki bir PARK YUVASINA (clone, zaman
 //        ofseti) + silinecekler ve kesilecek asıllar silinir (tek seçim, ripple=false)
-//   TX-2 "ilk parça"      : YALNIZ ilk parçanın park kopyası kırpılır (set End → Start → In → Out) — ÖLÇÜM: tutmazsa DUR
+//   TX-2 "ilk parça"      : YALNIZ ilk parçanın park kopyası kırpılır — ÖLÇÜM: tutmazsa DUR
 //   TX-3 "parçalar"       : kalan park kopyaları kırpılır
 //   TX-4 "yerleştir"      : kırpılmış park kopyaları −(yuva − ses.start) zaman ofsetiyle asıl yerlerine + park kopyaları silinir
-// Kırpma sırası End → Start → In → Out: "kenar kırpma", "start taşır" ve "end taşır" anlamlarının üçünde de aynı sonuca varır;
-// her yuvanın iki yanındaki boşluk (≥ ses boyu) ara durumda gerçek kliplere / komşu yuvaya taşmayı önler.
+// Her yuvanın iki yanındaki boşluk (≥ ses boyu), set action'ların anlamı ne olursa olsun kopyanın gerçek kliplere / komşu yuvaya
+// taşmasını önler. (v0.3.3'teki End → Start → In → Out sırası gerçek Premiere'de kuyruğu İKİ KEZ kırptı — trimcal.ts.)
 
 import { cmpStart, fileName, where, type Classified } from "./classify";
 import { LINK_LIMITS } from "./linker";
@@ -110,7 +113,10 @@ function subtract(from: [bigint, bigint], cut: [bigint, bigint][]): [bigint, big
   return out.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0));
 }
 
-export function makeBindPlan(a: Analysis, mapping: Map<string, Target>, kept: KeptTracks = { base: 0, count: 0 }): BindPlan {
+/**
+ * @param frameLen sequence kare süresi (tick) — ≤ 1 kare korunan kamera sesi parçası kuralı için; null → 1/24 sn (bildirilir)
+ */
+export function makeBindPlan(a: Analysis, mapping: Map<string, Target>, kept: KeptTracks = { base: 0, count: 0 }, frameLen: bigint | null = null): BindPlan {
   const errors: string[] = [];
   const warnings: string[] = [];
   const groups: Group[] = [];
@@ -126,6 +132,8 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>, kept: Ke
   const keptCamera: string[] = [];
   const camless: Session[] = [];
   if (!a.sessions.length) errors.push("oturum yok (güçlü bağlı kayıt yok) → BAĞLA'nın bağlayacağı bir şey yok");
+  const FR = frameLen ?? TICKS_PER_SECOND / 24n;
+  let frameNoted = frameLen !== null;
 
   for (const session of a.sessions) {
     const gs = sessionGroups(session);
@@ -196,6 +204,33 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>, kept: Ke
           if (last && last.v === best && last.e === x) last.e = y;
           else segs.push({ s: x, e: y, v: best });
         }
+        // ≤ 1 kare kameralı dilim: komşu dilimin kamerası kapsıyorsa ona katılır, yoksa atlanır (korunan parça olmaz)
+        const covers = (n: (typeof segs)[number] | undefined, x: bigint, y: bigint) => !!n && !!n.v && big(n.v.start) <= x && big(n.v.end) >= y;
+        for (let i = 0; i < segs.length; i++) {
+          const sg = segs[i];
+          if (!sg.v || sg.e - sg.s > FR) continue;
+          if (!frameNoted) {
+            warnings.push("sequence kare süresi okunamadı → ≤ 1 kare kuralında 1/24 sn kullanıldı");
+            frameNoted = true;
+          }
+          const tiny = `${g.id}: "${sg.v.name}" ${secOf(sg.s)}–${secOf(sg.e)} s (${secOf(sg.e - sg.s)} sn ≤ 1 kare)`;
+          const [pv, nx] = [segs[i - 1], segs[i + 1]];
+          if (covers(pv, sg.s, sg.e) && pv.e === sg.s) {
+            pv.e = sg.e;
+            warnings.push(`${tiny} → kamera sesi komşu dilime ("${pv.v!.name}") katıldı`);
+          } else if (covers(nx, sg.s, sg.e) && nx.s === sg.e) {
+            nx.s = sg.s;
+            warnings.push(`${tiny} → kamera sesi komşu dilime ("${nx.v!.name}") katıldı`);
+          } else warnings.push(`${tiny} → korunan kamera sesi parçası OLUŞTURULMADI (komşu kamera bu aralığı kapsamıyor; orada ses kalmaz)`);
+          segs.splice(i, 1);
+          i--;
+        }
+        for (let i = 1; i < segs.length; i++)
+          if (segs[i - 1].v === segs[i].v && segs[i - 1].e === segs[i].s) {
+            segs[i - 1].e = segs[i].e;
+            segs.splice(i, 1);
+            i--;
+          }
         for (const sg of segs) {
           // dilim ya çapanın içinde (orada harici ses yok) ya dışında (harici ses çapaya göre kesildiği için oraya ulaşmaz) — dilimler çapa
           // sınırlarında da bölündüğü için ikisi karışmaz

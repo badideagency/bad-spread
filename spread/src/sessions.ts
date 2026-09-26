@@ -91,8 +91,19 @@ const pct = (r: number) => `%${(r * 100).toFixed(1)}`;
 const recSpan = (r: Recording) => `[${secOf(r.start)}s–${secOf(r.end)}s]`;
 const fmtOrder = (o: number[]) => o.join(".");
 
-/** ÇİFT KOPYA: aynı tür + aynı kaynak + aynı start/end/in/out (kamera kılavuz sesleri hariç: çok kanallı kamera meşru). */
-export function findDuplicates(items: Classified[]): string[] {
+export interface DuplicateSet {
+  /** kalan kopya: en küçük numaralı track'teki */
+  keep: ClipInfo;
+  /** silinecek kopyalar (TOPLA'nın ilk adımı, ripple=false) */
+  drop: ClipInfo[];
+  line: string;
+}
+
+/**
+ * ÇİFT KOPYA: aynı tür + aynı kaynak + aynı start/end/in/out (kamera kılavuz sesleri hariç: çok kanallı kamera meşru). Aynı kaynağın
+ * FARKLI konumdaki kopyası çift değildir. v0.3.4: TOPLA en küçük numaralı track'tekini tutar, ötekileri ilk adımında siler.
+ */
+export function duplicateSets(items: Classified[]): DuplicateSet[] {
   const seen = new Map<string, ClipInfo[]>();
   for (const x of items) {
     if (x.role === "guide" || x.role === "unknown") continue;
@@ -100,11 +111,21 @@ export function findDuplicates(items: Classified[]): string[] {
     const k = [c.kind, c.projId, c.start, c.end, c.inPt, c.outPt].join("|");
     seen.set(k, [...(seen.get(k) ?? []), c]);
   }
-  const out: string[] = [];
+  const out: DuplicateSet[] = [];
   for (const list of seen.values())
-    if (list.length > 1)
-      out.push(`${list.map((c) => trackLabel(c.kind, c.track)).join(" / ")}: "${list[0].name}" aynı kaynak, aynı start/end/in/out (${list.length} kopya)`);
+    if (list.length > 1) {
+      const [keep, ...drop] = list.slice().sort((p, q) => p.track - q.track);
+      out.push({
+        keep,
+        drop,
+        line: `${list.map((c) => trackLabel(c.kind, c.track)).join(" / ")}: "${keep.name}" aynı kaynak, aynı start/end/in/out (${list.length} kopya)`,
+      });
+    }
   return out;
+}
+
+export function findDuplicates(items: Classified[]): string[] {
+  return duplicateSets(items).map((d) => d.line);
 }
 
 /** Kaydın anahtarı (cihaz | kayıt); kılavuz ses kendi kamerasının kaydı. Bilinmeyen → null. */

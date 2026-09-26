@@ -11,7 +11,7 @@
     "check:api": "node scripts/check-api-refs.mjs",
     "api:table": "node scripts/check-api-refs.mjs --table",
     "smoke": "npm run build && node dev/smoke.cjs && node dev/smoke.cjs grim && node dev/smoke.cjs throw && node dev/smoke.cjs strict && node dev/smoke.cjs linked && node dev/smoke.cjs filter",
-    "check": "npm run typecheck && npm run lint && npm run check:api && npm run check:jsx && npm run check:xml && npm run check:core && npm run smoke && npm run smoke:spread",
+    "check": "npm run typecheck && npm run lint && npm run check:api && npm run check:jsx && npm run check:xml && npm run check:core && npm run smoke && npm run smoke:spread && bash scripts/regress-trim.sh",
     "package": "bash scripts/package-ccx.sh",
     "verify:ccx": "python3 scripts/verify-ccx.py release/spread-probe.ccx",
     "build:spread": "vite build --config spread/vite.config.mjs",
@@ -22,6 +22,7 @@
     "build:core": "vite build --config spread/vite.core.mjs",
     "check:core": "node scripts/check-core.mjs",
     "check:xml": "python3 scripts/check-xml.py",
+    "regress:trim": "npm run build:spread && bash scripts/regress-trim.sh",
     "package:helper": "bash scripts/package-helper.sh"
   },
   "devDependencies": {
@@ -36,5 +37,5 @@
     "typescript-eslint": "^8.70.1",
     "vite": "^8.3.1"
   },
-  "description": "Spread — Premiere Pro UXP eklentisi (Spread v0.3.3: SPREAD / TOPLA / BAĞLA) + görünür CEP yardımcı paneli (Spread Helper v0.3.3) + API yoklama paneli (Spread Probe v0.1.1)"
+  "description": "Spread — Premiere Pro UXP eklentisi (Spread v0.3.4: SPREAD / TOPLA / BAĞLA) + görünür CEP yardımcı paneli (Spread Helper v0.3.4) + API yoklama paneli (Spread Probe v0.1.1)"
 }

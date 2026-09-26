@@ -2,8 +2,10 @@
 // ofset, blok içi tick-exact) ve klipleri cihaz / kaynak track'lerine koyar (DİKEY). Sahipsizler park track'lerine (zaman aynı).
 // Güvenlik: guard.ts (onay → yedek → her transaction sonrası tick düzeyinde doğrulama → tutmazsa DUR + Ctrl+Z + yedek adı).
 //
-// Transaction'lar: [yedek] → [TX-A track hazırlığı] → TX-1 ilk oturum park (ÖLÇÜM) → TX-2 kalan park → TX-3 ilk oturum yerleştir
-// (ÖLÇÜM) → TX-4 kalan yerleştir. Sıfırdan farklı timeOffset'li clone gerçek Premiere'de tick düzeyinde ölçülmedi → ilk oturum
+// Transaction'lar: [yedek] → [TX-0 çift kopyaları sil] → [TX-A track hazırlığı] → TX-1 ilk oturum park (ÖLÇÜM) → TX-2 kalan park →
+// TX-3 ilk oturum yerleştir (ÖLÇÜM) → TX-4 kalan yerleştir.
+// v0.3.4 — ÇİFT KOPYA (aynı kaynak + aynı start/end/in/out; aynı kaynağın farklı konumdaki kopyası çift DEĞİL) TOPLA'yı durdurmaz: en
+// küçük numaralı track'teki kalır, ötekiler ilk adımda (TX-0, ripple=false) silinir; bütün plan çiftsiz düzen üzerinden kurulur. Sıfırdan farklı timeOffset'li clone gerçek Premiere'de tick düzeyinde ölçülmedi → ilk oturum
 // tek başına taşınır; tutmazsa "İLK TAŞIMA TUTMADI".
 
 import { selectExactly } from "./edit";
@@ -41,9 +43,9 @@ import {
   runTx,
   SpreadStop,
 } from "./guard";
-import { compareLayout, findExp, snapshotOverlaps } from "./layout";
+import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
 import { fmtClip, relocate, secOf, settle, snapshot, ticks, trackLabel, TICKS_PER_SECOND, type ClipInfo, type Snapshot } from "./model";
-import { analyze, describeLinks, partlyParked, suspiciousMembers, type Analysis, type Recording } from "./sessions";
+import { analyze, describeLinks, duplicateSets, partlyParked, suspiciousMembers, type Analysis, type DuplicateSet, type Recording } from "./sessions";
 import { requireActive, type SeqContext } from "./session";
 import { getGapSec, getThreshold, loadRecord, mappingFor, saveMapping, saveRecord, type CollectRecord } from "./settings";
 import { log } from "./ui";
@@ -81,6 +83,14 @@ function confirmText(plan: CollectPlan, a: Analysis, newV: number, newA: number,
   return L.join("\n");
 }
 
+/** Onay penceresindeki çift kopya satırı. */
+function dupText(dups: DuplicateSet[]): string {
+  return (
+    `ÇİFT KOPYA — ilk adımda silinecek (ripple=false; aynı kaynak + aynı start/end/in/out, en küçük numaralı track'teki kalır): ` +
+    dups.map((d) => `${d.drop.map((c) => trackLabel(c.kind, c.track)).join("+")} "${d.keep.name}" (${trackLabel(d.keep.kind, d.keep.track)} kalır)`).join("; ")
+  );
+}
+
 async function select(ctx: SeqContext, clips: ClipInfo[], what: string) {
   const so = await selectExactly(ctx, clips);
   for (const n of so.notes) log(`   ${n}`, "dim");
@@ -96,9 +106,16 @@ export async function runCollect(): Promise<void> {
   try {
     ctx = await requireActive();
     log(`sequence: "${ctx.name}"`, "dim");
-    const s0 = await snapshot(ctx);
-    assertNotStopped(ctx, s0, "TOPLA");
-    for (const w of s0.warnings) throw new SpreadStop(`Okuma sorunu: ${w}. TOPLA BAŞLAMADI.`);
+    const sAll = await snapshot(ctx);
+    assertNotStopped(ctx, sAll, "TOPLA");
+    for (const w of sAll.warnings) throw new SpreadStop(`Okuma sorunu: ${w}. TOPLA BAŞLAMADI.`);
+    // çift kopyalar: fazlalar ilk adımda silinecek → bütün analiz ve plan çiftsiz düzen (s0) üzerinden
+    const dups = duplicateSets(classify(sAll));
+    const drop = dups.flatMap((d) => d.drop);
+    const dropSet = new Set(drop);
+    const s0: Snapshot = drop.length ? { ...sAll, clips: sAll.clips.filter((c) => !dropSet.has(c)) } : sAll;
+    for (const d of dups)
+      log(`ÇİFT KOPYA: ${d.line} → ${d.drop.map((c) => trackLabel(c.kind, c.track)).join(", ")} silinecek (ilk adım), ${trackLabel(d.keep.kind, d.keep.track)} kalır`, "warn");
     const items = classify(s0);
     const mapping = mappingFor(sourcesOf(items));
     const frame = makeFrame(items, mapping);
@@ -145,8 +162,6 @@ export async function runCollect(): Promise<void> {
     if (keep.size) log(`   önceki TOPLA'dan park'ta ${keep.size} klip (kayıttan) — analize girmez, zamanı değişmez`, "dim");
     for (const l of describeLinks(a, 60)) log(`   bağ: ${l}`, "dim");
     printAnalysis(a);
-    if (a.duplicates.length)
-      throw new SpreadStop(`ÇİFT KOPYA var (aynı kaynak + aynı start/end/in/out) — TOPLA BAŞLAMADI, hiçbir şeye dokunulmadı. Fazla kopyaları sil, sonra tekrar bas.`, a.duplicates);
     if (a.errors.length) throw new SpreadStop("Senkron sonucunda tutarsızlık var — TOPLA BAŞLAMADI, hiçbir şey değişmedi.", a.errors);
     const readErr = s0.clips.flatMap((c) => c.readErrors.map((e) => `${where(c)} — ${e}`));
     if (readErr.length) throw new SpreadStop("Bazı klipler okunamadı. TOPLA BAŞLAMADI.", readErr);
@@ -241,7 +256,7 @@ export async function runCollect(): Promise<void> {
     if (plan.errors.length) throw new SpreadStop(`Plan kurulamadı (${plan.errors.length} hata). TOPLA BAŞLAMADI, hiçbir şey değişmedi.`);
     if (plan.conflicts.length)
       throw new SpreadStop(`Yeni düzende ${plan.conflicts.length} çakışma var — TOPLA BAŞLAMADI, hiçbir şey değişmedi.`, plan.conflicts);
-    if (!plan.moves.length) {
+    if (!plan.moves.length && !drop.length) {
       // hiçbir şey taşınmadı → kayıt bugünkü ayarla yenilenir (kesimsiz BAĞLA'nın kaydı durur)
       saveRecord(record(bs === "applied" ? rec!.bind : null));
       saveMapping(mapping);
@@ -251,13 +266,18 @@ export async function runCollect(): Promise<void> {
     }
     const newV = Math.max(0, plan.neededV - s0.vCount);
     const newA = Math.max(0, plan.neededA - s0.aCount);
-    const extra: string[] = [];
+    const extra: string[] = dups.length ? [dupText(dups)] : [];
     const unknown = items.filter((x) => x.role === "unknown");
     if (unknown.length) extra.push(`Dokunulmayan öğeler (yerinde kalır): ${unknown.map((x) => where(x.clip)).join(", ")}`);
     if (keep.size) extra.push(`Önceki TOPLA'dan park'ta: ${keep.size} klip (oturumlara karışmaz; zamanı değişmez, çerçeve büyüdüyse park track'i değişir).`);
     if (userParked.length) extra.push(`Senin kararınla park'a: ${userParked.length} klip (şüpheli üye).`);
     if (bs === "applied") extra.push("DİKKAT: bu sequence BAĞLA'dan geçti (kesimsiz) — taşınan kliplerin bağları çözülür (clone); TOPLA'dan sonra BAĞLA'ya tekrar bas.");
-    const ans = await askUser(confirmText(plan, a, newV, newA, extra));
+    const ans = await askUser(
+      plan.moves.length
+        ? confirmText(plan, a, newV, newA, extra)
+        : `TOPLA — düzen zaten toplanmış (oturumlar sırayla, klipler cihaz / kaynak track'lerinde); yalnız çift kopyalar silinecek.\n${dupText(dups)}\n` +
+            "Önce yedek sequence oluşturulacak. Devam?"
+    );
     if (ans !== "Evet") {
       log("İptal edildi — hiçbir şey değişmedi.", "warn");
       return;
@@ -266,15 +286,40 @@ export async function runCollect(): Promise<void> {
     const backup = await makeBackup(ctx, "TOPLA");
     backupName = backup.name;
     const s1 = await snapshot(ctx);
-    if (!multisetEqual(s0, s1)) throw new SpreadStop("Yedek alınırken asıl sequence'ın klipleri değişti. Durduruldu.");
+    if (!multisetEqual(sAll, s1)) throw new SpreadStop("Yedek alınırken asıl sequence'ın klipleri değişti. Durduruldu.");
 
     let helpers: ClipInfo[] = [];
     let prev: Snapshot = s1;
     let beforeLast: Snapshot | null = null;
+    // TX-0: çift kopyaların fazlaları (ripple=false) — kalan her şey tick düzeyinde yerinde olmalı
+    if (drop.length) {
+      const so = await select(ctx, drop, "Çift kopyalar");
+      log(`TX-0 (çift kopyaları sil): ${so.readCount} klip siliniyor (ripple=false) — her çiftin en küçük numaralı track'teki kopyası kalır.`);
+      await runTx(ctx, executed, "çift kopyaları sil", "TOPLA: çift kopyaları sil", (ops) => {
+        ops.remove(so.sel);
+      });
+      await settle();
+      const s = await snapshot(ctx);
+      const probs = compareLayout(s0.clips.map((c) => expOf(c)), s);
+      if (probs.length) throw new SpreadStop("Çift kopya silme doğrulaması tutmadı (yalnız fazla kopyalar silinmeliydi).", probs);
+      log(`✓ TX-0 doğrulandı: ${drop.length} fazla kopya silindi, kalan ${s.clips.length} klip tick düzeyinde yerinde.`, "ok");
+      beforeLast = prev;
+      prev = s;
+    }
+    if (!plan.moves.length) {
+      forgetStopped();
+      saveRecord(record(bs === "applied" ? rec!.bind : null));
+      saveMapping(mapping);
+      log(`✓ TOPLA tamam: ${drop.length} çift kopya silindi; düzen zaten toplanmıştı. (${executed.length} adım: ${executed.join(", ")})`, "ok");
+      log(CHECK_MSG, "head");
+      log(`Beğenmezsen: timeline'a tıkla, Ctrl+Z'ye ${executed.length} kez bas — ya da yedek sequence "${backupName}"i kullan.`, "dim");
+      return;
+    }
     if (newV || newA) {
-      const r = await prepareTracks(ctx, s1, plan.neededV, plan.neededA, executed, "TOPLA: track hazırlığı");
+      if (drop.length) await expectState(ctx, prev, beforeLast, executed);
+      const r = await prepareTracks(ctx, prev, plan.neededV, plan.neededA, executed, "TOPLA: track hazırlığı");
       helpers = r.helpers;
-      beforeLast = s1;
+      beforeLast = prev;
       prev = r.after;
     }
     // park yeri: hem bugünkü düzenin hem YENİ düzenin sonunun ötesi (yerleştirme park kopyalarına değmesin), kare hizalı

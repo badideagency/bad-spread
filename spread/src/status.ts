@@ -6,13 +6,15 @@
 import { classify, devicesOf, sourcesOf, roleLabel } from "./classify";
 import { bindState, layoutState, parkedFromRecord } from "./collect";
 import { analyze, describeLinks, sessionGroups } from "./sessions";
-import { getThreshold, loadRecord, mappingFor, recordDrift } from "./settings";
+import { getThreshold, loadRecord, loadTrimCal, mappingFor, recordDrift } from "./settings";
+import { hostVersion } from "./calibrate";
+import { describeCal } from "./trimcal";
 import { readPanelLinkResult } from "./linker";
 import { big, secOf, snapshot, trackLabel, type ClipInfo } from "./model";
 import { makePlan, type Unit } from "./plan";
 import { requireActive } from "./session";
 
-const PANEL = "Spread v0.3.3";
+const PANEL = "Spread v0.3.4";
 
 function overlapTicks(a: ClipInfo, b: ClipInfo): bigint {
   const s = big(a.start) > big(b.start) ? big(a.start) : big(b.start);
@@ -110,7 +112,12 @@ export async function buildStatusReport(): Promise<string> {
       );
     if (bs === "applied" && rec.bind!.created.length) L.push("  not: harici sesler çapalara kesildi — aşağıdaki oturum analizi kesilmiş düzene göredir (TOPLA/BAĞLA bunu kullanmaz)");
   }
-  for (const d of a.duplicates) L.push(`  ÇİFT KOPYA: ${d}`);
+  const cal = loadTrimCal(ctx.guid, hostVersion());
+  if (cal) {
+    L.push(`  KIRPMA KALİBRASYONU (kanıtlanmış, bu sequence'ta ${cal.at}, Premiere ${cal.host}; δ = ${cal.delta} tick):`);
+    for (const l of describeCal(cal)) L.push(`    ${l}`);
+  } else L.push(`  kırpma kalibrasyonu: yok (Premiere ${hostVersion()}) — bu sequence'ta ilk kesimli BAĞLA'da ölçülür`);
+  for (const d of a.duplicates) L.push(`  ÇİFT KOPYA: ${d} (TOPLA ilk adımında fazlaları siler)`);
   L.push(`  güçlü bağlar (${a.links.length}):`);
   for (const l of describeLinks(a, 200)) L.push(`    ${l}`);
   for (const x of a.sessions) {

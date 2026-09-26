@@ -4,7 +4,7 @@
 // Ayrıca kaynakta ppro/Premiere nesnesi üzerinden çağrılıp yanında d.ts yorumu OLMAYAN
 // bilinen API adlarını da uyarı olarak listeler.
 // v0.3.0: "uxp.d.ts:L<satır> Sınıf.üye" yorumları da @adobe/cc-ext-uxp-types/uxp/index.d.ts'e karşı doğrulanır
-// (satırda üye var mı, satırı çevreleyen en yakın "class" o sınıf mı).
+// (satırda üye var mı — yöntem "üye(" ya da v0.3.4 itibarıyla özellik "üye:" —, satırı çevreleyen en yakın "class" o sınıf mı).
 // Kullanım: node scripts/check-api-refs.mjs [--table]
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -108,7 +108,7 @@ for (const f of sources) {
       const where = `${relative(ROOT, f)}:${idx + 1}`;
       let why = "";
       if (line === undefined) why = "uxp.d.ts'te böyle bir satır yok";
-      else if (!new RegExp(`(^|\\s)(public\\s+)?${member}\\s*\\(`).test(line)) why = `satırda "${member}(" yok: ${line.trim()}`;
+      else if (!new RegExp(`(^|\\s)(public\\s+)?(readonly\\s+)?${member}\\s*[(:]`).test(line)) why = `satırda "${member}(" / "${member}:" yok: ${line.trim()}`;
       else if (uxpOwner[ln - 1] !== cls) why = `satır ${uxpOwner[ln - 1]} sınıfında, ${cls} değil`;
       if (why) {
         bad++;

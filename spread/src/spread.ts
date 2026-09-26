@@ -9,14 +9,16 @@
 //      bu belirsiz adım asıllara dokunulmadan ÖNCE ölçülür (başarısızsa yalnız yardımcılar eklenmiş olur, tek Ctrl+Z).
 //   3) TX-B "taşı" (tek transaction): clone (ses / sadece-video birimleri) → remove (taşınan asıllar + yardımcılar, tek seçim,
 //      ripple=false) → overwrite (kamera birimleri proje öğesinden, BAĞLI doğar)
-//   4) TX-C "kırpma eşitlemesi" (yalnız gerekirse): overwrite'ın aslından farklı yerleştirdiği kamera kliplerine
-//      set In/Out/Start/End (kırpılmamış kliplere hiç dokunulmaz)
-//   5) tüm klipleri programla seç + Synchronize talimatı
+//   4) tüm klipleri programla seç + Synchronize talimatı
+// v0.3.4: eski TX-C "kırpma eşitlemesi" (overwrite'ın tam boy yerleştirdiği kırpılmış kameralara set In/Out/Start/End, tek
+// transaction'da) KALDIRILDI: gerçek Premiere'de set action'lar klibin ilk hâlinden fark olarak uygulanıp aynı kenarda birikiyor
+// (Out + End → kuyruk iki kez kırpılır; kanıt: trimcal.ts). Kırpılmış kamera (in ≠ 0 ya da out ≠ medya sonu) varsa SPREAD BAŞLAMAZ.
 
 import { ppro } from "./ppro";
 import { selectAll, selectExactly } from "./edit";
 import { askUser, expectState, makeBackup, multisetEqual, prepareTracks, reportStop, runTx, SpreadStop } from "./guard";
 import { errText, fmtClip, relocate, secOf, settle, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
+import { where } from "./classify";
 import { makePlan, type Plan } from "./plan";
 import { requireActive } from "./session";
 import { log } from "./ui";
@@ -64,6 +66,14 @@ export async function runSpread(): Promise<void> {
     printPlan(plan, s0);
     if (plan.errors.length) throw new SpreadStop(`Plan kurulamadı (${plan.errors.length} hata). Spread BAŞLAMADI, hiçbir şey değişmedi.`);
     if (!s0.clips.length) throw new SpreadStop("Sequence'ta klip yok.");
+    const cut = plan.overwrite.filter((u) => u.trimmed === true);
+    if (cut.length)
+      throw new SpreadStop(`${cut.length} kamera klibi kırpılmış (in ≠ 0 ya da out ≠ medya sonu). Spread BAŞLAMADI, hiçbir şey değişmedi.`, [
+        ...cut.map((u) => `${where(u.video!)} in=${u.video!.inPt} out=${u.video!.outPt} (medya ${u.video!.mediaDur})`),
+        "Neden: kamera proje öğesinden overwrite ile TAM BOY yerleşir; eski 'kırpma eşitlemesi' adımı (set In/Out/Start/End tek " +
+          "transaction'da) gerçek Premiere'de aynı kenarı İKİ KEZ kırpıyor (kanıtlandı) — v0.3.4'te bu adım kaldırıldı.",
+        "Yapılacak: bu kameraların kırpmasını kaldır (klibi tam boy yap) ya da onları SPREAD'den ayrı tut.",
+      ]);
     const moving = plan.overwrite.length + plan.clone.length;
     if (!moving) {
       log("✓ Zaten dağıtılmış: her klip kendi hedef track'inde. Yapılacak bir şey yok.", "ok");
@@ -71,14 +81,15 @@ export async function runSpread(): Promise<void> {
     }
     const newV = Math.max(0, plan.neededV - s0.vCount);
     const newA = Math.max(0, plan.neededA - s0.aCount);
-    const trimmed = plan.overwrite.filter((u) => u.trimmed !== false).length;
+    const unknown = plan.overwrite.filter((u) => u.trimmed === null).length;
 
     const ans = await askUser(
       `${plan.counts.camera} kamera${plan.counts.videoOnly ? ` + ${plan.counts.videoOnly} sadece-video` : ""}, ${plan.counts.audio} ses bulundu, ` +
         `${newV + newA} track açılacak (V ${newV}, A ${newA}). Önce yedek sequence oluşturulacak. ` +
         `Taşınacak: ${plan.overwrite.length} kamera (proje öğesinden yeniden, bağlı — kamera klibindeki efektler, ses kazancı/keyframe'ler ve klip adı taşınmaz), ` +
         `${plan.clone.length} ses/video (birebir kopya); ` +
-        `yerinde kalan: ${plan.stay.length}.${trimmed ? ` ${trimmed} kamera kırpılmış/bilinmiyor → gerekirse kırpma eşitlemesi adımı.` : ""}` +
+        `yerinde kalan: ${plan.stay.length}.` +
+        `${unknown ? ` ${unknown} kamerada medya süresi okunamadı → kırpılmışsa taşımadan sonra doğrulama DURDURUR (Ctrl+Z ile geri alınır).` : ""}` +
         `${plan.warnings.length ? ` ${plan.warnings.length} uyarı (günlükte).` : ""} Devam?`
     );
     if (ans !== "Evet") {
@@ -126,33 +137,8 @@ export async function runSpread(): Promise<void> {
     });
     await settle();
     const sB = await snapshot(ctx);
-    const vB = verifySpread(plan, sB, true);
+    const vB = verifySpread(plan, sB);
     if (vB.problems.length) throw new SpreadStop("Taşıma doğrulaması tutmadı.", vB.problems);
-
-    // 4) TX-C: kırpma eşitlemesi (yalnız farklı yerleşen kamera klipleri)
-    if (vB.trimFix.length) {
-      await expectState(ctx, sB, null, executed);
-      log(`TX-C: ${vB.trimFix.length} kamera klibi aslına eşitlenecek (set In → Out → Start → End).`);
-      for (const t of vB.trimFix) log(`   ${fmtClip(t.now)} → asıl in=${t.orig.inPt} out=${t.orig.outPt} start=${t.orig.start} end=${t.orig.end}`, "dim");
-      const sC0 = await snapshot(ctx);
-      const fixes = vB.trimFix.map((t) => {
-        const now = relocate(sC0, t.now);
-        if (!now) throw new SpreadStop(`eşitleme öncesi klip yeniden bulunamadı: ${fmtClip(t.now)}`);
-        return { orig: t.orig, now };
-      });
-      await runTx(ctx, executed, "kırpma eşitlemesi", "Spread: kırpma eşitlemesi", (ops) => {
-        for (const { orig, now } of fixes) {
-          ops.setIn(now, ticks(orig.inPt));
-          ops.setOut(now, ticks(orig.outPt));
-          ops.setStart(now, ticks(orig.start));
-          ops.setEnd(now, ticks(orig.end));
-        }
-      });
-      await settle();
-      const sC = await snapshot(ctx);
-      const vC = verifySpread(plan, sC, false);
-      if (!vC.ok) throw new SpreadStop("Kırpma eşitlemesi sonrası doğrulama tutmadı.", vC.problems);
-    }
 
     log(
       `✓ SPREAD tamam: ${plan.placements.length} klip, ${plan.neededV} video + ${plan.neededA} ses track'ine dağıtıldı; ` +
@@ -160,7 +146,7 @@ export async function runSpread(): Promise<void> {
       "ok"
     );
 
-    // 5) seç + talimat
+    // 4) seç + talimat
     try {
       const sel = await selectAll(ctx);
       log(`Tüm klipler programla seçildi (${sel.read}/${sel.requested}; timeline'da görünmeyebilir).`, "dim");

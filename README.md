@@ -2,8 +2,8 @@
 
 | Bileşen | Durum | Paket |
 |---|---|---|
-| **Spread** v0.3.3 (`spread/`) | **SPREAD** (her klip kendi track'ine) → Premiere *Clip > Synchronize* → **TOPLA** (oturumları senkron sonucundan bulur: güçlü bağ + cihaz vetosu; çekim sırasıyla sequence başından dizer; cihaz → V, kaynak → A) → gözle kontrol → **BAĞLA** = **KES** (oturum içinde harici sesi çapaya göre kes, kılavuz sesleri sil) + bağla (köprüyle tek tık ya da yardımcı paneldeki BAĞLA); harici sesin olmadığı aralıkta kamera sesi korunur. **Durum raporu** (oturumlar dahil) + kaynak eşleme + eşik/boşluk ayarı; yardımcı bağlantısında gerçek hata. | [`release/spread.ccx`](release/spread.ccx) |
-| **Spread Helper** v0.3.3 (`cep-helper/`) | GÖRÜNÜR CEP paneli (Window → Extensions (Legacy) → Spread Helper): sunucu durumu, son istek, Premiere sürümü; köprü (localhost:47731, token'lı) ve köprüsüz **BAĞLA** düğmesi (KES planı + aktif sequence → Spread'in AYNI modülüyle grupla → ExtendScript `linkSelection`). | [`release/spread-helper-klasor.zip`](release/spread-helper-klasor.zip) (imzasız klasör + `KUR.cmd` + PlayerDebugMode `.reg`) |
+| **Spread** v0.3.4 (`spread/`) | **SPREAD** (her klip kendi track'ine; kırpılmış kamerada başlamaz) → Premiere *Clip > Synchronize* → **TOPLA** (oturumları senkron sonucundan bulur: güçlü bağ + cihaz vetosu; çekim sırasıyla sequence başından dizer; cihaz → V, kaynak → A) → gözle kontrol → **BAĞLA** = **KES** (oturum içinde harici sesi çapaya göre kes, kılavuz sesleri sil) + bağla (köprüyle tek tık ya da yardımcı paneldeki BAĞLA); harici sesin olmadığı aralıkta kamera sesi korunur; kırpma komutlarının etkisi sequence başına bir kez **ölçülür** (kalibrasyon) ve kenar başına tek komut gider; çift kopyaları TOPLA ilk adımında siler. **Durum raporu** (oturumlar dahil) + kaynak eşleme + eşik/boşluk ayarı; yardımcı bağlantısında gerçek hata. | [`release/spread.ccx`](release/spread.ccx) |
+| **Spread Helper** v0.3.4 (`cep-helper/`) | GÖRÜNÜR CEP paneli (Window → Extensions (Legacy) → Spread Helper): sunucu durumu, son istek, Premiere sürümü; köprü (localhost:47731, token'lı) ve köprüsüz **BAĞLA** düğmesi (KES planı + aktif sequence → Spread'in AYNI modülüyle grupla → ExtendScript `linkSelection`). | [`release/spread-helper-klasor.zip`](release/spread-helper-klasor.zip) (imzasız klasör + `KUR.cmd` + PlayerDebugMode `.reg`) |
 | Spread Probe v0.1.1 (kök `index.ts`, `src/`, `public/`) | API yoklama paneli (T1–T8). Bitti; arşiv. | [`release/spread-probe.ccx`](release/spread-probe.ccx) |
 
 - Kurulum ve kullanım: **[KURULUM_TR.md](KURULUM_TR.md)**
@@ -16,6 +16,7 @@ npm ci
 npm run check            # typecheck + eslint (Adobe premierepro kuralları) + d.ts / uxp.d.ts satır kontrolü
                          # + host.jsx ES3/belge kontrolü + check:core (yardımcıdaki derlenmiş modül = kaynak)
                          # + Probe smoke + Spread smoke (mock Premiere + gerçek yardımcı sunucusu + yardımcı paneldeki BAĞLA)
+                         # + regresyon: v0.3.3 kırpması gerçek set anlamında düşer, güncel kod geçer (scripts/regress-trim.sh)
 npm run package:spread   # build → release/spread.ccx (+ zip kontrolü)
 npm run build:core       # spread/src/helper-core.ts → cep-helper/js/spread-core.js (TEK modül, yardımcı panele)
 npm run package:helper   # release/spread-helper-klasor.zip (imzasız); ZXPSIGNCMD=… verilirse ve zaman damgası alınırsa .zxp
