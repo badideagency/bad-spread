@@ -39,8 +39,8 @@ import {
   runTx,
   SpreadStop,
 } from "./guard";
-import { bindState, frameFromRecord, itemKey, itemOf, misplacedAgainst, parkedFromRecord } from "./collect";
-import { analyze } from "./sessions";
+import { bindState, frameFromRecord, itemKey, itemOf, layoutState, misplacedAgainst, parkedFromRecord } from "./collect";
+import { analyze, partlyParked } from "./sessions";
 import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
 import { getLinker, type LinkGroupResult } from "./linker";
 import { big, fmtClip, relocate, secOf, settle, sleep, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
@@ -71,6 +71,7 @@ function printBindPlan(plan: BindPlan, s: Snapshot): void {
   for (const c of plan.deleteOutside) log(`  sil (hiçbir çapaya düşmüyor): ${where(c)}`, "dim");
   if (plan.deleteSil.length) log(`  sil (kaynak eşlemede "sil"): ${plan.deleteSil.map(where).join(", ")}`, "dim");
   for (const [g, gg] of plan.keptGuides) if (gg.length) log(`  ${g.id}: kamera sesi korunur (${gg.map(where).join(", ")})`, "dim");
+  for (const x of plan.camless) log(`  ${x.id}: kamerasız oturum — sesleri olduğu gibi kalır`, "dim");
   if (plan.deleteGuides.length) log(`  sil: ${plan.deleteGuides.length} kamera kılavuz sesi`, "dim");
   for (const w of plan.warnings) log(`uyarı: ${w}`, "warn");
   for (const w of plan.silent) log(`SESSİZ KALACAK: ${w}`, "warn");
@@ -277,6 +278,10 @@ export async function runBind(): Promise<void> {
     //  - park dışındaki her kayıt bir oturumda (sahipsiz / ayrılamayan yok: TOPLA onları park'a koyardı → TOPLA'dan sonra değişmiş)
     //  - oturumlar zamanda ayrık (TOPLA'nın yatay dizimi), senkron tutarlı, çift kopya yok
     const pre: string[] = [];
+    if (layoutState(rec, s0) === "undone")
+      pre.push("son TOPLA geri alınmış (timeline TOPLA öncesi hâlinde; taşınmamış kameraların kılavuz sesi hâlâ bağlı olabilir) — önce TOPLA'ya bas");
+    for (const x of partlyParked(a, items, parked))
+      pre.push(`aynı kaydın bir kısmı park'ta, bir kısmı ${x.session.id} oturumunda (${x.rec.label}: ${x.parked.map(where).join(", ")}) — önce TOPLA'ya bas (sorar)`);
     const misplaced = misplacedAgainst(frame, items, parked);
     if (misplaced.length)
       pre.push(
@@ -296,7 +301,9 @@ export async function runBind(): Promise<void> {
         if (x.start < y.end && y.start < x.end) pre.push(`${x.id} ile ${y.id} zamanda çakışıyor — önce TOPLA'ya bas (oturumları sırayla dizer)`);
       }
     plan.errors.unshift(...pre);
-    // son düzendeki harici klipler (park'takiler hariç) + ait oldukları oturum (oturumlar zamanda ayrık)
+    // son düzendeki harici klipler (park'takiler ve kamerasız oturumlarınkiler hariç — onlara dokunulmaz) + ait oldukları oturum
+    // (oturumlar zamanda ayrık)
+    const camless = new Set(plan.camless.map((x) => x.id));
     const extFinal = (snap: Snapshot) => {
       const cls = classify(snap);
       const pk = parkedFromRecord(cls, rec);
@@ -306,7 +313,8 @@ export async function runBind(): Promise<void> {
           clip: x.clip,
           source: x.source!,
           sessionId: a.sessions.find((ss) => big(x.clip.start) >= ss.start && big(x.clip.end) <= ss.end)?.id ?? null,
-        }));
+        }))
+        .filter((x) => !(x.sessionId && camless.has(x.sessionId)));
     };
     for (const x of a.sessions) log(`  ${x.id} [${secOf(x.start)}s–${secOf(x.end)}s] ${x.label}`, "dim");
     if (parked.size) log(`  park'ta ${parked.size} klip (TOPLA kaydından) — BAĞLA'ya girmez, dokunulmaz`, "dim");
@@ -323,6 +331,7 @@ export async function runBind(): Promise<void> {
         `${plan.cuts.length} harici ses ${nPieces} parçaya kesilecek, ${plan.pieces.filter((p) => p.whole).length} ses olduğu gibi kalacak; ` +
         `silinecek: ${plan.deleteGuides.length} kılavuz ses, ${plan.deleteSil.length} "sil" kaynağı klibi, ${plan.deleteOutside.length} çapa dışı ses; ` +
         `${[...plan.keptGuides.values()].reduce((n, g) => n + g.length, 0)} kamera sesi (grubunda harici ses yok) korunacak. ` +
+        (plan.camless.length ? `${plan.camless.length} kamerasız oturumun (${plan.camless.map((x) => x.id).join(", ")}) seslerine dokunulmayacak. ` : "") +
         `Kaynaklar: ${plan.keptSources.join(", ") || "yok"}. Kesim yalnız oturum içinde. Sonra ${groups.length} grup yardımcıyla bağlanacak. ` +
         `${plan.warnings.length ? `${plan.warnings.length} uyarı (günlükte). ` : ""}` +
         (plan.silent.length
@@ -370,7 +379,11 @@ export async function runBind(): Promise<void> {
         const lostCams = p1.some((x) => /beklenen klip yok: V/.test(x));
         throw new SpreadStop(
           "Kesim hazırlığı doğrulaması tutmadı." +
-            (lostCams ? " Bir kamera klibi de silinmiş: kılavuz sesi hâlâ kamerasına BAĞLIYDI ve silme bağlı partneri de sildi — Ctrl+Z, sonra TOPLA." : ""),
+            (lostCams
+              ? " Bir kamera klibi de silinmiş: kılavuz sesi hâlâ kamerasına BAĞLIYDI (TOPLA bu kamerayı taşımadıysa bağı çözülmemiştir) ve " +
+                "silme bağlı partneri de sildi. Aşağıdaki sayıda Ctrl+Z ile geri al (ya da yedek sequence) ve bu raporu getir — UXP'de bağ " +
+                "okunamıyor/çözülemiyor; yeniden TOPLA bu durumu düzeltmez."
+              : ""),
           p1
         );
       }
@@ -430,7 +443,8 @@ export async function runBind(): Promise<void> {
     const created: LinkItemRec[] = plan.pieces
       .filter((p) => !p.whole)
       .map((p) => ({ kind: "A", track: p.src.track, start: String(p.start), end: String(p.end), name: itemOf(p.src).name }));
-    const bind: BindRecord = { stage: "cut", groups: specs, created, at: new Date().toISOString() };
+    const removed: LinkItemRec[] = [...deletes, ...plan.cuts.map((c) => c.src)].map(itemOf);
+    const bind: BindRecord = { stage: "cut", groups: specs, created, removed, at: new Date().toISOString() };
     saveBindRecord(ctx.guid, bind);
 
     for (const t of targets.filter((x) => x.items.length < 2)) log(`   ${t.label}: bağlanacak ikinci öğe yok — atlandı`, "dim");

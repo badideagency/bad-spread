@@ -87,6 +87,13 @@ Sonra:
   Fazla olanı sil, sonra tekrar bas. 12 Eylül verinde A26/A27 ve A29/A30 böyle.
 - **Sahipsiz** kayıt, hiçbir şeyle eşleşmeyen kayıttır (ör. 1 sn'lik tek kamera klibi). Silinmez: en alttaki "park" track'lerine konur, zamanı değişmez.
   Panel park ettiklerini **hatırlar**. Sonraki TOPLA ve BAĞLA onları oturumlara karıştırmaz, yeni düzende uzun bir kaydın altına denk gelseler bile.
+- **"PARK KAYDI"** sorusu: son TOPLA'dan sonra düzeni elle değiştirmişsin ve panel, park ettiği klipleri hâlâ park'ta tutup tutmayacağını soruyor.
+  - **Evet**: park'ta kalırlar, oturumlara karışmazlar.
+  - **Hayır**: hiçbir şey değişmez.
+  - TOPLA'yı Ctrl+Z ile **tamamen** geri aldıysan panel bunu kendisi tanır ve sormaz; her şeyi senkron sonucundan yeniden bulur.
+- **"AYNI KAYIT BÖLÜNMÜŞ"** sorusu: bir kaydın (ör. aynı Zoom dosyası) bir parçası park'ta, bir parçası bir oturumda.
+  - **Evet**: park'taki parça oturumuyla birlikte, aynı kaymayla taşınır.
+  - **Hayır**: hiçbir şey değişmez.
 - **"ŞÜPHELİ ÜYE"** sorusu: kısa bir klip (ör. 1 sn) bir oturuma yalnız çok uzun bir kaydın **içine düştüğü** için bağlı görünüyor.
   Senkron onu eşleyememiş ve rastgele bir yere bırakmış olabilir.
   - **Evet**: o klip park track'lerine gider, zamanı değişmez. BAĞLA ona dokunmaz.
@@ -94,6 +101,9 @@ Sonra:
 - **"AYRILAMAYAN OTURUM"** sorusu: iki ilgisiz grup iç içe gelmiş ve panel hangisinin hangisi olduğunu kesin bilemiyor, tahmin de etmiyor.
   - **Hayır**: hiçbir şey değişmez. Bu grupları Premiere'de ayrı ayrı senkronlamak iyi bir çözüm.
   - **Evet**: o kayıtlar zamanı değişmeden park track'lerine gider, diğer oturumlar dizilir.
+- **"VETO: …"** satırı (TOPLA onayında): aynı cihazın iki kaydı üst üste geldiği için panel bir bileşeni oturumlara ayırdı.
+  **İki Sony gövdesi** (ikisi de C0xxx) panel için tek cihazdır. Aynı anda kayıt yaptılarsa bu satır gerçek bir oturumu ikiye bölüyor olabilir.
+  Böyle bir satır görürsen **Hayır** de ve bana getir.
 - **"OTURUM SIRASI ÇELİŞKİLİ"** sorusu: kameraların sayaçları farklı sıra söylüyor.
   - **Hayır**: hiçbir şey değişmez.
   - **Evet**: oturumlar senkronun bıraktığı sırayla dizilir.
@@ -127,6 +137,7 @@ Sonra:
   - Sonra planı yazar: oturumlar, her oturumun grupları, çapalar (grubun en uzun kamera klibi) ve ses parçaları. Ardından sorar.
   - Kesim **yalnız oturum içinde**: bir Zoom/DJI kaydı sadece kendi oturumundaki kameraların çapasına göre kesilir.
   - Oturumda harici ses yoksa (ör. sadece iki kamera) kamera sesi **korunur** ve kameralarla bağlanır.
+  - Oturumda hiç kamera yoksa (ör. yalnız Zoom + DJI) o oturumun seslerine **dokunulmaz**: kesilmez, silinmez, bağlanmaz.
   - Onay penceresinde **"SESSİZ KALACAK"** satırları çıkabilir. Bunlar, kamera sesinin silineceği ama Zoom/DJI sesinin 1 sn'den uzun süre
     olmadığı yerlerdir: çapanın içindeki boşluklar ya da çapadan taşan kamera kısımları. BAĞLA'dan sonra oralarda ses kalmaz.
     12 Eylül verinde iki yer çıktı: A038C002'de 41.8 sn, A038C001'de 2.3 sn. Kabul etmiyorsan **Hayır** de; hiçbir şey değişmez.

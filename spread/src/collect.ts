@@ -134,17 +134,50 @@ export const itemOf = (c: ClipInfo): LinkItemRec => ({ kind: c.kind, track: c.tr
 
 /**
  * Kayıttaki BAĞLA aşaması okunan düzende geçerli mi:
- *  - "applied": kayıtlı bağlama gruplarının BÜTÜN öğeleri yerinde (BAĞLA'nın kesme/silmesi duruyor)
- *  - "partial": bir kısmı yok ama kesimin yarattığı parçalardan biri var (BAĞLA'dan sonra düzen değişmiş) → hiçbir komut çalışmaz
- *  - "none"   : BAĞLA'dan geçmedi ya da tamamen geri alındı (kesimin yarattığı hiçbir parça yok)
+ *  - "applied": kayıtlı bağlama gruplarının BÜTÜN öğeleri yerinde VE BAĞLA'nın sildiklerinin HİÇBİRİ yok (kesme/silme duruyor)
+ *  - "none"   : BAĞLA'dan geçmedi ya da tamamen geri alındı (kesimin yarattığı hiçbir parça yok, sildiklerinin HEPSİ geri gelmiş)
+ *  - "partial": ikisi de değil (BAĞLA'dan sonra düzen değişmiş / kısmen geri alınmış) → TOPLA da BAĞLA da başlamaz
  */
 export function bindState(rec: CollectRecord | null, s: Snapshot): "none" | "applied" | "partial" {
   const b = rec?.bind;
   if (!b) return "none";
   const have = new Set(s.clips.map((c) => itemKey(itemOf(c))));
   const all = b.groups.flatMap((g) => g.items);
-  if (all.length && all.every((i) => have.has(itemKey(i)))) return "applied";
-  return b.created.some((i) => have.has(itemKey(i))) ? "partial" : "none";
+  const removedBack = b.removed.filter((i) => have.has(itemKey(i))).length;
+  if (all.length && all.every((i) => have.has(itemKey(i))) && removedBack === 0) return "applied";
+  if (!b.created.some((i) => have.has(itemKey(i))) && removedBack === b.removed.length) return "none";
+  return "partial";
+}
+
+/** Track'li klip anahtarı (TOPLA düzen parmak izi). */
+export const placedKey = (kind: string, track: number, projId: string, start: bigint, end: bigint, inPt: string, outPt: string): string =>
+  [kind, track, projId, start, end, inPt, outPt].join("|");
+const placedKeyOf = (c: ClipInfo): string => placedKey(c.kind, c.track, c.projId, big(c.start), big(c.end), c.inPt, c.outPt);
+
+/**
+ * Park kaydı hâlâ bu düzen için mi: "collected" = TOPLA'nın bıraktığı yerler duruyor; "undone" = TOPLA öncesi yerler duruyor (TOPLA
+ * tamamen geri alınmış → park kaydı geçersiz, her şey senkron sonucundan yeniden); "changed" = ikisi de değil (TOPLA'dan sonra el ile
+ * değişmiş → kullanıcıya sorulur).
+ */
+export function layoutState(rec: CollectRecord, s: Snapshot): "collected" | "undone" | "changed" {
+  const have = new Set(s.clips.map(placedKeyOf));
+  const { pre, post } = rec.layout;
+  if (!post.length) return "changed";
+  if (post.every((k) => have.has(k))) return "collected";
+  if (pre.every((k) => have.has(k))) return "undone";
+  return "changed";
+}
+
+/** TOPLA'nın parmak izi: oturumlardaki kamera videoları (kamerasız oturumda sesleri) + park'takiler; önce / sonra. */
+export function layoutOf(plan: CollectPlan): CollectRecord["layout"] {
+  const camless = new Set(plan.layouts.filter((l) => !plan.placements.some((p) => p.session === l.session && p.x.role === "camera")).map((l) => l.session));
+  const pick = plan.placements.filter((p) =>
+    p.session === null ? p.x.role !== "unknown" : p.x.role === "camera" || (camless.has(p.session) && p.x.role === "external")
+  );
+  return {
+    pre: pick.map((p) => placedKeyOf(p.x.clip)),
+    post: pick.map((p) => placedKey(p.x.clip.kind, p.track, p.x.clip.projId, big(p.x.clip.start) + p.delta, big(p.x.clip.end) + p.delta, p.x.clip.inPt, p.x.clip.outPt)),
+  };
 }
 
 // ------------------------------------------------------------------ plan
@@ -272,6 +305,14 @@ export function makeCollectPlan(
     if (r && r.kind === "camera") byRec.set(r, [...(byRec.get(r) ?? []), p]);
   }
   for (const list of byRec.values()) if (list.some((p) => p.moves)) for (const p of list) p.moves = true;
+  // analize girmeyen (park'taki) kamera klibinin videosu + kılavuzları da birlikte (aynı kaynak + aynı start/end)
+  const byClip = new Map<string, Placement[]>();
+  for (const p of placements) {
+    if (a.recordingOf.has(p.x.clip) || (p.x.role !== "camera" && p.x.role !== "guide")) continue;
+    const k = [p.x.clip.projId, p.x.clip.start, p.x.clip.end].join("|");
+    byClip.set(k, [...(byClip.get(k) ?? []), p]);
+  }
+  for (const list of byClip.values()) if (list.some((p) => p.moves)) for (const p of list) p.moves = true;
   const moves = placements.filter((p) => p.moves);
 
   // çakışma → HATA (sessizce başka track'e konmaz)

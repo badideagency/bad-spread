@@ -7,7 +7,7 @@
 | Sürüm | **Spread v0.3.1** (`release/spread.ccx`). **Spread Helper v0.3.0 DEĞİŞMEDİ** (yeniden kurmaya gerek yok). |
 | Yapılan | Adlandırmadan bağımsız **oturum tespiti** (güçlü bağ + cihaz vetosu, `spread/src/sessions.ts` — TEK modül), **kronolojik yatay dizim** (TOPLA), oturum içi BAĞLA, **kaynak eşleme paneli** (A track / sil), eşik + boşluk ayarları, çift kopya durdurma, ilk oturum ölçümü |
 | Gerçek veri | Kullanıcının 12 Eylül raporu `spread/dev/fixtures/senkron-raporu-260912.txt`: çiftler varken DURUR (A26/A27, A29/A30); temizken 4 oturum, sıra 133224 → 141513 → 144207 → 151555 |
-| Bulutta doğrulanan | `npm run check` (tsc, eslint, d.ts 75 + uxp.d.ts 5, host.jsx, Probe smoke, **Spread smoke 55 senaryo** — gerçek yardımcı sunucusu + host.jsx dahil), iki bağımsız alt ajan incelemesi (#2 bulguları düzeltildi, #3 kapanış), yeni senaryoların mutasyon sınaması |
+| Bulutta doğrulanan | `npm run check` (tsc, eslint, d.ts 75 + uxp.d.ts 5, host.jsx, Probe smoke, **Spread smoke 59 senaryo** — gerçek yardımcı sunucusu + host.jsx dahil), iki bağımsız alt ajan incelemesi (#2 ve #3 bulguları düzeltildi), yeni senaryoların mutasyon sınaması (9 koruma bozuldu, 9'u da yakalandı) |
 | Dal | `claude/sweet-bell-do4j75` |
 
 ## KANITLANMIŞ (kullanıcı, gerçek Premiere, 12 Eylül çekimi)
@@ -35,7 +35,9 @@ tarih_saat, kanal = TrX; aynı saat = TEK kayıt), bilinmeyen (sondaki kanal eki
 anahtarı ("Zoom Tr1", "DJI", "ZOOM Tr2") eşleme paneli içindir. Kamera iç saati / dosya mtime KULLANILMAZ.
 
 **Oturum** (`sessions.ts` — TOPLA, BAĞLA ve durum raporu bunu kullanır; yardımcı kendi başına gruplamaz, bu modülün çıktısını uygular):
-1. KAYIT örneği = (cihaz, kayıt, start, end): kamera dosyası (+ kılavuz sesleri) ya da harici kayıt (Zoom kanalları birlikte).
+1. KAYIT = (cihaz, kayıt): kamera dosyası (+ kılavuz sesleri) ya da harici kayıt (Zoom kanalları birlikte). Aynı kaydın timeline'daki
+   BÜTÜN klipleri (kanallar, parçalar) tek kayıttır; hepsinin `in − start` farkı aynı olmak zorunda (değilse DUR, bkz. 8), aralığı en
+   erken start → en geç end. (İnceleme #3: kaydın kısa kanalı ayrı "sahipsiz" sayılıp park'a gidince kanallar 8 sn kayıyordu.)
 2. GÜÇLÜ BAĞ: farklı cihazlardan iki kayıt çakışıyor VE çakışma ≥ eşik × kısa olanın süresi.
 3. OTURUM = güçlü bağların bağlı bileşeni (union-find).
 4. VETO: aynı cihazın iki FARKLI kaydı çakışamaz. Bileşende veto varsa en zayıf bağlar kesilir — **yalnız tek anlamlıysa**:
@@ -69,6 +71,12 @@ anahtarı ("Zoom Tr1", "DJI", "ZOOM Tr2") eşleme paneli içindir. Kamera iç sa
   kayda bakar: park'takiler analize girmez (yeni düzende bir oturumun uzun kaydının altına düşen sahipsiz klip oturuma karışmaz —
   `adv_remap`); ilk kez toplanan düzende hiçbir şey "park" sayılmaz (kamera-yalnız oturum düşmez — `adv_camonly`). Park'takiler park
   bölgesindeyse yerinde kalır; çerçeve büyüdüyse (eşleme değişti) zamanı değişmeden yeni park track'lerine yerleşir.
+- **Park kaydının geçerliliği** (kayıttaki düzen parmak izi: oturumlardaki kamera videoları + park'takiler, TOPLA öncesi ve sonrası
+  track/zaman anahtarları): TOPLA'nın bıraktığı yerler duruyorsa kayıt kullanılır; TOPLA tamamen geri alınmışsa (TOPLA öncesi yerler
+  duruyor) kayıt **bırakılır** ve her şey senkron sonucundan yeniden bulunur (`adv_undone_park`); ikisi de değilse (TOPLA'dan sonra el ile
+  değişmiş) "PARK KAYDI" sorusu: Evet = park'takiler park'ta kalır, Hayır = hiçbir şey. BAĞLA, TOPLA geri alınmışsa başlamaz.
+- **Bölünmüş kayıt**: park kaydındaki bir klibin kaydı (aynı cihaz + kayıt) bir oturumda → TOPLA sorar ("AYNI KAYIT BÖLÜNMÜŞ"; Evet = park
+  kaydından çıkar, oturumla aynı ofsetle taşınır; senkron tutarlılığı yeniden denetlenir), BAĞLA durur (`adv_splitrec`).
 - TOPLA ve BAĞLA sonrası: kayıttaki BAĞLA aşaması timeline'da yerindeyse ve kesim yapılmışsa TOPLA **başlamaz** (harici sesler çapalara
   bölündü, oturumları bulduran tam kayıtlar yok → tahmin yok; yedek sequence ya da BAĞLA'yı tamamen Ctrl+Z). Kesimsiz BAĞLA'dan sonra
   (yalnız kılavuz silme) TOPLA çalışır, onayda "bağlar çözülür" uyarısı; korunan kamera sesleri videolarıyla birlikte taşınır.
@@ -90,8 +98,14 @@ Doğrulama: her parça kendi oturumunun bir çapasının içinde, çapa içi ses
 **SESSİZ KALACAK**: kamera sesi silinen grupta harici sesin kapsamadığı > 1 sn (çapa içindeki boşluk, çapa dışına taşan kamera kısmı) onay
 penceresinde tek tek listelenir (kural gereği kamera sesi silinir; karar kullanıcının). Gerçek 12 Eylül verisinde: O2 A038C002 41.840 sn,
 O1 A038C001 2.320 sn.
-**Kesim kaydı ve yalnız bağlama**: kesme/silme tick düzeyinde doğrulanınca bağlama grupları (yardımcının aradığı değerlerle) ve kesimin
-yarattığı parçalar kayda yazılır. BAĞLA'ya yeniden basılınca (ör. yardımcı düştüyse) bütün öğeler yerindeyse **kesilmiş düzen yeniden
+**Kamerasız oturum** (ör. Zoom + DJI birbirine bağlı, kamera yok): çapa yok → sesleri olduğu gibi kalır (kesilmez, silinmez,
+bağlanmaz), onayda bildirilir (eskiden ikisi de "çapa dışı" diye siliniyordu — `adv_nocam`). Hiçbir oturumda kamera yoksa plan hatası.
+**Bağlı kılavuz**: UXP'de bağ okunamıyor/çözülemiyor. TOPLA'nın taşımadığı (clone'lanmamış) bir kameranın kılavuzu hâlâ bağlı olabilir;
+silme bağlı videoyu da silerse TX-1 doğrulaması durur ve Ctrl+Z + rapor ister (eski "sonra TOPLA" tavsiyesi döngüye giriyordu).
+**Kesim kaydı ve yalnız bağlama**: kesme/silme tick düzeyinde doğrulanınca bağlama grupları (yardımcının aradığı değerlerle), kesimin
+yarattığı parçalar ve BAĞLA'nın SİLDİKLERİ kayda yazılır. "Uygulanmış" = grupların bütün öğeleri yerinde VE sildiklerinin hiçbiri yok;
+"geri alınmış" = yarattığı hiçbir parça yok VE sildiklerinin hepsi geri gelmiş (inceleme #3: kesimsiz BAĞLA geri alınınca kılavuzlar geri
+geliyor ama BAĞLA "uygulanmış" sanıp yalnız bağlıyordu — `adv_cutfree_undo`). BAĞLA'ya yeniden basılınca (ör. yardımcı düştüyse) bütün öğeler yerindeyse **kesilmiş düzen yeniden
 analiz edilmez** (parçalar çapalara bölündüğü için bağlar ve sahipsizlik değişir) — kayıttaki gruplar bağlanır; yedek yok, düzenleme yok
 (`linkfail`, `rebind`). Parçaların bir kısmı yerinde bir kısmı değilse TOPLA da BAĞLA da başlamaz. Hiçbiri yoksa (BAĞLA tamamen geri
 alındı) her şey baştan çalışır (`adv_after`).
@@ -132,10 +146,46 @@ bağında yalnız 133224 parçaları (144207'den 176 sn KESİLMEDİ).
 | `adv_zoomgeneric` | `ZOOM0001_Tr1/_Tr2` → aynı kayıt, veto yok, tek oturum; eşleme "ZOOM Tr1/Tr2"; BAĞLA tamam |
 | `adv_oversplit` | vetoyu çözen kesim gerçek bir alt grubu da koparıyor (gereksiz bağ) → SORULUR, Hayır = hiçbir şey |
 | `adv_suspicious` | 1 sn'lik DJI yalnız uzun kayıtların içinde → ŞÜPHELİ ÜYE sorusu; Evet → park (zaman aynı); BAĞLA dokunmaz |
+| `adv_cutfree_undo` | kesimsiz BAĞLA Ctrl+Z ile geri alınınca (kılavuzlar geri) BAĞLA yeniden TAM çalışır (kılavuzları siler); TOPLA "BAĞLA'dan geçti" sanmaz |
+| `adv_undone_park` | TOPLA tamamen geri alınınca park kaydı sorulmadan bırakılır, %80 eşikte DJI senkron sonucundan O1'e katılır; TOPLA'dan sonra el ile kaydırılan düzende park kaydı SORULUR, Hayır = hiçbir şey |
+| `adv_splitrec` | kaydın 3 sn'lik kanalı kaydıyla tek kayıt → aynı ofsetle taşınır; park'taki parça + oturumdaki parça (aynı kayıt) → BAĞLA durur, TOPLA sorar, Evet → birlikte taşınır |
+| `adv_nocam` | kamerasız oturumun Zoom + DJI sesleri BAĞLA'da olduğu gibi kalır, diğer oturum bağlanır |
 | `firstplace` | yalnız NEGATİF ofsetli clone 1 kare kayıyor → "İLK TAŞIMA TUTMADI (yerleştirme, O1…)", kalan yerleştirme yapılmaz, Ctrl+Z × 3 aslına döner |
 | (genişletildi) | `vetosplit` (üyelik + tick-exact düzen), `nested` (ses tarafı da park'ta, zaman aynı), `orderconflict` (Evet → timeline sırası, tick-exact), `linkfail` (tekrar bas → yalnız bağlama), `limits` (önce gerçek TOPLA), `real0912` (sessiz kalacak bildirimleri) |
 | `identity`, `mapping`, `status2` | ad desenleri; kaynak eşleme paneli + localStorage; durum raporunda oturumlar/bağlar/çiftler |
 | (uyarlandı) | `wav2groups`, `outside`, `graphic`, `helperoff`, `setnoop`, `setmove`, `setendmove`, `linkfail`, `linksource`, `rebind`, `again`, `security`, `undomid`, `stale`, `notcollected`, `limits`, `reportparse` |
+
+### Bağımsız alt ajan incelemeleri (v0.3.1)
+
+**#2** (A tahmin yok / B oturum içi senkron / D park: İHLAL; C ad kuralı, E: TUTUYOR) — 13 bulgu, hepsi düzeltildi:
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| 1 | BAĞLA'dan sonra çerçeve kayıyor, korunan kılavuzlar "park" sanılıyor → TOPLA videoları sessiz taşıyordu | TOPLA kaydı (çerçeve, park listesi); kesimli BAĞLA'dan sonra TOPLA başlamaz; kesimsiz sonrası uyarır, kılavuz videoyla taşınır (`adv_after`) |
+| 2 | kamera-yalnız ilk düzen "toplanmış" sanılıp oturum düşüyordu | park yalnız kayıttan (`adv_camonly`) |
+| 3 | eşleme değişince park'taki sahipsiz oturuma karışıyordu | park kayıttan; çerçeve büyüyünce yeniden park (`adv_remap`) |
+| 4 | belirsiz sırada kısıtlar atılıyordu | bilinen kısıtlara uyan sıra (`adv_ambig`) |
+| 5 | veto çözümü gerçek alt grubu da koparabiliyordu | kesilen her bağ gerekli olmalı (`adv_oversplit`) |
+| 6 | uzun kaydın içine düşen kısa klip %100 bağ | ŞÜPHELİ ÜYE sorusu (`adv_suspicious`) |
+| 7 | eşik değişikliği ancak kesimden SONRA yakalanıyordu | kayıttaki eşik/eşlemeyle karşılaştırma, düzenlemeden önce (`adv_thr`) |
+| 8 | kamera sesi, harici sesin kapsamadığı yerde de siliniyordu | SESSİZ KALACAK listesi onayda (karar kullanıcının) |
+| 9 | `ZOOM0001_Tr1/_Tr2` sahte veto | kanal eki ayrılır (`adv_zoomgeneric`) |
+| 10 | ölçüm adımı kamera video/kılavuzunu ayırabiliyordu | ölçüm kaydın bütünüyle |
+| 11 | yeri farklı kılavuz ilk kamera örneğine bağlanıyordu | en çok çakışan örneğe, uyarıyla |
+| 12 | aynı kayıt farklı senkron konumlarında sessizce kabul | DUR |
+| 13 | kaydedilmemiş varsayılan eşlemeler kayıyordu | TOPLA eşlemeyi kalıcı yazar |
+
+**#3** (kapanış; A: #1 nedeniyle tam TUTMUYORDU; B, C: TUTUYOR, açıklarla) — düzeltildi:
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| 1 (engelleyici) | kesimsiz BAĞLA geri alınınca "uygulanmış" sanılıyordu | kayıtta BAĞLA'nın sildikleri (`adv_cutfree_undo`) |
+| 2 | TOPLA tamamen geri alınınca eski park kaydı kullanılıyordu | düzen parmak izi: geri alınmışsa bırak, değişmişse sor (`adv_undone_park`) |
+| 3 | kaydın kısa kanalı sahipsiz → kanallar 8 sn kayıyordu | kayıt = (cihaz, kayıt), parçalar birlikte; park/oturum bölünmesi sorulur (`adv_splitrec`) |
+| 4 | aynı markanın iki gövdesi → sahte veto | kullanıcının kimlik kuralı; belgelendi (Belirsizlikler 7) |
+| 5 | kamerasız oturumun sesleri siliniyordu | dokunulmaz (`adv_nocam`) |
+| 6 | ölçüm, park'taki kameranın video/kılavuzunu ayırabiliyordu (geçici) | ölçüm ve birlikte-taşıma kuralı park'takilerde de (kaynak + start/end) |
+| 7 | taşınmamış kameranın bağlı kılavuzu silinince "sonra TOPLA" döngüsü | mesaj düzeltildi; belgelendi |
 
 ### Belirsizlikler (v0.3.1)
 
@@ -150,7 +200,10 @@ bağında yalnız 133224 parçaları (144207'den 176 sn KESİLMEDİ).
 5. VETO_MARGIN (0.05) ve SUSPECT_FACTOR (20) sabit; eşik ayarı gibi panelde değil.
 6. TOPLA kaydı panelin localStorage'ında, sequence GUID'ine bağlı. Panel verisi silinirse ya da başka bir sequence'ta (ör. yedek kopya)
    çalışılırsa kayıt yoktur → BAĞLA "önce TOPLA" der (tahmin yok). localStorage yazılamazsa kayıt yalnız o panel oturumunda yaşar.
-7. **Karar bekleyen (kullanıcı):** kamera sesi silinen grupta harici sesin kapsamadığı yerler (gerçek veride O2'de 41.8 sn) şimdilik
+7. **Aynı markanın iki gövdesi** (ör. iki Sony, ikisi de `C\d{4}`) kullanıcının kimlik kuralıyla TEK cihazdır → aynı oturumda üst üste
+   kayıtları sahte veto üretir; çapraz bağlar belirgin zayıfsa oturum "tek anlamlı" diye bölünür (inceleme #3, #4). Karar onay penceresinde
+   "VETO: …" satırıyla görünür — iki gövdeli çekimde bu satıra bakılmalı. Gövdeleri ayıracak bir ad kuralı verilirse eklenir.
+8. **Karar bekleyen (kullanıcı):** kamera sesi silinen grupta harici sesin kapsamadığı yerler (gerçek veride O2'de 41.8 sn) şimdilik
    yalnız onayda gösteriliyor. İstenirse o kısımlarda kamera sesi de parçalanıp korunabilir (yeni kural; tahminle eklenmedi).
 
 

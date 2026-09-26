@@ -5,7 +5,9 @@
 // rastgele ve ÜST ÜSTE koyar. → Gruplama senkron sonucundan yapılır, dosya adından DEĞİL. Adlandırma yalnız cihaz kimliği ve sıra için.
 //
 // 1) KAYIT: kamera dosyası (video + kılavuz sesleri) ya da harici ses kaydı (Zoom: aynı saat = tek kayıt, kanalları birlikte; DJI:
-//    dosya). Timeline'da (cihaz, kayıt, start, end) = bir kayıt ÖRNEĞİ.
+//    dosya). Anahtar (cihaz, kayıt): aynı kaydın timeline'daki bütün klipleri (kanallar, parçalar) TEK kayıttır — hepsinin (in − start)
+//    farkı aynı olmak ZORUNDA (değilse DUR), yani senkron onları birbirine göre tutarlı koymuştur; aralığı en erken start → en geç end.
+//    (Kanallarından biri kısa diye ayrı "sahipsiz" sayılıp park'a gitseydi, kanallar birbirinden kayardı.)
 // 2) GÜÇLÜ BAĞ: farklı cihazlardan iki kayıt zamanda çakışıyor VE çakışma kısa olanın ≥ eşik'i (varsayılan %90).
 //    Gerçek veride doğru eşleşmelerin en düşüğü %97.96, yanlış çakışmaların en yükseği %49.
 // 3) OTURUM = güçlü bağların bağlı bileşeni.
@@ -104,6 +106,12 @@ export function findDuplicates(items: Classified[]): string[] {
   return out;
 }
 
+/** Kaydın anahtarı (cihaz | kayıt); kılavuz ses kendi kamerasının kaydı. Bilinmeyen → null. */
+export function recordingKey(x: Classified): string | null {
+  if (!x.ident || x.role === "unknown") return null;
+  return `${x.role === "external" ? x.ident.device : x.device}|${x.ident.recording}`;
+}
+
 function buildRecordings(items: Classified[], warnings: string[]): { recordings: Recording[]; recordingOf: Map<ClipInfo, Recording> } {
   const byKey = new Map<string, Recording>();
   const recordingOf = new Map<ClipInfo, Recording>();
@@ -129,9 +137,8 @@ function buildRecordings(items: Classified[], warnings: string[]): { recordings:
     if (big(x.clip.end) > r.end) r.end = big(x.clip.end);
     recordingOf.set(x.clip, r);
   };
-  for (const x of items.filter((i) => i.role === "camera")) add(`${x.device}|${x.ident!.recording}|${x.clip.start}|${x.clip.end}`, "camera", x);
-  for (const x of items.filter((i) => i.role === "external"))
-    add(`${x.ident!.device}|${x.ident!.recording}|${x.clip.start}|${x.clip.end}`, "audio", x);
+  for (const x of items.filter((i) => i.role === "camera")) add(recordingKey(x)!, "camera", x);
+  for (const x of items.filter((i) => i.role === "external")) add(recordingKey(x)!, "audio", x);
   // kılavuz sesler kendi kamerasının kaydına (aynı kaynak + aynı start/end; yoksa aynı kaynaklı ilk kamera örneği)
   const cams = [...byKey.values()].filter((r) => r.kind === "camera");
   const ovl = (r: Recording, c: ClipInfo) => {
@@ -373,6 +380,22 @@ export function analyze(s: Snapshot, items: Classified[], opts: AnalyzeOpts): An
   const sessionOf = new Map<Recording, Session>();
   for (const x of order) for (const r of x.recordings) sessionOf.set(r, x);
   return { recordings, links, sessions: order, orphans, unresolved, vetoDecisions, duplicates, orderIssue, errors, warnings, sessionOf, recordingOf };
+}
+
+/**
+ * BÖLÜNMÜŞ KAYIT: analizden çıkarılan (park kaydındaki) bir klibin kaydı (aynı cihaz + kayıt) analizde bir oturumda. Park'taki parça
+ * zamanı değişmeden kalırken oturum taşınırsa aynı kaydın parçaları birbirinden kayar → TOPLA sorar, BAĞLA durur.
+ */
+export function partlyParked(a: Analysis, items: Classified[], excluded: Set<ClipInfo>): { rec: Recording; session: Session; parked: ClipInfo[] }[] {
+  const byId = new Map(a.recordings.map((r) => [r.id, r]));
+  const out = new Map<Recording, ClipInfo[]>();
+  for (const x of items) {
+    if (!excluded.has(x.clip)) continue;
+    const k = recordingKey(x);
+    const r = k ? byId.get(k) : undefined;
+    if (r && a.sessionOf.has(r)) out.set(r, [...(out.get(r) ?? []), x.clip]);
+  }
+  return [...out].map(([rec, parked]) => ({ rec, session: a.sessionOf.get(rec)!, parked }));
 }
 
 /** Kısa olanın kendinden en az bu kadar kat uzun bir kaydın içine düşmesi "yalnız içerilme" kanıtı sayılır. */

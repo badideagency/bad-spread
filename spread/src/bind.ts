@@ -11,7 +11,8 @@
 // 4) BAĞLAMA grubu: gruptaki kamera videoları + o grubun çapasına düşen harici ses parçaları (+ korunan kamera sesleri).
 // 5) SESSİZ KALACAK yerler (kamera sesi silinen grupta harici sesin kapsamadığı > 1 sn: çapa içindeki boşluklar ve çapa dışına
 //    taşan kamera kısımları) → onay penceresinde AÇIKÇA gösterilir (karar kullanıcının; kural gereği kamera sesi silinir).
-// Sahipsizler, park track'lerindekiler ve dokunulmayan öğeler BAĞLA'ya girmez.
+// Sahipsizler, park track'lerindekiler ve dokunulmayan öğeler BAĞLA'ya girmez. KAMERASIZ oturumun (ör. Zoom + DJI, kamera yok) sesleri
+// de olduğu gibi kalır (çapa yok → kesilmez, silinmez, bağlanmaz; bildirilir).
 //
 // UXP'de razor yok → parça = createCloneTrackItemAction + set End/Start/In/Out, sonra aslı silinir. Yöntem (tümü AYNI track'te):
 //   TX-1 "kesim hazırlığı": her parça için sesin tam boy kopyası sequence sonunun ötesindeki bir PARK YUVASINA (clone, zaman
@@ -26,7 +27,7 @@ import { cmpStart, fileName, where, type Classified } from "./classify";
 import { LINK_LIMITS } from "./linker";
 import { expOf, type Exp } from "./layout";
 import { big, secOf, TICKS_PER_SECOND, type ClipInfo, type Snapshot } from "./model";
-import { sessionGroups, unionLength, type Analysis, type Group } from "./sessions";
+import { sessionGroups, unionLength, type Analysis, type Group, type Session } from "./sessions";
 import type { Target } from "./settings";
 
 export type { Group };
@@ -62,6 +63,8 @@ export interface BindPlan {
   coverage: Map<string, bigint>;
   /** kamera sesi silinen grupta harici sesin kapsamadığı (> 1 sn) yerler — onayda gösterilir */
   silent: string[];
+  /** kamerasız oturumlar: sesleri olduğu gibi kalır */
+  camless: Session[];
   errors: string[];
   warnings: string[];
 }
@@ -88,10 +91,16 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>): BindPla
   const keptSet = new Set<string>();
   const coverage = new Map<string, bigint>();
   const silent: string[] = [];
+  const camless: Session[] = [];
   if (!a.sessions.length) errors.push("oturum yok (güçlü bağlı kayıt yok) → BAĞLA'nın bağlayacağı bir şey yok");
 
   for (const session of a.sessions) {
     const gs = sessionGroups(session);
+    if (!gs.length) {
+      camless.push(session);
+      warnings.push(`${session.id} (${session.label}): oturumda kamera yok → sesleri olduğu gibi kalır (kesilmez, silinmez, bağlanmaz)`);
+      continue;
+    }
     groups.push(...gs);
     const ext: Classified[] = session.recordings.filter((r) => r.kind === "audio").flatMap((r) => r.items.filter((x) => x.role === "external"));
     for (const x of ext.sort((p, q) => cmpStart(p.clip, q.clip))) {
@@ -165,6 +174,7 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>): BindPla
     }
   }
 
+  if (a.sessions.length && !groups.length) errors.push("hiçbir oturumda kamera yok → BAĞLA'nın bağlayacağı grup yok");
   // yardımcının sınırları (bağlama isteği bunları aşarsa kesmeden SONRA reddedilirdi → şimdi, hiçbir şey değişmeden)
   for (const g of groups) {
     const n = g.cams.length + pieces.filter((p) => p.group === g).length + (keptGuides.get(g)?.length ?? 0);
@@ -173,7 +183,7 @@ export function makeBindPlan(a: Analysis, mapping: Map<string, Target>): BindPla
   for (const c of [...groups.flatMap((g) => g.cams), ...pieces.map((p) => p.src)])
     if (fileName(c).length > LINK_LIMITS.name) errors.push(`kaynak adı çok uzun (${fileName(c).length} > ${LINK_LIMITS.name}): ${where(c)}`);
 
-  return { groups, pieces, cuts, deleteGuides, deleteSil, deleteOutside, keptGuides, keptSources: [...keptSet], coverage, silent, errors, warnings };
+  return { groups, pieces, cuts, deleteGuides, deleteSil, deleteOutside, keptGuides, keptSources: [...keptSet], coverage, silent, camless, errors, warnings };
 }
 
 // ------------------------------------------------------------------ park yuvaları ve beklenen düzenler

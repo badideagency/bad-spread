@@ -1052,6 +1052,10 @@ function expectBagla(list, sessions, sil = []) {
     const mem = list.filter((e) => keys.includes(recOf(e.name)));
     mem.forEach((e) => used.add(e));
     const cams = mem.filter((e) => e.kind === "V").sort((p, q) => (p.start < q.start ? -1 : p.start > q.start ? 1 : p.track - q.track));
+    if (!cams.length) {
+      exp.push(...mem); // kamerasız oturum: sesleri olduğu gibi kalır
+      continue;
+    }
     const gs = [];
     for (const c of cams) {
       const g = gs[gs.length - 1];
@@ -1820,6 +1824,135 @@ scenarios.firstplace = async () => {
   for (let i = 0; i < Number(m[1]); i++) undo();
   if (mainTracks() !== before) fail(`Ctrl+Z × ${m[1]} aslına döndürmedi`);
   else ok(`Ctrl+Z × ${m[1]} → asıl düzen birebir`);
+};
+
+// ------------------------------------------------------------ inceleme #3 — adversaryal senaryolar
+scenarios.adv_cutfree_undo = async () => {
+  // kesimsiz BAĞLA (Zoom tamamen çapanın içinde → yalnız kılavuzlar silinir) Ctrl+Z ile geri alınınca: kılavuzlar geri geldi →
+  // BAĞLA "uygulanmış" SAYILMAMALI (yalnız bağlama yapıp kılavuzları bırakmamalı), yeniden TAM BAĞLA yapmalı
+  const spec = {
+    cams: [
+      { name: "A038C001_260912AA.MP4", start: sec(10), dur: sec(30) },
+      { name: "C0101.MP4", start: sec(12), dur: sec(20) },
+    ],
+    wavs: [{ name: "260912_101512_Tr1.WAV", start: sec(15), dur: sec(15) }],
+    others: [],
+  };
+  const collected = await collectThen(spec);
+  await startHelper();
+  const o1 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ BAĞLA tamam/.test(o1) || txOf("BAĞLA").join(",") !== "BAĞLA: yedek sequence,BAĞLA: kesim hazırlığı") return fail("kesimsiz BAĞLA beklenenden farklı:\n" + failLines(o1));
+  if (!/Ctrl\+Z'ye 1 kez bas|Ctrl\+Z/.test(o1)) fail("geri alma bilgisi yok");
+  undo(); // kesim hazırlığı geri → kılavuzlar geri geldi
+  const guidesBack = clipNamed(/^(A038C001|C0101)/).filter((x) => x.kind === "A").length;
+  if (guidesBack !== 2) return fail(`mock: kılavuzlar geri gelmedi (${guidesBack})`);
+  let q = "";
+  const o2 = await clickAndWait("btn-bind", async (x) => ((q = x), yes()), doneRe);
+  if (/kayıttaki gruplar kullanılır/.test(q) || !/✓ BAĞLA tamam/.test(o2) || txOf("BAĞLA").filter((n) => n === "BAĞLA: kesim hazırlığı").length !== 2)
+    fail("geri alınmış kesimsiz BAĞLA 'uygulanmış' sanıldı:\n" + q + "\n" + failLines(o2));
+  else ok("kesimsiz BAĞLA Ctrl+Z ile geri alındı → kılavuzlar geri geldi → BAĞLA yeniden TAM çalıştı (kılavuzları sildi, bağladı)");
+  checkExactly(seqByGuid("guid-main-edit"), expectBagla(collected, [["260912_101512", "A038C001_260912AA", "C0101"]]).exp, "yeniden BAĞLA düzeni (kılavuz yok)");
+  undo();
+  const o3 = await clickAndWait("btn-collect", async (x) => ((q = x), yes()), doneRe);
+  if (!/Zaten toplanmış/.test(o3)) fail("BAĞLA geri alınınca TOPLA 'zaten toplanmış' demedi:\n" + failLines(o3));
+  else ok("BAĞLA geri alınınca TOPLA 'BAĞLA'dan geçti' SANMADI ('zaten toplanmış')");
+};
+
+scenarios.adv_undone_park = async () => {
+  // DJI [80–90] Zoom ile %80 çakışıyor: eşik %90'da sahipsiz → park. TOPLA TAMAMEN geri alınır, eşik %80 yapılır, TOPLA:
+  // park kaydı bırakılmalı (timeline TOPLA öncesi hâlinde) → DJI senkron sonucundan O1'e katılır
+  setupSync(smallSpec({ wavs: [...smallSpec().wavs, { name: "DJI_09_20260912_090000.WAV", start: sec(80), dur: sec(10) }] }));
+  const before = mainTracks();
+  let q = "";
+  const o1 = await clickAndWait("btn-collect", async (x) => ((q = x), yes()), doneRe);
+  if (!/✓ TOPLA tamam/.test(o1) || !/Park track'lerine .*DJI_09/.test(q)) return fail("ilk TOPLA: DJI park edilmedi:\n" + q);
+  const m = /Ctrl\+Z'ye (\d+) kez bas/.exec(o1);
+  for (let i = 0; i < Number(m ? m[1] : 0); i++) undo();
+  if (mainTracks() !== before) return fail("TOPLA geri alınamadı (mock)");
+  const thr = els["set-threshold"];
+  thr.value = "80";
+  thr.fire("change");
+  const qs = [];
+  const o2 = await clickAndWait("btn-collect", async (x) => (qs.push(x), yes()), doneRe);
+  const conf = qs.find((x) => /^TOPLA — /.test(x)) ?? "";
+  if (qs.some((x) => /PARK KAYDI/.test(x)) || !/geri alınmış .*park kaydı .*kullanılmıyor/.test(o2) || !/O1 .*DJI_09/.test(conf) || !/✓ TOPLA tamam: 1 oturum/.test(o2))
+    fail("TOPLA geri alınmışken eski park kaydı kullanıldı:\n" + qs.join("\n---\n") + "\n" + failLines(o2));
+  else ok("TOPLA tamamen geri alındı → park kaydı bırakıldı (sorulmadan, kanıtla); %80 eşikte DJI senkron sonucundan O1'e katıldı");
+  thr.value = "90";
+  thr.fire("change");
+  // TOPLA'dan sonra EL İLE değişen düzen → park kaydı SORULUR (Hayır = hiçbir şey)
+  setupSync(smallSpec({ wavs: [...smallSpec().wavs, { name: "DJI_09_20260912_090000.WAV", start: sec(200), dur: sec(3) }] }));
+  await clickAndWait("btn-collect", yes, doneRe);
+  const S = seqByGuid("guid-main-edit");
+  const cam = S.v.flat().find((c) => c.name.startsWith("C0102"));
+  cam.start += FRAME25;
+  cam.end += FRAME25; // kullanıcı bir kamerayı 1 kare kaydırdı
+  mockGen++;
+  const snap = JSON.stringify(state.sequences, repl);
+  let q2 = "";
+  const o3 = await clickAndWait("btn-collect", async (x) => ((q2 = x), no()), doneRe);
+  if (!/PARK KAYDI — düzen son TOPLA'dan sonra değişmiş/.test(q2) || !/DJI_09/.test(q2) || !/İptal edildi/.test(o3) || JSON.stringify(state.sequences, repl) !== snap)
+    fail("el ile değişen düzende park kaydı sorulmadı / bir şey değişti:\n" + q2);
+  else ok("TOPLA'dan sonra el ile değişen düzen → park kaydı SORULDU; Hayır → hiçbir şey değişmedi");
+};
+
+scenarios.adv_splitrec = async () => {
+  // (a) aynı Zoom kaydının kısa kanalı (Tr2 [85–88], aynı in − start) tek başına güçlü bağ kuramaz: kaydıyla TEK kayıt → Tr1 ile aynı
+  //     ofsetle taşınır (kanallar birbirinden kaymaz)
+  const tr1 = smallSpec().wavs[0];
+  setupSync(smallSpec({ wavs: [tr1, { name: "260912_101512_Tr2.WAV", start: sec(85) + 12345n, dur: sec(3), inPt: sec(80) }] }));
+  let q = "";
+  const o1 = await clickAndWait("btn-collect", async (x) => ((q = x), yes()), doneRe);
+  if (!/✓ TOPLA tamam: 1 oturum/.test(o1) || /Park track'lerine/.test(q)) return fail("kısa kanal ayrı sahipsiz sayıldı:\n" + q + "\n" + failLines(o1));
+  const w = clipNamed(/^260912_101512_Tr/).map((x) => x.c);
+  const offs = new Set(w.map((c) => String(c.inPt - c.start)));
+  if (w.length !== 2 || offs.size !== 1) fail(`kanallar birbirinden kaydı: ${w.map((c) => `${c.name} ${secOf(c.start)} in ${secOf(c.inPt)}`).join(", ")}`);
+  else ok("aynı kaydın kısa kanalı (Tr2 3 sn) kaydıyla TEK kayıt → Tr1 ile aynı ofsetle taşındı (in − start aynı)");
+  await startHelper();
+  const b1 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ BAĞLA tamam/.test(b1)) fail("BAĞLA tamamlanmadı:\n" + failLines(b1));
+
+  // (b) park kaydındaki bir parça ile oturumdaki parçası aynı kayıt (parça sonradan eklendi) → TOPLA SORAR; BAĞLA durur
+  setupSync(smallSpec({ wavs: [{ name: "DJI_01_20260912_101600.WAV", start: sec(8), dur: sec(80) }, { name: "260912_101512_Tr2.WAV", start: sec(200), dur: sec(3), inPt: sec(250) }] }));
+  const t1 = await clickAndWait("btn-collect", async (x) => ((q = x), yes()), doneRe);
+  if (!/✓ TOPLA tamam: 1 oturum/.test(t1) || !/Park track'lerine .*260912_101512/.test(q)) return fail("(b) Tr2 park edilmedi:\n" + q);
+  // kullanıcı aynı dosyanın (Tr2) başka bir bölümünü ekledi: aynı senkron konumunda (in − start aynı), oturumun kameralarının üstünde
+  const S = seqByGuid("guid-main-edit");
+  const t2 = S.a.flat().find((c) => c.name.startsWith("260912_101512_Tr2"));
+  const off = t2.inPt - t2.start;
+  const st = sec(0);
+  S.a.push([mkClip("A", t2.pi, st, st + sec(80), null, st + off)]);
+  mockGen++;
+  const snap = JSON.stringify(state.sequences, repl);
+  const b2 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/aynı kaydın bir kısmı park'ta, bir kısmı O1 oturumunda/.test(b2) || JSON.stringify(state.sequences, repl) !== snap) fail("(b) BAĞLA bölünmüş kayıtta durmadı:\n" + b2.split("\n").filter((l) => /HATA|DURDU/.test(l)).join("\n"));
+  else ok("(b) aynı kaydın bir parçası park'ta, başka parçası oturumda → BAĞLA düzenlemeden DURDU ('önce TOPLA')");
+  let q3 = "";
+  const t3 = await clickAndWait("btn-collect", async (x) => (/AYNI KAYIT BÖLÜNMÜŞ/.test(x) ? ((q3 = x), no()) : yes()), doneRe);
+  if (!/AYNI KAYIT BÖLÜNMÜŞ/.test(q3) || !/İptal edildi/.test(t3) || JSON.stringify(state.sequences, repl) !== snap) fail("(b) TOPLA bölünmüş kaydı sormadı / Hayır'da bir şey değişti:\n" + q3);
+  else ok("(b) TOPLA bölünmüş kaydı SORDU; Hayır → hiçbir şey değişmedi");
+  const t4 = await clickAndWait("btn-collect", yes, doneRe);
+  const w2 = clipNamed(/^260912_101512_Tr/).map((x) => x.c);
+  const d = w2.length === 2 ? w2[0].inPt - w2[0].start - (w2[1].inPt - w2[1].start) : null;
+  if (!/✓ TOPLA tamam/.test(t4) || d !== 0n) fail(`(b) Evet sonrası kanallar aynı ofsette değil / TOPLA tamamlanmadı:\n${failLines(t4)}`);
+  else ok("(b) Evet → park'taki parça kaydıyla oturuma alındı, diğer parçayla aynı ofsetle taşındı (parçalar birbirinden kaymadı)");
+};
+
+scenarios.adv_nocam = async () => {
+  // kamerasız oturum (Zoom + DJI birbirine %100 bağlı, kamera yok) + normal oturum: BAĞLA kamerasız oturumun seslerine DOKUNMAZ
+  const members = [
+    ["260912_101512", "A038C001_260912AA", "C0101", "A038C002_260912BB", "C0102"],
+    ["260912_120000", "DJI_01_20260912_120100"],
+  ];
+  const collected = await collectThen(
+    smallSpec({ wavs: [...smallSpec().wavs, { name: "260912_120000_Tr1.WAV", start: sec(300), dur: sec(60) }, { name: "DJI_01_20260912_120100.WAV", start: sec(301), dur: sec(58) }] })
+  );
+  await startHelper();
+  let q = "";
+  const out = await clickAndWait("btn-bind", async (x) => ((q = x), yes()), doneRe);
+  if (!/✓ BAĞLA tamam/.test(out) || !/1 kamerasız oturumun \(O2\) seslerine dokunulmayacak/.test(q)) return fail("kamerasız oturum bildirilmedi / BAĞLA tamamlanmadı:\n" + q + "\n" + failLines(out));
+  const eb = expectBagla(collected, members);
+  checkExactly(seqByGuid("guid-main-edit"), eb.exp, "kamerasız oturumun Zoom + DJI sesi olduğu gibi (silinmedi), diğer oturum bağlandı");
 };
 
 scenarios.mapping = async () => {

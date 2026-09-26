@@ -14,6 +14,8 @@ import {
   describeFrame,
   expectCollect,
   frameToRecord,
+  layoutOf,
+  layoutState,
   makeCollectPlan,
   makeFrame,
   parkedExp,
@@ -41,7 +43,7 @@ import {
 } from "./guard";
 import { compareLayout, findExp, snapshotOverlaps } from "./layout";
 import { fmtClip, relocate, secOf, settle, snapshot, ticks, trackLabel, TICKS_PER_SECOND, type ClipInfo, type Snapshot } from "./model";
-import { analyze, describeLinks, suspiciousMembers, type Analysis, type Recording } from "./sessions";
+import { analyze, describeLinks, partlyParked, suspiciousMembers, type Analysis, type Recording } from "./sessions";
 import { requireActive, type SeqContext } from "./session";
 import { getGapSec, getThreshold, loadRecord, mappingFor, saveMapping, saveRecord, type CollectRecord } from "./settings";
 import { log } from "./ui";
@@ -114,7 +116,29 @@ export async function runCollect(): Promise<void> {
               "yeniden bulunamaz (tahmin edilmez). TOPLA BAŞLAMADI, hiçbir şey değişmedi. Yeniden toplamak için BAĞLA öncesi yedek sequence'ı kullan " +
               "(ya da BAĞLA'yı Ctrl+Z ile tamamen geri al)."
       );
+    // park kaydı YALNIZ TOPLA'nın bıraktığı düzen duruyorsa geçerli: TOPLA tamamen geri alınmışsa bırakılır (her şey senkron
+    // sonucundan yeniden), düzen el ile değişmişse sorulur
     const keep = parkedFromRecord(items, rec);
+    if (keep.size) {
+      const ls = layoutState(rec!, s0);
+      if (ls === "undone") {
+        log(`   son TOPLA geri alınmış (timeline TOPLA öncesi hâlinde) → park kaydı (${keep.size} klip) kullanılmıyor; her şey senkron sonucundan`, "warn");
+        keep.clear();
+      } else if (ls === "changed") {
+        const list = [...keep].slice(0, 8).map((c) => `  • ${where(c)} [${secOf(c.start)}s–${secOf(c.end)}s]`);
+        const ans = await askUser(
+          `PARK KAYDI — düzen son TOPLA'dan sonra değişmiş (TOPLA'nın bıraktığı yerlerin bir kısmı yok). Son TOPLA şu ${keep.size} klibi park etmişti:\n` +
+            `${list.join("\n")}${keep.size > 8 ? `\n  … ${keep.size - 8} klip daha` : ""}\n` +
+            "Park'ta kalsınlar mı (oturumlara karışmaz, analiz edilmez; zamanları değişmez)?\n" +
+            "(Evet = kalsın. Hayır = hiçbir şey değişmez. Park kaydını bırakıp her şeyi senkron sonucundan yeniden bulmak için son TOPLA'yı " +
+            "Ctrl+Z ile tamamen geri al — panel bunu tanır.)"
+        );
+        if (ans !== "Evet") {
+          log("İptal edildi — hiçbir şey değişmedi.", "warn");
+          return;
+        }
+      }
+    }
     const exclude = new Set(keep);
     let a = analyze(s0, items, { threshold: getThreshold(), exclude });
     log(`Okundu: V ${s0.vCount}, A ${s0.aCount}, ${s0.clips.length} klip; ${a.recordings.length} kayıt, ${a.links.length} güçlü bağ (eşik %${Math.round(getThreshold() * 100)}).`, "dim");
@@ -126,6 +150,29 @@ export async function runCollect(): Promise<void> {
     if (a.errors.length) throw new SpreadStop("Senkron sonucunda tutarsızlık var — TOPLA BAŞLAMADI, hiçbir şey değişmedi.", a.errors);
     const readErr = s0.clips.flatMap((c) => c.readErrors.map((e) => `${where(c)} — ${e}`));
     if (readErr.length) throw new SpreadStop("Bazı klipler okunamadı. TOPLA BAŞLAMADI.", readErr);
+
+    // bölünmüş kayıt: park kaydındaki bir klibin kaydı (aynı cihaz + kayıt) bir oturumda → parçalar birbirinden kayardı → sor
+    const split = partlyParked(a, items, exclude);
+    if (split.length) {
+      const ans = await askUser(
+        "AYNI KAYIT BÖLÜNMÜŞ — bir kaydın bir kısmı park'ta (önceki TOPLA), bir kısmı bir oturumda:\n" +
+          `${split.map((x) => `  • ${x.rec.label}: park'ta ${x.parked.map(where).join(", ")} ↔ ${x.session.id} oturumunda`).join("\n")}\n` +
+          "Oturum taşınırken park'taki parça yerinde kalırsa aynı kaydın parçaları birbirinden kayar. Park'taki parçalar kaydıyla birlikte " +
+          "oturuma alınsın mı? (Evet = park kaydından çıkar, oturumla aynı ofsetle taşınır; senkron tutarlılığı yine denetlenir. Hayır = hiçbir şey değişmez.)"
+      );
+      if (ans !== "Evet") {
+        log("İptal edildi — hiçbir şey değişmedi.", "warn");
+        return;
+      }
+      for (const x of split)
+        for (const c of x.parked) {
+          exclude.delete(c);
+          keep.delete(c);
+        }
+      a = analyze(s0, items, { threshold: getThreshold(), exclude });
+      printAnalysis(a);
+      if (a.errors.length) throw new SpreadStop("Senkron sonucunda tutarsızlık var — TOPLA BAŞLAMADI, hiçbir şey değişmedi.", a.errors);
+    }
 
     // şüpheli üyeler (yalnız çok uzun bir kaydın içine düşmüş kısa klipler) → kullanıcı karar verir
     const kept = new Set<Recording["id"]>();
@@ -185,6 +232,7 @@ export async function runCollect(): Promise<void> {
       // park'takiler: önceki kayıttakiler + bu TOPLA'da oturumsuz kalan (bilinmeyen olmayan) her klip — zamanları değişmez
       parked: [...new Set(plan.placements.filter((p) => p.session === null && p.x.role !== "unknown").map((p) => clipKey(p.x.clip)))],
       bind,
+      layout: layoutOf(plan),
       at: new Date().toISOString(),
     });
     if (!fr) log("not: sequence kare süresi okunamadı → ofsetler kareye hizalanmadı.", "warn");
@@ -232,13 +280,15 @@ export async function runCollect(): Promise<void> {
     // park yeri: hem bugünkü düzenin hem YENİ düzenin sonunun ötesi (yerleştirme park kopyalarına değmesin), kare hizalı
     const pb = await parkBase(ctx, prev);
     const P = pb > ceilTo(plan.layoutEnd + PARK_GAP, fr) ? pb : ceilTo(plan.layoutEnd + PARK_GAP, fr);
-    // ölçüm: ilk oturumun taşınanları; ilk oturum hiç taşınmıyorsa ilk taşınanın bütün kaydı (kamera videosu + kılavuzları birlikte)
-    const rec0 = plan.moves.length ? a.recordingOf.get(plan.moves[0].x.clip) : undefined;
+    // ölçüm: ilk oturumun taşınanları; ilk oturum hiç taşınmıyorsa ilk taşınanın bütün kaydı (kamera videosu + kılavuzları birlikte;
+    // analize girmeyen park'takilerde aynı kamera klibinin videosu + kılavuzları = aynı kaynak + aynı start/end)
+    const m0 = plan.moves[0].x.clip;
+    const rec0 = a.recordingOf.get(m0);
     const measure = plan.firstMoves.length
       ? plan.firstMoves
       : rec0
         ? plan.moves.filter((p) => a.recordingOf.get(p.x.clip) === rec0)
-        : plan.moves.slice(0, 1);
+        : plan.moves.filter((p) => p.x.clip.projId === m0.projId && p.x.clip.start === m0.start && p.x.clip.end === m0.end);
     const rest = plan.moves.filter((p) => !measure.includes(p));
     const parked = new Set<Placement>();
     const placed = new Set<Placement>();

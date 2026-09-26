@@ -212,6 +212,12 @@ export interface CollectRecord {
   parked: string[];
   /** BAĞLA'nın kesme/silmesi doğrulandıysa (null: BAĞLA'dan geçmedi) */
   bind: BindRecord | null;
+  /**
+   * TOPLA'nın yerleştirdiği kamera videoları, park'takiler ve kamerasız oturumların sesleri (BAĞLA bunları silmez/kesmez):
+   * pre = TOPLA öncesi, post = TOPLA sonrası anahtarlar (tür|track|kaynak|start|end|in|out). Park kaydının hâlâ geçerli olup
+   * olmadığını (TOPLA düzeni duruyor / TOPLA geri alınmış / düzen değişmiş) buradan anlarız.
+   */
+  layout: { pre: string[]; post: string[] };
   at: string;
 }
 
@@ -230,6 +236,8 @@ export interface BindRecord {
   groups: { id: string; label: string; items: LinkItemRec[] }[];
   /** kesimin yarattığı (TOPLA düzeninde olmayan) ses parçaları */
   created: LinkItemRec[];
+  /** BAĞLA'nın sildikleri (kılavuzlar, "sil" kaynakları, çapa dışı sesler, kesilen asıllar) */
+  removed: LinkItemRec[];
   at: string;
 }
 
@@ -249,8 +257,9 @@ export function loadRecord(guid: string): CollectRecord | null {
   const r = allRecords()[guid];
   if (!r || r.v !== 1 || r.guid !== guid || !Array.isArray(r.parked) || !r.frame || !Array.isArray(r.mapping)) return null;
   const b = r.bind;
-  const bindOk = !b || (Array.isArray(b.groups) && Array.isArray(b.created) && (b.stage === "cut" || b.stage === "linked"));
-  return { ...r, bind: bindOk ? (b ?? null) : null };
+  const bindOk = !b || (Array.isArray(b.groups) && Array.isArray(b.created) && Array.isArray(b.removed) && (b.stage === "cut" || b.stage === "linked"));
+  const layout = r.layout && Array.isArray(r.layout.pre) && Array.isArray(r.layout.post) ? r.layout : { pre: [], post: [] };
+  return { ...r, bind: bindOk ? (b ?? null) : null, layout };
 }
 
 export function saveRecord(rec: CollectRecord): void {

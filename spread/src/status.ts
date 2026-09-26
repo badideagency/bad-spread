@@ -4,7 +4,7 @@
 //   - makine okunur blok (CLIP / OVERLAP satırları)
 
 import { classify, devicesOf, sourcesOf, roleLabel } from "./classify";
-import { bindState, parkedFromRecord } from "./collect";
+import { bindState, layoutState, parkedFromRecord } from "./collect";
 import { analyze, describeLinks, sessionGroups } from "./sessions";
 import { getThreshold, loadRecord, mappingFor, recordDrift } from "./settings";
 import { big, secOf, snapshot, trackLabel, type ClipInfo } from "./model";
@@ -96,6 +96,8 @@ export async function buildStatusReport(): Promise<string> {
     `OTURUMLAR (güçlü bağ eşiği %${Math.round(getThreshold() * 100)}; ${rec ? `TOPLA kaydı ${rec.at} — kayıttaki park'taki ${parked.size} klip hariç` : "TOPLA kaydı yok"})`
   );
   if (rec) {
+    const ls = layoutState(rec, s);
+    L.push(`  TOPLA düzeni: ${ls === "collected" ? "duruyor" : ls === "undone" ? "GERİ ALINMIŞ (park kaydı TOPLA'da bırakılır)" : "TOPLA'dan sonra DEĞİŞMİŞ (TOPLA park kaydını sorar)"}`);
     for (const d of recordDrift(rec, mappingFor(sourcesOf(cls)), Math.round(getThreshold() * 100))) L.push(`  TOPLA'dan sonra değişti: ${d}`);
     const bs = bindState(rec, s);
     if (rec.bind) L.push(`  BAĞLA kaydı: ${rec.bind.stage === "linked" ? "kesme/silme + bağlama" : "kesme/silme (bağlama bitmedi)"} ${rec.bind.at}; timeline'da ${bs === "applied" ? "yerinde" : bs === "partial" ? "KISMEN yerinde (düzen değişmiş)" : "yok (geri alınmış)"}`);
