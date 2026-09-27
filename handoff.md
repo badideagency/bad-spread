@@ -38,8 +38,11 @@ Kullanıcının BadIdea panel projesindeki (`badideagency/badidea-panel` `.claud
   Durduğu yerler: notlar yok (`scripts/update-notes.json`), sürüm yayındakinden büyük değil, aynı zip zaten var (üstüne yazılmaz),
   depoda izinli üç yol dışında bir dosya (push YOK), klon / push izni yok (ne yapılacağını yazar). `--dry-run`, `--no-build`,
   `--remote` (sınama).
-- **Durum (2026-09-27):** depo yok ya da bu oturumun erişimi yok (`add_repo`: "not found … or no access"); oturum depo oluşturamıyor.
-  Kullanıcı depoyu açınca ilk yayın (1.2.0) bu betikle yapılır.
+- **Durum:** depo açıldı (kullanıcı; önce `bad-spread-v2` adıyla açılmıştı, `bad-spread-updates` olarak yeniden adlandırıldı). **İlk yayın
+  yapıldı** (2026-09-27, güncelleme deposunda commit `f41866f` "Spread 1.2.0"): `npm run publish-update --no-build` → main'deki
+  `release/Spread_Kurulum_v1.2.0.zip` ile bayt bayt aynı zip, `latest.json` 1.2.0 (sha256 `f73b6941…3559`). Dışarıdan doğrulandı:
+  yardımcının `latest()` doğrulayıcısı kabul etti, zip indirildi, sha256 tuttu, paket + spread.ccx denetimi geçti. 1.2.0 kurulu
+  panel bu `latest.json`'da şerit göstermez (aynı sürüm); 1.2.1'den itibaren panelden gelir.
 - Not: kaynak deposu `badideagency/bad-spread` şu an **public** (list_repos, 2026-09-27) — kullanıcıya bildirildi.
 
 ### 2 — Güncelleme akışı
