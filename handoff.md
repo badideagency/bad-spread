@@ -72,7 +72,7 @@ Kullanıcının BadIdea panel projesindeki (`badideagency/badidea-panel` `.claud
   "user will be prompted to save any changes" → arada değişen bir şey olsa da Premiere sorar, sessizce kaybetmez).
 - **Yeniden başlatıcı** (`restart-spread.cmd`, yalnız ASCII + CRLF, girdiler yalnız ortam değişkeni): `tasklist /NH /FO CSV | find /I
   "<süreç adı>"` (CSV: uzun ad kesilmez) — 0 çalışıyor, 1 yok, **2 hata → hiçbir şey açılmaz**. "Yok" ancak Premiere ÖNCE çalışırken
-  GÖRÜLDÜYSE "kapandı" sayılır (başlatıcı app.quit'ten önce başlar); **hiç görülmediyse** (liste boş / okunamadı — ör. bozuk WMI —,
+  GÖRÜLDÜYSE ve art arda İKİ yoklamada yoksa (tek bir boş liste yetmez; inceleme #12 doğrulaması) "kapandı" sayılır (başlatıcı app.quit'ten önce başlar); **hiç görülmediyse** (liste boş / okunamadı — ör. bozuk WMI —,
   ad eşleşmedi) hiçbir şey açılmaz (inceleme #12, Major). En çok 300 yoklama; kapanınca 3 sn bekler, `start "" "<Premiere.exe>" "<proje>"`.
   Yollar Windows biçimine çevrilir (`path.win32.normalize`: CEP `getSystemPath` "C:/…" verir). Başlatıcı gerçekten başlamadan ('spawn'
   olayı; 'error' ya da 5 sn → DUR) Premiere kapatılmaz. Süreç adı Premiere.exe yolunun son parçası (CSInterface `getSystemPath("hostApplication")`,

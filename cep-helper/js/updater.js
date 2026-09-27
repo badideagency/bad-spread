@@ -198,7 +198,8 @@
    * komut satırında bozulmasın): SPREAD_IMG süreç adı (Premiere.exe yolunun son parçası), SPREAD_EXE Premiere.exe tam yolu,
    * SPREAD_PRJ açılacak proje (boş olabilir), SPREAD_LOG günlük, SPREAD_MAX en çok kaç yoklama (1 sn arayla).
    * Bekleme: "tasklist /NH /FO CSV | find /I" (CSV: uzun süreç adı kesilmez) — 0 = çalışıyor, 1 = yok, 2 = HATA. "Yok" ancak Premiere
-   * ÖNCE çalışırken görüldüyse "kapandı" sayılır (başlatıcı app.quit'ten önce başlar); hiç görülmediyse (liste boş / okunamadı, ad
+   * ÖNCE çalışırken görüldüyse ve ART ARDA İKİ yoklamada yoksa "kapandı" sayılır (başlatıcı app.quit'ten önce başlar; tek bir boş
+   * liste yetmez); hiç görülmediyse (liste boş / okunamadı, ad
    * eşleşmedi), hata ya da süre dolması → HİÇBİR ŞEY açılmaz (ikinci Premiere yok). Uyku: ping (timeout /t yönlendirilmiş girdide
    * belgesiz). Tasarım Wine'da sınandı (scripts/test-restarter-wine.sh).
    */
@@ -209,12 +210,15 @@
     'if not defined SPREAD_MAX set "SPREAD_MAX=300"',
     "set /a N=0",
     'set "SEEN=0"',
+    "set /a MISS=0",
     '>>"%SPREAD_LOG%" echo %date% %time% baslatici: "%SPREAD_IMG%" kapanmasi bekleniyor',
     ":wait",
     'tasklist /NH /FO CSV 2>nul | find /I "%SPREAD_IMG%" >nul',
     "if errorlevel 2 goto :err",
     "if errorlevel 1 goto :notrunning",
     'set "SEEN=1"',
+    "set /a MISS=0",
+    ":next",
     "set /a N+=1",
     "if %N% geq %SPREAD_MAX% goto :late",
     "ping -n 2 127.0.0.1 >nul",
@@ -222,6 +226,9 @@
     ":notrunning",
     "rem Premiere hic calisirken GORULMEDIYSE (surec listesi bos / okunamadi, ad eslesmedi) kapandi sanilmaz",
     'if not "%SEEN%"=="1" goto :unseen',
+    "rem tek bir bos / hatali liste yetmez: art arda IKI yoklamada yoksa kapandi sayilir",
+    "set /a MISS+=1",
+    "if %MISS% lss 2 goto :next",
     ":gone",
     "rem Premiere kapandi; dosyalar serbest kalsin",
     "ping -n 4 127.0.0.1 >nul",
