@@ -29,6 +29,9 @@ Kaldırmak: **KALDIR.cmd** (PlayerDebugMode dahil her şeyi kurulum öncesine d�
 
 ## Ekran görüntüleri (mock ortamı, 300 px ve 560 px panel)
 
+> Not: `docs/ekran` v1.1.0'da yeni arayüzle yenilendi (bkz. [SURUM_NOTU_v1.1.0.md](SURUM_NOTU_v1.1.0.md)). Aşağıdaki v1.0.0
+> görüntüleri v1.0.0 etiketinde / `c007e96` commit'inde durur.
+
 Mock ortamı: jsdom'da gerçek panel HTML'i + sahte Premiere + gerçek yardımcı sunucusu; Chromium'da çizildi. Premiere'de düğmeler
 Spectrum stilinde çizilir.
 
