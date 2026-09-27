@@ -83,7 +83,8 @@
       bindLine = { text: "✗ Bağlama tamamlanmadı — ayrıntı için tıkla", cls: "bad" };
       $("btn-bind").style.display = "inline-block";
     } else if (p.waiting) {
-      bindLine = { text: "Bağla bekliyor: \"" + p.sequence + "\" · " + p.groups + " grup", cls: "" };
+      // sayı önce: dar panelde uzun sequence adı kesilsin, grup sayısı değil (tam metin ipucunda)
+      bindLine = { text: p.groups + " grup bekliyor · “" + p.sequence + "”", cls: "" };
       $("btn-bind").style.display = "inline-block";
     } else {
       bindLine = null;

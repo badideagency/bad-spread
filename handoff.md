@@ -126,6 +126,27 @@ Kullanıcının BadIdea panel projesindeki (`badideagency/badidea-panel` `.claud
   listesi çalışır).
 - Ekran görüntüleri Chromium'da, yazı tipi Open Sans (Segoe UI'a en yakın açık yazı tipi; yalnız görüntü için, pakete girmez).
 
+### Tasarım eleştirisi (skill'lerle, ayrı alt ajan) ve düzeltmeler
+
+`critique` (5 boyut), `emil-design-eng` (inceleme listesi) ve `hallmark audit` ilk ekran görüntüleri + CSS üzerinde çalıştırıldı
+(tam rapor, düzeltmelerden önceki hâl: `docs/tasarim-elestirisi-v1.2.0.md`).
+Puanlar: Felsefe 7, Hiyerarşi 6, Ayrıntı 6, İşlev 6, Özgünlük 5 (ort. 6.0). Hallmark: 0 kritik, 4 büyük, 6 küçük; "yapay zekâ işi gibi
+okunmuyor". Ana bulgu: boşta hiyerarşi doğru, ama onay kartı / ilerleme açıkken PASİF krem düğme ekrandaki en parlak şekildi,
+basılması gereken [Devam] en sönüğü.
+
+Uygulananlar: pasif düğmeler vurgusuz (yüzey-2 + soluk yazı; opaklıkla soldurma yok — BadIdea kuralı); ikincil düğmenin üstüne
+gelince merdivende bir adım AYDINLIK (`--yuzey-4 #544e41`), kart içindeki [Devam] yüzey-4 (kartta görünür); gelecek adımlar
+opaklık yerine soluk renk (kontrast 3.66 → 5.64); rakamlar yuvarlağın ortasında (flex); ✓ / ! ince çizgi SVG (yazı tipi işareti
+değil) ve sağ kenar hizası; güneşe benzeyen ⚙ yerine dişli; "← Geri" yerine ince ‹; odak halkası 1 px nötr (3.35:1; ↻, şerit, "Ne
+yapmalıyım?" dahil); onay başlığı 16/600, dikkat satırı 500; adım satırı flex (Yeniden çalıştır hizalı); yarıçap ölçeği 6 / 10 / 12;
+şerit inceldi; kurulunca şerit kaybolur; yardımcıda aynı token adları, üstüne gelince aydınlanma, "11 grup bekliyor · “Ana Kurgu”"
+(dar panelde sayı kesilmesin), ayrıntıda sözcük ortasından bölme yok; geçişler 150 ms (renk `ease`, basma `ease-out`), pasif düğme
+basılınca küçülmez, ↻ basınca %95.
+
+Bilerek uygulanmayanlar: [Devam]'ı krem (vurgu) yapmak — kullanıcının kuralı "vurgu YALNIZ sıradaki adım düğmesi ve güncelleme
+şeridi" (bunun yerine yüzey-4); yardımcı kapalı noktasını amber yapmak — v1.1.0 isteği "● gri"; `tabular-nums` — UXP CSS listesinde
+yok; şeridi başlığın altına taşımak — istek "panelin üstünde ince bir şerit".
+
 ### Belirsizlikler / gerçek Windows + Premiere'de bakılacak (v1.2.0)
 
 1. **Yeniden başlatıcı Premiere kapanınca yaşıyor mu?** CEP motoru dışarıda "kapanınca öldür" bir iş nesnesinin içindeyse `start /b`

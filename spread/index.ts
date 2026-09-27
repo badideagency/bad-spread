@@ -209,6 +209,9 @@ async function runUpdate(l: Latest): Promise<void> {
     return;
   }
   log(`✓ Güncelleme ${r.version} kuruldu: yardımcı yazıldı (yedek: ${r.backup}), panel ${r.panel === "installed" ? "Adobe kurucusuyla kuruldu" : `ELLE kurulacak (${r.why ?? "?"})`}.`, "ok");
+  // kuruldu → şerit artık "Güncelle" demesin (yeni sürüm Premiere yeniden açılınca çalışır)
+  latest = null;
+  paintUpdate();
   progress(0.9, "Kuruldu.");
   const manual = r.panel === "manual";
   const ans2 = await askUser(

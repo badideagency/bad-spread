@@ -272,7 +272,9 @@ export function renderSteps(steps: Record<StepId, StepView>, next: StepId | null
     const future = i > order || (next === null && v.state === "todo");
     const card = maybe(`step-${id}`);
     if (card) card.className = `step ${v.state}${next === id ? " next" : ""}${future ? " future" : ""}`;
-    setText(`res-${id}`, v.state === "done" ? "✓" : v.state === "warn" ? "!" : "");
+    // ✓ / ! ince çizgi SVG'dir (index.html); hangisinin görüneceğini adım kartının sınıfı (done / warn) seçer
+    const mark = maybe(`res-${id}`);
+    if (mark) mark.setAttribute("title", v.state === "done" ? "tamam" : v.state === "warn" ? "uyarıyla bitti" : "");
     const name = maybe(`name-${id}`);
     if (name) name.setAttribute("title", v.text || "");
     const b = maybe(STEP_BTN[id]);

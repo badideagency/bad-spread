@@ -7,37 +7,40 @@
       /* Spread Helper v1.2.0 — Spread paneliyle AYNI dil (BadIdea koyu tema): tek satır "Spread Helper çalışıyor ↻ ●", tek vurgu
          (krem) yalnız gerektiğinde çıkan Bağla düğmesi, soluk ikincil metin, 10 px köşe, gölge yok. Başka bir panelin arkasında sekme
          olarak durabilir (en küçük boyut 60×20). Ayrıntı durum satırına tıklayınca. */
-      :root { --yuzey-0: #0d0a04; --yuzey-1: #1d1910; --yuzey-2: #2f291f; --yuzey-3: #413b2f; --krem: #fff7e9; --ikincil: #b8b4ac;
-        --sonuk: #969288; --kenar: rgba(255, 247, 233, 0.1); --basari: #6cbc7e; --surec: #d5a257; --tehlike: #fc8a7f; --notr: #706c65; }
+      :root { --yuzey-0: #0d0a04; --yuzey-1: #1d1910; --yuzey-2: #2f291f; --yuzey-3: #413b2f; --yuzey-4: #544e41; --krem: #fff7e9;
+        --metin-ikincil: #b8b4ac; --metin-sonuk: #969288; --kenar-zayif: rgba(255, 247, 233, 0.1); --basari: #6cbc7e; --surec: #d5a257;
+        --tehlike: #fc8a7f; --notr: #706c65; --r-sm: 6px; --r-md: 10px; }
       html, body { margin: 0; padding: 0; background: var(--yuzey-1); color: var(--krem); font-family: "Segoe UI", system-ui, sans-serif;
         font-size: 12px; line-height: 16px; }
       body { padding: 5px 8px 5px 10px; }
       .line { display: flex; align-items: center; white-space: nowrap; overflow: hidden; min-height: 20px; }
       #srv { flex: 1; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+      #srv:hover { color: var(--metin-ikincil); }
       .dot { width: 7px; height: 7px; border-radius: 4px; margin-left: 6px; background: var(--notr); flex-shrink: 0; }
       .dot.ok { background: var(--basari); }
       .dot.bad { background: var(--tehlike); }
       .dot.warn { background: var(--surec); }
       .bad { color: var(--tehlike); }
-      #bindbox { display: none; margin: 6px 0 0; color: var(--ikincil); }
+      #bindbox { display: none; margin: 6px 0 0; color: var(--metin-ikincil); }
       #btn-bind { display: none; margin: 0 0 0 8px; flex-shrink: 0; }
-      button { font: inherit; font-weight: 600; color: var(--krem); background: var(--yuzey-3); border: 0; border-radius: 10px; padding: 3px 12px;
-        margin: 2px 6px 2px 0; cursor: pointer; transition: background-color 160ms ease-out, transform 120ms ease-out; }
-      button:hover { background: var(--yuzey-2); }
+      button { font: inherit; font-weight: 600; color: var(--krem); background: var(--yuzey-3); border: 0; border-radius: var(--r-md); padding: 3px 12px;
+        margin: 2px 6px 2px 0; cursor: pointer; transition: background-color 150ms ease, transform 150ms ease-out; }
+      button:not(.primary):not(:disabled):hover { background: var(--yuzey-4); }
       button:active { transform: scale(0.97); }
       button.primary { background: var(--krem); color: var(--yuzey-1); }
-      button:disabled { opacity: 0.4; cursor: default; }
+      button:disabled { background: var(--yuzey-2); color: var(--metin-sonuk); cursor: default; }
+      button:disabled:active { transform: none; }
       .icon { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; margin-left: 4px;
         flex-shrink: 0; cursor: pointer; transition: background-color 160ms ease-out; }
       .icon:hover { background: var(--yuzey-2); }
       #results div { margin: 1px 0; }
-      #more { display: none; margin: 8px 0 0; color: var(--ikincil); }
-      .row { margin: 2px 0; word-break: break-all; }
-      .muted { color: var(--sonuk); }
+      #more { display: none; margin: 8px 0 0; color: var(--metin-ikincil); }
+      .row { margin: 2px 0; word-break: normal; overflow-wrap: anywhere; }
+      .muted { color: var(--metin-sonuk); }
       textarea { width: 100%; box-sizing: border-box; height: 48px; font: 10px Consolas, monospace; background: var(--yuzey-0); color: var(--krem);
-        border: 1px solid var(--kenar); border-radius: 8px; }
+        border: 1px solid var(--kenar-zayif); border-radius: var(--r-md); }
       #log { white-space: pre-wrap; font: 10px/1.4 Consolas, monospace; max-height: 140px; overflow: auto; margin-top: 6px; padding: 6px;
-        border-radius: 8px; background: var(--yuzey-0); color: var(--ikincil); }
+        border-radius: var(--r-md); background: var(--yuzey-0); color: var(--metin-ikincil); }
     </style>
   </head>
   <body>
