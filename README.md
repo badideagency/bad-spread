@@ -24,6 +24,7 @@ npm run publish-update   # paketi üretir, sha256, latest.json → herkese açı
                          # scripts/update-notes.json; kaynak kod gitmez; --dry-run)
 bash scripts/test-kurulum-wine.sh   # KUR.cmd / KALDIR.cmd sınaması (Wine): HKCU değerleri, kopyalama, geri yükleme
 bash scripts/test-restarter-wine.sh # güncelleme sonrası yeniden başlatıcı (Wine + Windows Node 17.7.1 sahte Premiere)
+bash scripts/test-publish-update.sh # yayın betiği, yerel geçici depolarla (yalnız 3 yol, sha256, ikinci yayın reddi, kaynak kod reddi)
 npm run build:spread && node spread/dev/screens.mjs   # ekran görüntüleri (mock + jsdom + Chromium) → docs/ekran
 ```
 
