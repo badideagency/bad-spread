@@ -32,7 +32,10 @@ const frames = (n) => BigInt(n) * FRAME25;
 const secOf = (t) => (Number(t) / Number(TPS)).toFixed(3);
 
 // ------------------------------------------------------------ mock ayarları (senaryo başına)
-const M0 = { broken: false, nonseq: false, nobackup: false, backupActive: false, falseTx: null, badBackup: false, noType: false, undoAfterTx: null, setSem: "real", linkFailName: null, linkedSemantics: "link", cloneTimeBroken: false, planWriteFails: false, fetchError: null, hostVersion: "26.5.1" };
+const M0 = { broken: false, nonseq: false, nobackup: false, backupActive: false, falseTx: null, badBackup: false, noType: false, undoAfterTx: null, setSem: "real", linkFailName: null, linkedSemantics: "link", cloneTimeBroken: false, planWriteFails: false, fetchError: null, hostVersion: "26.5.1", chType: null, linkRejectMixed: false, channelApi: true };
+// v1.1.0 kanal tipi (ExtendScript AudioChannelMapping.audioChannelsType): M.chType(ad) → tip; null = hepsi mono (0) — eski senaryolar
+// aynen. M.linkRejectMixed: gerçek Premiere 26.5.1'deki gibi mono + stereo karışık seçimde linkSelection() false döner.
+const chTypeOf = (name) => (M.chType ? M.chType(name) : 0);
 const M = { ...M0 };
 let pendingUndo = 0;
 const hooks = { onCloneSeq: null, onGetActive: null, beforeRemoveApply: null, beforeTx: null };
@@ -811,7 +814,12 @@ function esItem(seq, c) {
     get end() { return T(c.end); },
     get inPoint() { return T(c.inPt); },
     get outPoint() { return T(c.outPt); },
-    get projectItem() { return { name: c.pi.name, nodeId: "pn-" + c.pi.name }; },
+    get projectItem() {
+      const p = { name: c.pi.name, nodeId: "pn-" + c.pi.name };
+      // belgedeki gibi ÖZELLİK (parantezsiz): ProjectItem.getAudioChannelMapping → AudioChannelMapping
+      if (M.channelApi) p.getAudioChannelMapping = { audioChannelsType: chTypeOf(c.pi.name), audioClipsNumber: 1 };
+      return p;
+    },
     mediaType: c.kind === "V" ? "Video" : "Audio",
     setSelected(on) {
       if (!findClip(c.id)) throw new Error("mock ES: klip yok");
@@ -841,6 +849,10 @@ function esSeq(seq) {
       const clips = [...seq.sel].map((id) => findClip(id)).filter(Boolean).map((f) => f.c);
       if (!clips.length) return false;
       if (M.linkFailName && clips.some((c) => c.name === M.linkFailName)) return false;
+      if (M.linkRejectMixed && new Set(clips.filter((c) => c.kind === "A").map((c) => chTypeOf(c.pi.name))).size > 1) {
+        counters.rejectedLinks = (counters.rejectedLinks ?? 0) + 1;
+        return false;
+      }
       const L = "X" + nextId++;
       for (const c of clips) c.linkId = L;
       counters.links++;
@@ -858,6 +870,11 @@ const fakeApp = {
   },
   quit() {
     hostile.quit = true;
+  },
+  // v1.1.0: yardımcı panel görünmezken de bellekte kalsın (docs: app.setExtensionPersistent)
+  setExtensionPersistent(id, v) {
+    counters.persist = [String(id), v];
+    return true;
   },
 };
 counters.links = 0;
@@ -928,6 +945,7 @@ function setupSync(spec) {
   undoStack.length = 0;
   counters.txNames = [];
   counters.links = 0;
+  counters.rejectedLinks = 0;
   counters.cloneOffsets = [];
   counters.setActions.clear();
   hostile.quit = false;
@@ -1444,6 +1462,8 @@ scenarios.regress_trim = async () => {
   const old = process.env.SPREAD_REGRESS === "old";
   // gerçek koşudaki gibi TrLR de eşlenmiş (A3) → A kamera kılavuzu A5'te (gerçek rapordaki satır)
   setupFromReport(R0912, ["A27", "A30"]);
+  lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": 2 })); // v1.1.0: TrLR varsayılanı "Sil" — bu senaryo TrLR'yi A3'e eşleyen kullanıcıyı sınar
+  lsStore.set("spread.sourceMap.v11", "1"); // v1.1.0 geçişi yapılmış: kullanıcı TrLR'yi bilerek A3'e eşlemiş
   const out = await clickAndWait("btn-collect", yes, doneRe);
   if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + failLines(out));
   const collected = snapList();
@@ -1480,6 +1500,337 @@ scenarios.regress_trim = async () => {
   if (dbl || !trimmed) fail(`aynı kenara iki action üretilen klip: ${dbl} (set action alan klip ${trimmed})`);
   else ok(`${trimmed} klibin hiçbirinde aynı kenara iki action yok (kalibrasyon kopyaları dahil)`);
   checkExactly(seqByGuid("guid-main-edit"), expectBagla(collected, S0912, []).exp, "12 Eylül BAĞLA gerçek set anlamında (TrLR eşlenmiş)");
+};
+
+// ============================================================ v1.1.0 BÖLÜM A — kanal tipi, ikinci deneme, yalnız bağla, yedek kopya
+// Gerçek Premiere 26.5.1 (v1.0.0 denemesi): mono (Zoom Tr1/Tr2) + stereo (Zoom TrLR, kamera sesi) karışık grupta linkSelection() false;
+// TrLR çıkarılınca bağlandı; korunan (stereo) kamera sesi parçası içeren grup bağlanmadı. Adobe helpx: çok klipli bağda bütün ses
+// klipleri aynı kanal tipinde olmalı. Mock: M.chType (ad → tip), M.linkRejectMixed (karışık seçimde linkSelection() false).
+const REAL_CH = (name) => (/TrLR\.WAV$/i.test(name) || /\.MP4$/i.test(name) ? 1 : 0); // TrLR ve kamera sesi stereo, Tr1/Tr2 mono
+const askSummary = () => Array.from(els["ask-summary"]?.children ?? []).map((c) => c.textContent);
+
+/** Grup üyeleri: ana tipteki (mono varsa mono) üyeler TEK bağda; farklı tipteki sesler bağ DIŞINDA ama YERİNDE (silinmemiş). */
+function checkLinksExcluding(seq, groups, label) {
+  const clipOf = (e) => allClips(seq).find((x) => x.kind === e.kind && x.c.name === e.name && x.c.start === e.start)?.c;
+  let bad = 0;
+  let nOut = 0;
+  for (const g of groups) {
+    const all = [...g.cams, ...g.pieces, ...g.guides].map((e) => ({ e, c: clipOf(e) }));
+    if (all.some((x) => !x.c)) {
+      bad++;
+      fail(`${label}: grup "${g.anchor.name}" öğesi timeline'da yok (hiçbir klip silinmemeliydi)`);
+      continue;
+    }
+    const aud = all.filter((x) => x.e.kind === "A");
+    const hasMono = aud.some((x) => REAL_CH(x.c.name) === 0);
+    const isOut = (x) => x.e.kind === "A" && hasMono && REAL_CH(x.c.name) === 1;
+    const inn = all.filter((x) => !isOut(x));
+    const out = all.filter(isOut);
+    nOut += out.length;
+    if (inn.length < 2) continue;
+    const L = inn[0].c.linkId;
+    if (!L || inn.some((x) => x.c.linkId !== L)) (bad++, fail(`${label}: grup "${g.anchor.name}" (aynı kanal tipindeki üyeler) tek bağda değil`));
+    else if (out.some((x) => x.c.linkId === L)) (bad++, fail(`${label}: grup "${g.anchor.name}" — bağ dışında kalması gereken ses bağa girmiş`));
+    else if (allClips(seq).some((x) => x.c.linkId === L && !inn.some((y) => y.c === x.c))) (bad++, fail(`${label}: grup "${g.anchor.name}" bağına grup dışı klip girmiş`));
+  }
+  if (!bad) ok(`${label}: ${groups.length} grup — aynı kanal tipindeki üyeler tek bağda; ${nOut} farklı tipteki ses bağ dışında ve YERİNDE (silinmedi)`);
+  return nOut;
+}
+
+scenarios.mixed_channels = async () => {
+  // A3 + A4: TrLR eşlenmiş (v1.0.0 gerçek denemesindeki gibi) → her Zoom grubunda mono + stereo → Premiere reddeder → ikinci deneme
+  setupFromReport(R0912, ["A27", "A30"]);
+  lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": 2 }));
+  lsStore.set("spread.sourceMap.v11", "1"); // v1.1.0 geçişi yapılmış: kullanıcı TrLR'yi bilerek A3'e eşlemiş
+  M.chType = REAL_CH;
+  M.linkRejectMixed = true;
+  const out = await clickAndWait("btn-collect", yes, doneRe);
+  if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + failLines(out));
+  const collected = snapList();
+  await startHelper();
+  let qB = "";
+  let sum = [];
+  const out2 = await clickAndWait("btn-bind", async (x) => ((qB = x), (sum = askSummary()), yes()), doneRe);
+  const nMixed = Number((out2.match(/KARIŞIK KANAL: (\d+) grupta mono \+ stereo ses var/) ?? [])[1] ?? 0);
+  if (!nMixed || !sum.some((l) => /KARIŞIK KANAL: \d+ grupta mono \+ stereo/.test(l)) || !/KARIŞIK KANAL: \d+ grupta mono \+ stereo ses var; Premiere grubu reddederse/.test(qB))
+    fail("onayda karışık kanal uyarısı yok:\n" + sum.join("\n"));
+  else ok(`A3: BAĞLA onayında tek satır "KARIŞIK KANAL: ${nMixed} grupta mono + stereo…" (özet + tam metin; tipler yardımcıdan, salt okuma)`);
+  if (!/✓ BAĞLA tamam/.test(out2) || !/⚠ \d+ ses bağ dışında kaldı \(\d+ grupta\): kanal tipi grubun geri kalanından farklı/.test(out2) || !counters.rejectedLinks)
+    return fail("BAĞLA ikinci denemeyle tamamlanmadı:\n" + failLines(out2));
+  ok(`A4: Premiere ${counters.rejectedLinks} karışık grubu reddetti (linkSelection false) → yardımcı stereo sesleri çıkarıp yeniden bağladı`);
+  const S = seqByGuid("guid-main-edit");
+  const eb = expectBagla(collected, S0912, []);
+  checkExactly(S, eb.exp, "karışık kanal: düzen normal BAĞLA'yla birebir (bağ dışında kalanlar dahil HİÇBİR KLİP SİLİNMEDİ)");
+  const nOut = checkLinksExcluding(S, eb.groups, "karışık kanal bağları");
+  const reported = Number((out2.match(/⚠ (\d+) ses bağ dışında kaldı/) ?? [])[1] ?? -1);
+  if (reported !== nOut) fail(`raporlanan bağ dışı ses ${reported}, düzende ${nOut}`);
+  else ok(`bağ dışında kalan ${nOut} ses (TrLR parçaları + korunan stereo kamera sesi) raporda satır satır`);
+};
+
+scenarios.kept_stereo = async () => {
+  // A2 + A5: TrLR için kullanıcı seçim yapmadı → varsayılan "Sil"; kalan tek karışıklık korunan (stereo) kamera sesi parçası
+  setupFromReport(R0912, ["A27", "A30"]);
+  M.chType = REAL_CH;
+  M.linkRejectMixed = true;
+  let qT = "";
+  const out = await clickAndWait("btn-collect", async (x) => ((qT = x), yes()), doneRe);
+  if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + failLines(out));
+  if (!/Zoom TrLR → A\d+ \(sil\)/.test(qT)) fail("TrLR varsayılan 'Sil' TOPLA'da görünmedi:\n" + qT.split("\n").filter((l) => /Track'ler/.test(l)).join("\n"));
+  else ok("A2: TrLR için seçim yokken varsayılan 'Sil' (TOPLA: 'Zoom TrLR → A4 (sil)')");
+  const pre = JSON.parse(JSON.stringify(undoStack[0]), rev).sequences.find((x) => x.guid === "guid-main-edit");
+  checkExactly(seqByGuid("guid-main-edit"), expectTopla(pre, { sessions: S0912, devices: ["A", "Sony"], srcTrack: { "Zoom Tr1": 0, "Zoom Tr2": 1 }, sil: ["Zoom TrLR"] }).exp, "varsayılan 'Sil' = açıkça 'Sil' seçilmiş TOPLA düzeni");
+  const collected = snapList();
+  await startHelper();
+  const out2 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ BAĞLA tamam/.test(out2)) return fail("BAĞLA tamamlanmadı:\n" + failLines(out2));
+  if (counters.rejectedLinks !== 2 || !/KARIŞIK KANAL: 2 grupta mono \+ stereo ses var/.test(out2)) fail(`reddedilen grup ${counters.rejectedLinks} (beklenen 2: korunan kamera sesi içeren O1-G1, O2-G1)`);
+  else ok("A5: yalnız korunan (stereo) kamera sesi parçası içeren 2 grup reddedildi (O1-G1, O2-G1); ikinci denemede onlarsız bağlandı");
+  if (!/⚠ 2 ses bağ dışında kaldı \(2 grupta\)/.test(out2) || !/A3 "A038C001_260912BD\.MP4" \[0\.000s–2\.320s\] stereo/.test(out2))
+    fail("korunan kamera sesi parçası bağ dışında olarak raporlanmadı:\n" + out2.split("\n").filter((l) => /bağ dışında|•/.test(l)).join("\n"));
+  else ok('korunan parça raporda: A3 "A038C001_260912BD.MP4" [0.000s–2.320s] stereo — bağ dışında, yerinde (tek kanal kullanmak mümkün değil: handoff.md)');
+  const S = seqByGuid("guid-main-edit");
+  const eb = expectBagla(collected, S0912, ["Zoom TrLR"]);
+  checkExactly(S, eb.exp, "korunan stereo kamera sesi: düzen normal BAĞLA'yla birebir (hiçbir klip silinmedi)");
+  if (checkLinksExcluding(S, eb.groups, "korunan stereo kamera sesi bağları") !== 2) fail("bağ dışında kalan ses sayısı 2 değil");
+};
+
+scenarios.panel_mixed = async () => {
+  // A4 yardımcı panel yolunda da: köprü yok → KES + plan; paneldeki BAĞLA aynı ikinci denemeyi yapar (ortak linkWithRetry)
+  setupFromReport(R0912, ["A27", "A30"]);
+  M.chType = REAL_CH;
+  M.linkRejectMixed = true;
+  const out = await clickAndWait("btn-collect", yes, doneRe);
+  if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + failLines(out));
+  const collected = snapList();
+  await stopHelper();
+  const o1 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ KES tamam/.test(o1)) return fail("köprüsüz KES tamamlanmadı:\n" + failLines(o1));
+  const h = await startHelper();
+  const r = await h.bindFromPlan({});
+  const partial = r.rows.filter((x) => x.status === "kısmen");
+  if (!r.ok || !/^⚠ 11 grup bağlandı ve doğrulandı; 2 ses bağ dışında kaldı \(kanal tipi farklı, silinmedi\)/.test(r.summary) || partial.length !== 2 || !partial.every((x) => /bağ dışında kaldı \(kanal tipi farklı, SİLİNMEDİ\): A3 ".*\.MP4" .* stereo/.test(x.detail)))
+    fail(`panel yolunda ikinci deneme: ${r.summary}\n${r.rows.map((x) => `${x.status} ${x.label} ${x.detail}`).join("\n")}`);
+  else ok(`yardımcı panel BAĞLA: 2 grup reddedildi → stereo korunan kamera sesi çıkarılıp bağlandı ("${r.summary}")`);
+  const S = seqByGuid("guid-main-edit");
+  const eb = expectBagla(collected, S0912, ["Zoom TrLR"]);
+  checkExactly(S, eb.exp, "panel yolu: düzen normal BAĞLA'yla birebir (hiçbir klip silinmedi)");
+  checkLinksExcluding(S, eb.groups, "panel yolu bağları");
+};
+
+scenarios.linkonly_mixed = async () => {
+  // inceleme #9 M2: "yalnız bağla" yolunda da (kesme bitmiş, köprü sonradan açılmış) onayda KARIŞIK KANAL satırı + ikinci deneme
+  setupFromReport(R0912, ["A27", "A30"]);
+  lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": 2 }));
+  lsStore.set("spread.sourceMap.v11", "1");
+  M.chType = REAL_CH;
+  M.linkRejectMixed = true;
+  const out = await clickAndWait("btn-collect", yes, doneRe);
+  if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + failLines(out));
+  await stopHelper();
+  const o1 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ KES tamam/.test(o1)) return fail("köprüsüz KES tamamlanmadı:\n" + failLines(o1));
+  await startHelper();
+  let sum = [];
+  const o2 = await clickAndWait("btn-bind", async () => ((sum = askSummary()), yes()), doneRe);
+  if (!sum.some((l) => /KARIŞIK KANAL: 11 grupta mono \+ stereo/.test(l)) || !/KARIŞIK KANAL: 11 grupta mono \+ stereo ses var/.test(o2))
+    fail("yalnız bağla onayında karışık kanal uyarısı yok:\n" + sum.join("\n"));
+  else ok("yalnız bağla (kesim önceden) onayında da 'KARIŞIK KANAL: 11 grupta mono + stereo'");
+  if (!/✓ BAĞLA tamam/.test(o2) || !/⚠ 13 ses bağ dışında kaldı/.test(o2)) fail("yalnız bağla ikinci denemeyle tamamlanmadı:\n" + failLines(o2));
+  else ok("yalnız bağla: reddedilen gruplar ikinci denemede bağlandı, 13 ses bağ dışında (silinmedi)");
+};
+
+scenarios.retry_fails = async () => {
+  // ikinci deneme de reddedilirse: hangi grup, neden — DUR (kesim yerinde; tekrar basmak yalnız bağlar)
+  setupFromReport(R0912, ["A27", "A30"]);
+  M.chType = REAL_CH;
+  M.linkRejectMixed = true;
+  const out = await clickAndWait("btn-collect", yes, doneRe);
+  if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + failLines(out));
+  await startHelper();
+  M.linkFailName = "260912_133224_Tr1.WAV"; // O1'in Tr1 parçaları hiçbir seçimde bağlanmaz
+  const out2 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✗ BAĞLA DURDU: 1\/11 grup bağlanamadı \(kesme\/silme doğru ve yerinde\)/.test(out2) || !/kanal tipi farklı sesler çıkarılarak yapılan ikinci deneme de başarısız/.test(out2))
+    fail("ikinci deneme de başarısızken rapor beklenenden farklı:\n" + failLines(out2));
+  else ok("ikinci deneme de reddedilince BAĞLA DURDU: '1/11 grup bağlanamadı … ikinci deneme de başarısız' (kesim yerinde)");
+  M.linkFailName = null;
+};
+
+scenarios.mixed_unknown = async () => {
+  // kanal tipi OKUNAMAZSA ikinci deneme YOK (tahmin yok) — v1.0.0'daki gibi hangi grup, neden
+  setupFromReport(R0912, ["A27", "A30"]);
+  lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": 2 }));
+  lsStore.set("spread.sourceMap.v11", "1"); // v1.1.0 geçişi yapılmış: kullanıcı TrLR'yi bilerek A3'e eşlemiş
+  M.chType = REAL_CH;
+  M.linkRejectMixed = true;
+  M.channelApi = false;
+  const out = await clickAndWait("btn-collect", yes, doneRe);
+  if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + failLines(out));
+  await startHelper();
+  const hl0 = helperLog.length;
+  const out2 = await clickAndWait("btn-bind", yes, doneRe);
+  const firstOnly = helperLog.slice(hl0).filter((l) => /yeniden deneniyor/.test(l)).length === 0;
+  if (!/✗ BAĞLA DURDU: \d+\/11 grup bağlanamadı/.test(out2) || /KARIŞIK KANAL/.test(out2) || !/bazı seslerin kanal tipi okunamadı/.test(out2) || !firstOnly)
+    fail("kanal tipi okunamazken davranış beklenenden farklı:\n" + failLines(out2));
+  else ok("kanal tipi okunamayınca: onayda uyarı yok ('okunamadı' günlükte), ikinci deneme yok, BAĞLA hangi grupların bağlanmadığını yazıp DURDU");
+};
+
+scenarios.linkonly_thinned = async () => {
+  // A6: kesme bitti, bağlama kaldı (köprü yoktu); kullanıcı bu arada bir parçayı elle sildi → durma, var olanları bağla, eksiği yaz
+  await collectThen(smallSpec());
+  await stopHelper();
+  const o1 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ KES tamam/.test(o1)) return fail("köprüsüz KES tamamlanmadı:\n" + failLines(o1));
+  const S = seqByGuid("guid-main-edit");
+  const piece = S.a.flat().find((c) => c.name.endsWith(".WAV"));
+  for (const tr of S.a) {
+    const k = tr.indexOf(piece);
+    if (k >= 0) tr.splice(k, 1);
+  }
+  mockGen++;
+  const nClips = allClips(S).length;
+  const nTx = txOf("BAĞLA").length;
+  const nLinks = counters.links;
+  await startHelper();
+  let sum = [];
+  const o2 = await clickAndWait("btn-bind", async () => ((sum = askSummary()), yes()), doneRe);
+  if (
+    !/kesimden sonra 1 öğe timeline'da yok \(elle silinmiş ya da taşınmış\) — var olanlar bağlanacak/.test(o2) ||
+    !sum.some((l) => /^EKSİK: 1 öğe kesimden sonra silinmiş/.test(l)) ||
+    !/✓ BAĞLA tamam: 2 grup bağlandı .* — 1 eksik öğe bağlanmadı/.test(o2) ||
+    counters.links - nLinks !== 2 ||
+    allClips(S).length !== nClips ||
+    txOf("BAĞLA").length !== nTx
+  )
+    return fail("elle silinmiş parçayla yalnız bağla beklenenden farklı:\n" + failLines(o2) + "\n" + sum.join("\n"));
+  ok("A6: kesimden sonra bir parça elle silindi → BAĞLA durmadı: onayda 'EKSİK: 1 öğe', 2 grup var olanlarla bağlandı, eksik yazıldı; kesme/silme / yedek yok, hiçbir klip silinmedi");
+  // ikinci grubun çapa KAMERASI (en uzun: C0102) silinirse gruplar değişir (çapaya kesilmiş parça yeni çapaya sığmaz) → güvenle DUR
+  const anchor = S.v.flat().find((c) => c.name === "C0102.MP4");
+  for (const tr of S.v) {
+    const k = tr.indexOf(anchor);
+    if (k >= 0) tr.splice(k, 1);
+  }
+  mockGen++;
+  const n2 = counters.links;
+  const o3 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✗ BAĞLA DURDU: Kesimden sonra 2 öğe yok ve kalanlar yardımcıyla ortak kuralla aynı grupları vermiyor/.test(o3) || counters.links !== n2)
+    fail("çapa kamerası silinince BAĞLA durmadı:\n" + failLines(o3));
+  else ok("çapa kamerası da silinince gruplar değişiyor → BAĞLA hiçbir şey yapmadan DURDU (tahmin yok)");
+};
+
+scenarios.partial_undo = async () => {
+  // inceleme #9 B1: kesimden sonra Ctrl+Z (parçaları TEK transaction yerleştirir → geri alınınca HEPSİ gider) "elle silinmiş" SAYILMAZ:
+  // Spread de yardımcı panel de hiçbir şey bağlamadan DURMALI (×1 ve ×3)
+  await collectThen(smallSpec());
+  await stopHelper();
+  const o1 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ KES tamam/.test(o1)) return fail("köprüsüz KES tamamlanmadı:\n" + failLines(o1));
+  for (const k of [1, 3]) {
+    const snap = deepCopy();
+    const stack = undoStack.slice();
+    for (let i = 0; i < k; i++) undo();
+    const h = await startHelper();
+    const n0 = counters.links;
+    const tx0 = counters.txNames.length;
+    const o2 = await clickAndWait("btn-bind", yes, doneRe);
+    const r = await h.bindFromPlan({});
+    if (!/✗ BAĞLA DURDU: BAĞLA'dan sonra düzen değişmiş/.test(o2) || counters.links !== n0 || counters.txNames.length !== tx0)
+      fail(`Ctrl+Z × ${k} sonrası Spread BAĞLA durmadı:\n${failLines(o2)}`);
+    else ok(`Ctrl+Z × ${k} (kesim geri alındı) → Spread BAĞLA hiçbir şey yapmadan DURDU ("düzen değişmiş")`);
+    if (r.ok || !/Kesilen parçaların hiçbiri timeline'da yok/.test(r.summary) || counters.links !== n0) fail(`Ctrl+Z × ${k} sonrası yardımcı panel: ${r.summary}`);
+    else ok(`Ctrl+Z × ${k} → yardımcı paneldeki Bağla da DURDU ("kesilen parçaların hiçbiri yok"), hiçbir şey bağlanmadı`);
+    await stopHelper();
+    restore(snap);
+    undoStack.length = 0;
+    undoStack.push(...stack);
+    mockGen++;
+  }
+};
+
+scenarios.stop_per_guid = async () => {
+  // inceleme #9 m1 (A7): "yarım iş" koruması sequence başına — yedekte başarılı işlem ASLIN yarım iş kaydını silmez
+  await collectThen(smallSpec());
+  await startHelper();
+  hooks.beforeTx = (name) => name === "BAĞLA: kesim hazırlığı" && (M.setSem = "noop");
+  const o1 = await clickAndWait("btn-bind", yes, doneRe);
+  hooks.beforeTx = null;
+  M.setSem = "real";
+  if (!/✗ BAĞLA DURDU: İLK PARÇA TUTMADI/.test(o1)) return fail("asılda yarım iş oluşmadı:\n" + failLines(o1));
+  const copies = state.sequences.filter((x) => x.name === "Ana Kurgu Copy");
+  const copy = copies[copies.length - 1]; // BAĞLA'nın yedeği (TOPLA sonrası düzen)
+  state.activeGuid = copy.guid;
+  mockGen++;
+  const o2 = await clickAndWait("btn-collect", yes, doneRe);
+  const o3 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ TOPLA tamam|Zaten toplanmış/.test(o2) || !/✓ BAĞLA tamam/.test(o3)) return fail("yedekte TOPLA / BAĞLA tamamlanmadı:\n" + failLines(o2 + "\n" + o3));
+  state.activeGuid = "guid-main-edit";
+  mockGen++;
+  const n = counters.txNames.length;
+  const o4 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/YARIM hâlde/.test(o4) || counters.txNames.length !== n) fail("yedekteki başarılı işlemler aslın yarım iş kaydını sildi:\n" + failLines(o4));
+  else ok("yedekte Topla + Bağla başarılı; asıl hâlâ 'YARIM hâlde' diye korunuyor (kayıt sequence GUID'ine bağlı)");
+};
+
+scenarios.backup_copy = async () => {
+  // A7: eklentinin kendi yedeği (createCloneAction kopyası) üzerinde çalışmak. Kayıtlar (TOPLA kaydı + park listesi + parmak izi,
+  // kalibrasyon, adım işaretleri, yarım iş) sequence GUID'ine bağlı; yedek YENİ GUID alır (makeBackup yeni GUID'i şart koşar)
+  await collectThen(smallSpec());
+  const orig = seqByGuid("guid-main-edit");
+  const copy = state.sequences.find((x) => x.name === "Ana Kurgu Copy");
+  if (!copy || copy.guid === orig.guid) return fail("yedek yeni GUID almadı");
+  const recs = () => JSON.parse(lsStore.get("spread.collectRecord.v1") ?? "{}");
+  const origRec = JSON.stringify(recs()["guid-main-edit"]);
+  if (Object.keys(recs()).join() !== "guid-main-edit") fail(`TOPLA kaydı anahtarları: ${Object.keys(recs())}`);
+  else ok(`TOPLA kaydı yalnız aslın GUID'inde; yedek "${copy.name}" farklı GUID (${copy.guid})`);
+  state.activeGuid = copy.guid;
+  mockGen++;
+  const copyBefore = ser(copy.v) + ser(copy.a);
+  await startHelper();
+  const o1 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/Önce TOPLA'ya bas: bu sequence için TOPLA kaydı yok/.test(o1) || ser(copy.v) + ser(copy.a) !== copyBefore) fail("yedekte BAĞLA aslın kaydını kullandı ya da yedeği değiştirdi:\n" + failLines(o1));
+  else ok("yedekte BAĞLA: aslın TOPLA kaydını KULLANMADI ('Önce TOPLA'ya bas'), yedeğe dokunulmadı");
+  const qs = [];
+  const o2 = await clickAndWait("btn-collect", async (x) => (qs.push(x), yes()), doneRe);
+  if (!/✓ TOPLA tamam/.test(o2) || qs.some((q) => /PARK KAYDI|BÖLÜNMÜŞ/.test(q)) || JSON.stringify(recs()["guid-main-edit"]) !== origRec || !recs()[copy.guid])
+    fail("yedekte TOPLA aslın kaydıyla karıştı:\n" + failLines(o2));
+  else ok("yedekte TOPLA: aslın park listesi / parmak izi sorulmadı, kendi kaydı yazıldı, aslın kaydı değişmedi");
+  const calKeys = () => Object.keys(JSON.parse(lsStore.get("spread.trimCal.v1") ?? "{}")).sort().join();
+  const tx0 = txOf("BAĞLA: kalibrasyon").length;
+  const o3 = await clickAndWait("btn-bind", yes, doneRe);
+  const tx1 = txOf("BAĞLA: kalibrasyon").length;
+  if (!/✓ BAĞLA tamam/.test(o3) || tx1 - tx0 !== CAL_TX.length || calKeys() !== copy.guid) fail(`yedekte BAĞLA / kalibrasyon: ${calKeys()}\n${failLines(o3)}`);
+  else ok("yedekte BAĞLA: kalibrasyon ölçüldü ve yalnız yedeğin GUID'ine yazıldı");
+  state.activeGuid = orig.guid;
+  mockGen++;
+  const o4 = await clickAndWait("btn-bind", yes, doneRe);
+  const tx2 = txOf("BAĞLA: kalibrasyon").length;
+  if (!/✓ BAĞLA tamam/.test(o4) || tx2 - tx1 !== CAL_TX.length || calKeys() !== [copy.guid, orig.guid].sort().join()) fail(`asılda BAĞLA / kalibrasyon: ${calKeys()}\n${failLines(o4)}`);
+  else ok("asılda BAĞLA: yedeğin kalibrasyonunu KULLANMADI, kendi ölçtü (kayıtlar GUID'e bağlı, adla karışmaz)");
+};
+
+scenarios.trlr_migration = async () => {
+  // M1 (inceleme #9): v1.0.0'ın TOPLA'sı eşlemenin TAMAMINI kaydediyordu → yükseltmede kayıtlı "Zoom TrLR → A3" bir kez "Sil"e
+  // çevrilir; kullanıcı sonra A3'ü seçerse o seçim kalır (yeniden çevrilmez)
+  setupSync(sep23());
+  lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom Tr1": 0, "Zoom Tr2": 1, "Zoom TrLR": 2, DJI: 3 }));
+  await scan();
+  if (selectOf("Zoom TrLR")?.value !== "sil" || lsStore.get("spread.sourceMap.v11") !== "1" || !/"Zoom TrLR":"sil"/.test(lsStore.get("spread.sourceMap.v1") ?? ""))
+    fail(`geçiş: TrLR=${selectOf("Zoom TrLR")?.value}, bayrak=${lsStore.get("spread.sourceMap.v11")}, kayıt=${lsStore.get("spread.sourceMap.v1")}`);
+  else ok("yükseltme: v1.0.0'dan kalan 'Zoom TrLR → A3' bir kez 'Sil'e çevrildi (günlükte not)");
+  await setMap("Zoom TrLR", 2);
+  await scan();
+  if (selectOf("Zoom TrLR")?.value !== "2") fail(`geçişten sonra kullanıcı seçimi korunmadı: ${selectOf("Zoom TrLR")?.value}`);
+  else ok("geçişten sonra kullanıcının 'Zoom TrLR → A3' seçimi kalıcı (yeniden çevrilmez)");
+  lsStore.clear();
+};
+
+scenarios.helper_persist = async () => {
+  // yardımcı arka sekmedeyken de bellekte kalsın: ExtendScript app.setExtensionPersistent(id, 1)
+  setupSync(smallSpec());
+  const h = await startHelper();
+  const r = await h.persist("com.badideagency.spread.helper.panel");
+  if (r !== true || h.state().persistent !== true || JSON.stringify(counters.persist) !== JSON.stringify(["com.badideagency.spread.helper.panel", 1]))
+    fail(`persist: ${r} ${JSON.stringify(counters.persist)}`);
+  else ok('yardımcı: app.setExtensionPersistent("com.badideagency.spread.helper.panel", 1) → state.persistent = true');
 };
 
 scenarios.trimcal_rules = async () => {
@@ -1641,6 +1992,8 @@ function sep23() {
 scenarios.sep23 = async () => {
   const spec = sep23();
   setupSync(spec);
+  lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": 2 })); // v1.1.0: TrLR varsayılanı "Sil" — bu senaryo TrLR'yi A3'e eşleyen kullanıcıyı sınar
+  lsStore.set("spread.sourceMap.v11", "1"); // v1.1.0 geçişi yapılmış: kullanıcı TrLR'yi bilerek A3'e eşlemiş
   let q = "";
   const out = await clickAndWait("btn-collect", async (x) => ((q = x), yes()), doneRe);
   if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + out.split("\n").filter((l) => /DURDU|•|HATA|ÇAKIŞMA|AYRIL|SIRA/.test(l)).join("\n"));
@@ -1813,6 +2166,8 @@ async function collectThen(spec) {
 scenarios.sync = async () => {
   const spec = syncDataset();
   setupSync(spec);
+  lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": 2 })); // v1.1.0: TrLR varsayılanı "Sil" — bu senaryo TrLR'yi A3'e eşleyen kullanıcıyı sınar
+  lsStore.set("spread.sourceMap.v11", "1"); // v1.1.0 geçişi yapılmış: kullanıcı TrLR'yi bilerek A3'e eşlemiş
   const out = await clickAndWait("btn-collect", yes, doneRe);
   if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + out.split("\n").filter((l) => /DURDU|•|HATA|ÇAKIŞMA/.test(l)).join("\n"));
   const pre = JSON.parse(JSON.stringify(undoStack[0]), rev).sequences.find((x) => x.guid === "guid-main-edit");
@@ -2532,7 +2887,8 @@ scenarios.panel_guard = async () => {
   w.start -= FRAME25;
   w.end -= FRAME25;
   mockGen++;
-  // (c0) KES'ten sonra bir parça SİLİNDİ: düzen kurala uyuyor ama plandan farklı → planla karşılaştırma durdurur (hiçbir grup bağlanmaz)
+  // (c0) v1.1.0 (A6): KES'ten sonra bir parça elle SİLİNDİ → DURMA: plan grupları var olan öğelere indirilir, yine ortak kuralla
+  // birebir karşılaştırılır; var olanlar bağlanır, eksik öğe yazılır; hiçbir klip silinmez
   const snapBefore = deepCopy();
   const piece = S.a.flat().find((c) => c.name.endsWith(".WAV"));
   for (const tr of S.a) {
@@ -2540,16 +2896,25 @@ scenarios.panel_guard = async () => {
     if (k >= 0) tr.splice(k, 1);
   }
   mockGen++;
+  const nClips0 = allClips(S).length;
   const r2b = await h.bindFromPlan({});
-  if (r2b.ok || !/KES planıyla uyuşmuyor/.test(r2b.summary) || !r2b.lines.some((l) => /planda var, düzende YOK/.test(l)) || counters.links !== nLinks)
-    fail(`silinen parçayla: ${r2b.summary}\n${r2b.lines.join("\n")}`);
-  else ok("KES'ten sonra bir parça silindi → planla karşılaştırma DURDURDU ('planda var, düzende YOK'), hiçbir grup bağlanmadı");
+  if (
+    !r2b.ok ||
+    !/^⚠ 2 grup bağlandı ve doğrulandı; 1 öğe timeline'da yok \(elle silinmiş\) — bağlanmadı/.test(r2b.summary) ||
+    r2b.notes.length !== 1 ||
+    !r2b.notes[0].includes(piece.name) ||
+    counters.links - nLinks !== 2 ||
+    allClips(S).length !== nClips0
+  )
+    fail(`silinen parçayla: ${r2b.summary}\n${[...r2b.lines, ...(r2b.notes ?? [])].join("\n")}`);
+  else ok(`KES'ten sonra bir parça elle silindi → paneldeki BAĞLA durmadı: 2 grup var olan öğeleriyle bağlandı, eksik öğe yazıldı ("${r2b.notes[0].slice(0, 60)}…"), hiçbir klip silinmedi`);
   restore(snapBefore);
   mockGen++;
+  const nLinksC = counters.links;
   // (c) KES geri alındı (Ctrl+Z): kesilmemiş sesler kameralara değiyor / kılavuzlar duruyor → DUR
   for (let i = 0; i < 4; i++) undo();
   const r3 = await h.bindFromPlan({});
-  if (r3.ok || !/KES sonrası hâlinde değil/.test(r3.summary) || !r3.lines.some((l) => /KES yapılmamış|KES kılavuzu silmemiş/.test(l)) || counters.links !== nLinks)
+  if (r3.ok || !/KES sonrası hâlinde değil/.test(r3.summary) || !r3.lines.some((l) => /KES yapılmamış|KES kılavuzu silmemiş/.test(l)) || counters.links !== nLinksC)
     fail(`KES geri alınmışken: ${r3.summary}\n${r3.lines.join("\n")}`);
   else ok("KES geri alınmışken paneldeki BAĞLA DURDU (kesilmemiş ses / kılavuz ses duruyor), hiçbir şey bağlanmadı");
 };
@@ -2799,7 +3164,10 @@ scenarios.mapping = async () => {
   await scan();
   const ids = (els.mapping?.children ?? []).map((r) => r.children?.[1]?.id);
   if (ids.join(",") !== "map-Zoom Tr1,map-Zoom Tr2,map-Zoom TrLR,map-DJI") fail(`kaynaklar: ${ids}`);
-  else ok("kaynak eşleme paneli: Zoom Tr1, Zoom Tr2, Zoom TrLR, DJI (varsayılan A1..A4)");
+  else ok("kaynak eşleme paneli: Zoom Tr1, Zoom Tr2, Zoom TrLR, DJI");
+  if (selectOf("Zoom TrLR")?.value !== "sil" || selectOf("Zoom Tr1")?.value !== "0" || selectOf("Zoom Tr2")?.value !== "1" || selectOf("DJI")?.value !== "2")
+    fail(`varsayılan eşleme: ${["Zoom Tr1", "Zoom Tr2", "Zoom TrLR", "DJI"].map((k) => `${k}=${selectOf(k)?.value}`).join(", ")}`);
+  else ok("v1.1.0 varsayılan eşleme: Zoom TrLR → Sil (track almaz), Tr1 → A1, Tr2 → A2, DJI → A3");
   await setMap("Zoom TrLR", "sil");
   if (!/"Zoom TrLR":"sil"/.test(lsStore.get("spread.sourceMap.v1") ?? "")) fail(`localStorage: ${lsStore.get("spread.sourceMap.v1")}`);
   else ok("'Zoom TrLR → Sil' localStorage'da hatırlandı");
@@ -3029,7 +3397,7 @@ if (SCREENS)
       ok(`ekran: ${name}`);
     };
     const visible = (id) => els[id] && els[id].style.display === "block";
-    /** tıkla; ilk soru görünce shot(askName) + Evet; sonuç satırı gelince döner */
+    /** tıkla; ilk soru görünce shot(askName) + Devam; sonuç satırı gelince döner */
     const run = async (btn, askName, done) => {
       markLog();
       els[btn].click();
@@ -3047,42 +3415,57 @@ if (SCREENS)
       }
       fail(`${btn}: zaman aşımı`);
     };
-    // 12 Eylül gerçek verisi (A27 / A30 çift kopyaları dahil), TrLR "Sil"; SPREAD + Synchronize bu panelde yapılmış sayılır
+    const steps = (o) => lsStore.set("spread.steps.v1", JSON.stringify({ "guid-main-edit": o }));
+    const SPREAD_OK = { kind: "ok", text: "58 klip kendi track'ine dağıtıldı.", at: "2026-09-26T10:00:00Z" };
+    // 12 Eylül gerçek verisi (A27 / A30 çift kopyaları dahil); TrLR için seçim yok → v1.1.0 varsayılanı "Sil"; kamera sesi stereo,
+    // Zoom Tr1/Tr2 mono, Premiere karışık grubu reddeder (gerçek 26.5.1 gibi)
     setupFromReport(R0912);
-    lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": "sil" }));
-    lsStore.set("spread.steps.v1", JSON.stringify({ "guid-main-edit": { spread: { kind: "ok", text: "58 klip kendi track'ine dağıtıldı.", at: "2026-09-26T10:00:00Z" } } }));
+    M.chType = REAL_CH;
+    M.linkRejectMixed = true;
     mockGen++;
     await startHelper();
     els["btn-helper"].click();
     await sleep(1800);
-    shot("01-hazir");
-    hooks.beforeTx = (name) => name === "TOPLA: park" && shot("03-topla-ilerleme");
-    await run("btn-collect", "02-topla-onay", /✓ TOPLA tamam|✗ TOPLA DURDU/);
-    shot("04-topla-tamam");
-    hooks.beforeTx = (name) => name === "BAĞLA: kalibrasyon SetInPoint" && shot("06-bagla-olcum");
-    await run("btn-bind", "05-bagla-onay", /✓ BAĞLA tamam|⚠ BAĞLA bitti|✗ BAĞLA DURDU|✓ KES tamam/);
+    shot("01-baslangic");
+    // Dağıt + Synchronize bu panelde yapılmış sayılır
+    steps({ spread: SPREAD_OK });
+    await sleep(1700);
+    shot("02-dagitildi");
+    hooks.beforeTx = (name) => name === "TOPLA: park" && shot("04-topla-ilerleme");
+    await run("btn-collect", "03-topla-onay", /✓ TOPLA tamam|✗ TOPLA DURDU/);
+    await sleep(1600);
+    shot("05-toplandi");
+    hooks.beforeTx = (name) => name === "BAĞLA: kalibrasyon SetInPoint" && shot("07-bagla-olcum");
+    await run("btn-bind", "06-bagla-onay", /✓ BAĞLA tamam|⚠ BAĞLA bitti|✗ BAĞLA DURDU|✓ KES tamam/);
     hooks.beforeTx = null;
     await sleep(1600);
-    shot("07-bagla-tamam");
-    // hata örneği: set action'lar hiçbir şey yapmıyor → kalibrasyon kural vermez → DUR (tek cümle + Ayrıntı)
+    shot("08-bitti");
+    // biten bir adımın adına tıkla → "Yeniden çalıştır"
+    els["name-topla"].click();
+    shot("12-yeniden-calistir");
+    els["name-topla"].click();
+    // hata örneği: set action'lar hiçbir şey yapmıyor → kalibrasyon kural vermez → DUR (kırmızı tek satır + "Ne yapmalıyım?")
     await collectThen(smallSpec());
-    lsStore.set("spread.steps.v1", JSON.stringify({ "guid-main-edit": { spread: { kind: "ok", text: "6 klip kendi track'ine dağıtıldı.", at: "2026-09-26T10:00:00Z" }, topla: { kind: "ok", text: "1 oturum toplandı.", at: "2026-09-26T10:05:00Z" } } }));
+    M.chType = null;
+    M.linkRejectMixed = false;
+    steps({ spread: { ...SPREAD_OK, text: "6 klip kendi track'ine dağıtıldı." }, topla: { kind: "ok", text: "1 oturum toplandı.", at: "2026-09-26T10:05:00Z" } });
     M.setSem = "noop";
     await run("btn-bind", null, /✗ BAĞLA DURDU/);
     await sleep(1600);
-    shot("08-hata");
-    els["result-more-toggle"].click();
-    shot("09-hata-ayrinti");
-    els["result-more-toggle"].click();
+    shot("09-hata");
+    els["result-help"].click();
+    shot("10-hata-ne-yapmali");
+    els["result-help"].click();
+    // ⚙ Ayarlar: kaynak eşleme, eşik, boşluk, yardımcı, Durum raporu, günlük
     els["btn-issue"].click();
     await sleep(1500);
-    els["adv-toggle"].click();
-    shot("10-gelismis-sorun-bildir");
-    els["adv-toggle"].click();
+    els["btn-settings"].click();
+    shot("11-ayarlar");
+    els["btn-back"].click();
     await stopHelper();
     els["btn-helper"].click();
     await sleep(400);
-    shot("11-yardimci-kapali");
+    shot("13-yardimci-kapali");
   };
 
 // ------------------------------------------------------------ çalıştır

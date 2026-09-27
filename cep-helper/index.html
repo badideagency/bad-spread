@@ -4,55 +4,53 @@
     <meta charset="utf-8" />
     <title>Spread Helper</title>
     <style>
-      /* Spread Helper v1.0.0 — küçük panel: tek durum satırı; köprüsüz BAĞLA yalnız gerektiğinde; gerisi "Ayrıntı ▸" altında. */
-      html, body { margin: 0; padding: 0; background: #232323; color: #d8d8d8; font: 12px/1.45 "Segoe UI", system-ui, sans-serif; }
-      body { padding: 8px 10px; }
-      .line { display: flex; align-items: center; }
-      .dot { width: 8px; height: 8px; border-radius: 4px; margin-right: 7px; background: #9a9a9a; flex-shrink: 0; }
-      .dot.ok { background: #4cc27a; }
-      .dot.bad { background: #ff6b6b; }
-      .dot.warn { background: #e8b04a; }
-      #srv { flex: 1; }
-      #srv.bad { color: #ff8a80; }
-      .ver { color: #777; font-size: 11px; margin-left: 8px; }
-      .ok { color: #7fd67f; }
-      .bad { color: #ff8a80; }
-      .warn { color: #ffd166; }
-      .dim { color: #9a9a9a; }
+      /* Spread Helper v1.1.0 — neredeyse görünmez: tek satır "Spread Helper çalışıyor ●". Köprüsüz BAĞLA yalnız gerektiğinde tek düğme.
+         Arka plan, yazı rengi ve yazı tipi Premiere'in CEP temasından (js/panel.js: getHostEnvironment().appSkinInfo); buradakiler
+         yalnız tema okunamazsa. Başka bir panelin arkasında sekme olarak durabilir (en küçük boyut 60×20). */
+      html, body { margin: 0; padding: 0; background: #232323; color: #d8d8d8; font-family: sans-serif; font-size: 11px; line-height: 1.4; }
+      body { padding: 4px 8px; }
+      .line { display: flex; align-items: center; cursor: pointer; white-space: nowrap; overflow: hidden; }
+      #srv { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+      .dot { width: 7px; height: 7px; border-radius: 4px; margin-left: 6px; background: #8e8e8e; flex-shrink: 0; }
+      .dot.ok { background: #2d9d78; }
+      .dot.bad { background: #e34850; }
+      .dot.warn { background: #e68619; }
+      .bad { color: #e34850; }
+      #bindbox { display: none; margin: 4px 0 0; }
+      #btn-bind { display: none; padding: 0 10px; margin: 0 0 0 6px; flex-shrink: 0; }
+      button { font: inherit; color: inherit; background: rgba(128, 128, 128, 0.18); border: 1px solid rgba(128, 128, 128, 0.45); border-radius: 12px; padding: 2px 12px; margin: 2px 4px 2px 0; cursor: pointer; }
+      button.primary { background: #1473e6; border-color: #1473e6; color: #fff; font-weight: bold; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      #results div { margin: 1px 0; }
+      #more { display: none; margin: 8px 0 0; opacity: 0.85; }
       .row { margin: 2px 0; word-break: break-all; }
-      #bindbox { display: none; margin: 8px 0 0; padding: 8px; border: 1px solid #378ef0; border-radius: 5px; background: #2b2b2b; }
-      #bind-msg { margin: 0 0 6px; }
-      button { background: #3a3a3a; color: #fff; border: 1px solid #555; border-radius: 3px; padding: 4px 10px; margin: 4px 4px 4px 0; cursor: pointer; }
-      button.primary { background: #2d6cdf; border-color: #2d6cdf; font-weight: 600; padding: 6px 16px; }
-      button:disabled { opacity: .5; cursor: default; }
-      #results div { margin: 2px 0; }
-      .toggle { color: #9a9a9a; font-size: 11px; margin: 8px 0 0; cursor: pointer; }
-      .toggle:hover { color: #d8d8d8; }
-      #more { display: none; margin: 4px 0 0; }
-      textarea { width: 100%; box-sizing: border-box; height: 56px; background: #1a1a1a; color: #d8d8d8; border: 1px solid #444; font: 11px monospace; }
-      #log { white-space: pre-wrap; font: 10.5px/1.35 monospace; color: #9a9a9a; max-height: 160px; overflow: auto; background: #1a1a1a; padding: 4px; margin-top: 4px; }
+      textarea { width: 100%; box-sizing: border-box; height: 48px; font: 10px monospace; background: rgba(0, 0, 0, 0.15); color: inherit; border: 1px solid rgba(128, 128, 128, 0.45); }
+      #log { white-space: pre-wrap; font: 10px/1.35 monospace; max-height: 140px; overflow: auto; margin-top: 4px; }
     </style>
   </head>
   <body>
-    <div class="line"><span id="dot" class="dot warn"></span><span id="srv">Spread Helper başlatılıyor…</span><span id="ver" class="ver"></span></div>
+    <!-- TEK satır: durum (ya da "Bağla bekliyor…" / son bağlamanın sonucu) + gerektiğinde Bağla düğmesi + nokta. Panel 60×20'ye
+         küçültülse de bekleyen bağlama görünür (inceleme #9, m3). Tıklayınca ayrıntı. -->
+    <div class="line"><span id="srv" title="Ayrıntı için tıkla">Spread Helper başlatılıyor…</span><button id="btn-bind" class="primary">Bağla</button><span id="dot" class="dot warn"></span></div>
 
+    <!-- yalnız bu panelde bağladıktan sonra, sorunlu gruplar (panel yeterince yüksekse görünür; özet zaten durum satırında) -->
     <div id="bindbox">
-      <div id="bind-msg"></div>
-      <button id="btn-bind" class="primary">BAĞLA</button>
       <div class="row" id="summary"></div>
       <div id="results"></div>
     </div>
 
-    <div id="more-toggle" class="toggle">Ayrıntı ▸</div>
+    <!-- gizli ayrıntı: durum satırına tıklayınca -->
     <div id="more">
-      <div class="row dim" id="env"></div>
-      <div class="row dim" id="listen"></div>
-      <div class="row dim">bilgi dosyası: <span id="info"></span></div>
-      <div class="row">son istek: <span id="req" class="dim"></span></div>
-      <div class="row">plan: <span id="plan" class="dim"></span></div>
-      <div class="row dim">Planı yapıştır (plan dosyası okunamıyorsa: Spread → Gelişmiş ▸ Raporu kopyala):</div>
-      <textarea id="paste" placeholder="Spread panelindeki rapor kutusundan kopyalanan KES planı (JSON)"></textarea>
-      <button id="btn-bind2">BAĞLA</button><button id="btn-plan">Planı yeniden oku</button>
+      <div class="row" id="ver"></div>
+      <div class="row" id="env"></div>
+      <div class="row" id="listen"></div>
+      <div class="row">arka sekmede kalıcılık: <span id="persist">?</span></div>
+      <div class="row">bilgi dosyası: <span id="info"></span></div>
+      <div class="row">son istek: <span id="req"></span></div>
+      <div class="row">plan: <span id="plan"></span></div>
+      <div class="row">Planı yapıştır (plan dosyası okunamıyorsa: Spread → ⚙ Ayarlar → Durum raporu → Kopyala):</div>
+      <textarea id="paste" placeholder="Spread'in KES planı (JSON)"></textarea>
+      <button id="btn-bind2">Bağla</button><button id="btn-plan">Planı yeniden oku</button>
       <div id="log"></div>
     </div>
 

@@ -1,6 +1,7 @@
 // Spread Helper — ExtendScript tarafı (Premiere Pro). ES3: JSON / Array.indexOf / forEach YOK (bu dosya `npm run check:jsx` ile
-// ES3 olarak ayrıştırılır). Yalnız üç fonksiyon dışarıya açık: spreadHelper_ping(), spreadHelper_read() (salt okuma: aktif sequence'ın
-// klipleri — yardımcı paneldeki BAĞLA grupları düzenden bulur), spreadHelper_link(req).
+// ES3 olarak ayrıştırılır). Dışarıya açık fonksiyonlar: spreadHelper_ping(), spreadHelper_read() (salt okuma: aktif sequence'ın
+// klipleri — yardımcı paneldeki BAĞLA grupları düzenden bulur), spreadHelper_channels(req) (v1.1.0, salt okuma: seslerin kanal tipi),
+// spreadHelper_link(req), spreadHelper_persist(id) (v1.1.0: panel arka sekmedeyken bellekte kalsın).
 // Her Premiere DOM çağrısının yanında "docs:" yorumu = Premiere Pro Scripting Guide (https://ppro-scripting.docsforadobe.dev/,
 // kaynağı github.com/docsforadobe/premiere-scripting-guide) sayfası; kılavuzda OLMAYAN tek üye getLinkedItems() için Adobe'nin
 // PProPanel örneğindeki tip tanımı. `npm run check:jsx` her DOM üyesinin yanında bu yorumun olduğunu denetler.
@@ -13,7 +14,7 @@
 // Bağlama: seçimi temizle → grubun kliplerini setSelected(true, true) → seçimi say → Sequence.linkSelection() → seçimi temizle →
 // her klibin getLinkedItems() sonucu gruptaki diğer bütün klipleri içeriyor mu (doğrulama).
 
-var SPREAD_HELPER_JSX = "1.0.0";
+var SPREAD_HELPER_JSX = "1.1.0";
 
 function spreadHelper_q(s) {
   var out = "\"";
@@ -66,6 +67,20 @@ function spreadHelper_ping() {
       premiere: String(app.version), // docs: https://ppro-scripting.docsforadobe.dev/application/application/#appversion
       sequence: seq ? String(seq.name) : null // docs: https://ppro-scripting.docsforadobe.dev/sequence/sequence/#sequencename
     });
+  } catch (e) {
+    return spreadHelper_err(e);
+  }
+}
+
+/**
+ * v1.1.0 — panel görünmezken de (başka bir panelin arkasında sekme) Premiere onu bellekten atmasın: belgedeki örnek yorumu
+ * '1 - for "Never unload me, even when not visible."'. id = manifest'teki Extension Id.
+ */
+function spreadHelper_persist(id) {
+  try {
+    // dönüş: belge "true if successful", Adobe PProPanel tip dosyası "void" → istisna yoksa istek iletildi sayılır
+    var r = app.setExtensionPersistent(String(id), 1); // docs: https://ppro-scripting.docsforadobe.dev/application/application/#appsetextensionpersistent
+    return spreadHelper_json({ ok: true, result: r === false ? false : true });
   } catch (e) {
     return spreadHelper_err(e);
   }
@@ -160,6 +175,46 @@ function spreadHelper_read() {
   }
 }
 
+/**
+ * v1.1.0 — bir ses klibinin kanal tipi: proje öğesinin ses kanalı eşlemesi (AudioChannelMapping.audioChannelsType). Okunamazsa null.
+ * Video klip için null. Salt okuma.
+ */
+function spreadHelper_channelType(item, kind) {
+  if (kind !== "A" || !item) return null;
+  try {
+    var pi = item.projectItem; // docs: https://ppro-scripting.docsforadobe.dev/item/trackitem/#trackitemprojectitem
+    if (!pi) return null;
+    // belge: ÖZELLİK (parantezsiz; Adobe PProPanel örneği Premiere.jsx de öyle kullanır) — metot çıkarsa yine çağrılır
+    var m = pi.getAudioChannelMapping; // docs: https://ppro-scripting.docsforadobe.dev/item/projectitem/#projectitemgetaudiochannelmapping
+    if (typeof m === "function") m = pi.getAudioChannelMapping(); // docs: https://ppro-scripting.docsforadobe.dev/item/projectitem/#projectitemgetaudiochannelmapping
+    if (!m) return null;
+    // 0 mono, 1 stereo, 2 5.1 (belge); 3 multichannel, 4 4-channel, 5 8-channel (Adobe PProPanel örneği sabitleri)
+    var t = m.audioChannelsType; // docs: https://ppro-scripting.docsforadobe.dev/other/audiochannelmapping/#audiochannelmappingaudiochannelstype
+    return typeof t === "number" ? t : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** SALT OKUMA: req = { sequence, items: [ { kind, track, start, end, name } ] } → { ok, types: [tip | null] } (aynı sırada). */
+function spreadHelper_channels(req) {
+  try {
+    var seq = spreadHelper_activeSequence();
+    if (!seq) return spreadHelper_err("aktif sequence yok");
+    var seqName = String(seq.name); // docs: https://ppro-scripting.docsforadobe.dev/sequence/sequence/#sequencename
+    if (seqName !== req.sequence) return spreadHelper_err("aktif sequence \"" + seqName + "\", beklenen \"" + req.sequence + "\"");
+    var cache = {};
+    var types = [];
+    for (var i = 0; i < req.items.length; i++) {
+      var f = spreadHelper_find(seq, req.items[i], cache);
+      types.push(f.item ? spreadHelper_channelType(f.item, req.items[i].kind) : null);
+    }
+    return spreadHelper_json({ ok: true, sequence: seqName, types: types });
+  } catch (e) {
+    return spreadHelper_err(e);
+  }
+}
+
 function spreadHelper_selection(seq) {
   var sel = seq.getSelection(); // docs: https://ppro-scripting.docsforadobe.dev/sequence/sequence/#sequencegetselection
   return spreadHelper_items(sel, sel ? sel.length : 0); // docs: https://ppro-scripting.docsforadobe.dev/collection/collection/ (length)
@@ -247,7 +302,7 @@ function spreadHelper_link(req) {
         if (f.item) found.push(f.item);
         else missing.push(spreadHelper_label(grp.items[i]) + (f.count > 1 ? " (" + f.count + " aday)" : " (yok)"));
       }
-      var r = { id: grp.id, total: grp.items.length, found: found.length, missing: missing, linked: false, verified: null, detail: "" };
+      var r = { id: grp.id, total: grp.items.length, found: found.length, missing: missing, linked: false, verified: null, detail: "", types: null };
       if (missing.length) {
         r.detail = "eksik \u00f6\u011fe var \u2014 ba\u011flanmad\u0131";
         results.push(r);
@@ -268,7 +323,12 @@ function spreadHelper_link(req) {
         var ok = seq.linkSelection(); // docs: https://ppro-scripting.docsforadobe.dev/sequence/sequence/#sequencelinkselection
         spreadHelper_clearSelection(seq);
         r.linked = ok !== false;
-        if (!r.linked) r.detail = "linkSelection false d\u00f6nd\u00fc";
+        if (!r.linked) {
+          r.detail = "linkSelection false d\u00f6nd\u00fc";
+          // v1.1.0: yardımcı (Node) kanal tipi farklı sesleri çıkarıp yeniden dener — tipler grubun öğe sırasıyla
+          r.types = [];
+          for (i = 0; i < found.length; i++) r.types.push(spreadHelper_channelType(found[i], grp.items[i].kind));
+        }
         else {
           // taze bul (önbellek sıfırlanır) ve doğrula
           cache = {};

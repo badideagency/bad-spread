@@ -33,6 +33,19 @@ function write(key: string, value: string): void {
   }
 }
 
+/**
+ * v1.1.0: kullanıcı seçmediyse "Sil" olan kaynaklar. Zoom TrLR (stereo karışım): kullanıcı kullanmıyor ve mono Tr1/Tr2 ile aynı bağ
+ * grubunda Premiere'in bağlamayı reddetmesine yol açtı (handoff.md, v1.1.0). Kaynak eşlemeden değiştirilebilir.
+ */
+export const DEFAULT_SIL: readonly string[] = ["Zoom TrLR"];
+
+/**
+ * v1.1.0 geçişi (bir kez): v1.0.0'ın TOPLA'sı eşlemenin TAMAMINI kaydediyordu (kendiliğinden atanan track'ler dahil) → kayıtlı bir
+ * "Zoom TrLR → A3" kullanıcının seçimi mi otomatik mi ayırt edilemez. Kullanıcı TrLR'yi kullanmıyor ve varsayılanın "Sil" olmasını
+ * istedi → DEFAULT_SIL kaynaklarının kayıtlı track'i bir kez "sil"e çevrilir; sonra kullanıcı ⚙ Ayarlar'dan yine seçebilir (kalır).
+ */
+const MIG_KEY = "spread.sourceMap.v11";
+
 function savedMap(): Record<string, Target> {
   try {
     const raw = read(MAP_KEY);
@@ -41,14 +54,25 @@ function savedMap(): Record<string, Target> {
     if (j && typeof j === "object")
       for (const [k, v] of Object.entries(j as Record<string, unknown>))
         if (v === "sil" || (typeof v === "number" && Number.isInteger(v) && v >= 0 && v < 64)) out[k] = v;
+    if (read(MIG_KEY) !== "1") {
+      const moved = DEFAULT_SIL.filter((k) => typeof out[k] === "number");
+      for (const k of moved) out[k] = "sil";
+      if (moved.length) {
+        write(MAP_KEY, JSON.stringify(out));
+        log(`v1.1.0: kayıtlı eşlemede ${moved.join(", ")} bir kez "Sil"e çevrildi (varsayılan). İstersen ⚙ Ayarlar'dan yeniden A track seç.`, "warn");
+      }
+      write(MIG_KEY, "1");
+    }
     return out;
   } catch {
     return {};
   }
 }
 
+
 /**
- * Kaynak → hedef. Kayıtlı olmayan kaynak: kayıtlıların kullanmadığı en küçük A track'i (kaynak sırasıyla).
+ * Kaynak → hedef. Kayıtlı olmayan kaynak: DEFAULT_SIL'deyse "sil", değilse kayıtlıların kullanmadığı en küçük A track'i (kaynak
+ * sırasıyla).
  * @param sources sıralı kaynak listesi (sourcesOf)
  */
 export function mappingFor(sources: string[]): Map<string, Target> {
@@ -59,7 +83,7 @@ export function mappingFor(sources: string[]): Map<string, Target> {
     if (s in saved) {
       out.set(s, saved[s]);
       if (typeof saved[s] === "number") used.add(saved[s]);
-    }
+    } else if (DEFAULT_SIL.includes(s)) out.set(s, "sil");
   let next = 0;
   for (const s of sources) {
     if (out.has(s)) continue;

@@ -63,6 +63,8 @@ export function stepViews(guid: string | null): { steps: Record<StepId, StepView
     if (pr && pr.ok && pr.planCreatedAt === bind.at) bagla = { state: "done", text: "Spread Helper panelinde bağlandı." };
   }
   const spread = v("spread", topla.state !== "todo" ? { state: "done", text: "" } : null);
-  const next: StepId | null = bagla.state === "done" ? null : topla.state === "done" ? "bagla" : spread.state === "done" ? "topla" : "spread";
+  // v1.1.0: bağlama bitmiş ama notlu (ör. bazı sesler bağ dışında, bağ okunarak doğrulanamadı) → "!" kalır ama sıradaki adım yok
+  const baglaFinished = bagla.state === "done" || (bagla.state === "warn" && bind?.stage === "linked");
+  const next: StepId | null = baglaFinished ? null : topla.state === "done" ? "bagla" : spread.state === "done" ? "topla" : "spread";
   return { steps: { spread, topla, bagla }, next };
 }

@@ -289,12 +289,70 @@ var SpreadCore = (function(exports) {
 		for (const [k, label] of got) if (!want.has(k)) out.push(`düzende var, planda YOK: ${label}`);
 		return out;
 	}
+	/**
+	* v1.1.0 "yalnız bağla" (kesme bitmiş, bağlama kalmış): kullanıcı bu arada bazı öğeleri elle sildiyse planın grupları o an
+	* düzende VAR olan öğelere indirilir; eksikler satır satır döner. Öğe anahtarı (tür, track, start, end, ad) birebir eşleşmeli —
+	* yeri değişmiş öğe de "eksik" sayılır ve bağlanmaz. İndirilmiş gruplar yine compareLinkGroups ile düzenden bulunanlarla
+	* karşılaştırılır (iki yol birbirinden sapamaz).
+	*/
+	function reduceToPresent(planned, present) {
+		const missing = [];
+		return {
+			groups: planned.map((g) => {
+				const items = g.items.filter((i) => present.has(linkItemKey(i)));
+				for (const i of g.items) if (!present.has(linkItemKey(i))) missing.push(`${g.label}: ${trackLabel(i.kind, i.track)} "${i.name}" [${secOf(i.start)}s–${secOf(i.end)}s] yok`);
+				return {
+					...g,
+					items
+				};
+			}),
+			missing
+		};
+	}
 	//#endregion
-	exports.CORE_VERSION = "1.0.0";
+	//#region spread/src/channels.ts
+	/** Kullanıcıya gösterilen ad (bilinmeyen değer sayıyla yazılır — tahmin yok). */
+	function channelTypeName(t) {
+		if (t === null) return "bilinmiyor";
+		return {
+			0: "mono",
+			1: "stereo",
+			2: "5.1",
+			3: "çok kanallı",
+			4: "4 kanal",
+			5: "8 kanal"
+		}[t] ?? `tip ${t}`;
+	}
+	/**
+	* Gruptaki ses öğelerinden grubun ANA kanal tipine uymayanların index'leri (bağ dışında bırakılacak adaylar).
+	* Ana tip: en çok ses öğesinin tipi; eşitlikte en küçük A track'teki öğenin tipi (Spread'in track çerçevesinde eşlenen harici
+	* kaynaklar en üstteki A track'lerde, korunan kamera sesi ve kılavuzlar onların altında).
+	* Karar verilmez ([] döner): tek tip varsa; bir ses öğesinin tipi okunamadıysa (tahmin yok); ana tipe uyan ses öğesi kalmayacaksa.
+	* Video öğeleri hiçbir zaman aday değildir.
+	*/
+	function channelOutliers(items) {
+		const audio = items.map((x, i) => ({
+			...x,
+			i
+		})).filter((x) => x.kind === "A");
+		if (audio.length < 2 || audio.some((x) => x.type === null)) return [];
+		const count = /* @__PURE__ */ new Map();
+		for (const x of audio) count.set(x.type, (count.get(x.type) ?? 0) + 1);
+		if (count.size < 2) return [];
+		const most = Math.max(...count.values());
+		const top = audio.filter((x) => count.get(x.type) === most).sort((a, b) => a.track - b.track || a.i - b.i)[0];
+		return audio.filter((x) => x.type !== top.type).map((x) => x.i);
+	}
+	//#endregion
+	exports.CORE_VERSION = "1.1.0";
+	exports.channelOutliers = channelOutliers;
+	exports.channelTypeName = channelTypeName;
 	exports.classify = classify;
 	exports.compareLinkGroups = compareLinkGroups;
 	exports.groupsFromLayout = groupsFromLayout;
 	exports.layoutGroupItems = layoutGroupItems;
 	exports.linkItemKey = linkItemKey;
+	exports.linkItemOf = linkItemOf;
+	exports.reduceToPresent = reduceToPresent;
 	return exports;
 })({});

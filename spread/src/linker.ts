@@ -22,7 +22,8 @@ export const HELPER_VERSION = SPREAD_VERSION; // yardımcı ve panel aynı sür�
 const PING_TIMEOUT_MS = 3000;
 /** Bağlama grupları yardımcıya parti parti gönderilir (uzun çekimlerde tek istek zaman aşımına uğramasın). */
 const LINK_BATCH = 8;
-const LINK_TIMEOUT_MS = 90000;
+// v1.1.0: yardımcı bir partiyi reddedilince bir kez daha dener (iki ExtendScript çağrısı, her biri en çok 170 sn) → istemci bekler
+const LINK_TIMEOUT_MS = 360000;
 /** Yardımcının (cep-helper/js/helper.js) kabul ettiği sınırlar — iki dosyada AYNI olmalı. BAĞLA planı kesmeden ÖNCE denetler. */
 export const LINK_LIMITS = { groupItems: 256, groupsPerRequest: 64, name: 1024, sequenceName: 512 };
 
@@ -49,6 +50,21 @@ export interface LinkGroupResult {
   /** getLinkedItems ile doğrulandı mı; null = doğrulanamadı (API yok / hata) */
   verified: boolean | null;
   detail: string;
+  /**
+   * v1.1.0: ilk linkSelection false döndü ve grupta kanal tipi farklı sesler vardı → yardımcı onları çıkarıp ikinci kez denedi.
+   * linked / verified / detail ikinci denemenin sonucudur; firstDetail ilkinin.
+   */
+  retried?: boolean;
+  firstDetail?: string;
+  /** ikinci denemede bağ dışında bırakılan sesler ("A3 \"x.MP4\" [..] stereo") — SİLİNMEZ, yerinde kalır */
+  excluded?: string[];
+}
+
+/** v1.1.0: ses klibinin kanal tipi (ExtendScript AudioChannelMapping.audioChannelsType; null = okunamadı) */
+export interface ChannelsOutcome {
+  ok: boolean;
+  types: (number | null)[];
+  detail: string;
 }
 
 export interface PingResult {
@@ -71,6 +87,8 @@ export interface Linker {
   ping(): Promise<PingResult>;
   /** @param sequenceName aktif olması beklenen sequence (yardımcı başka sequence'ta hiçbir şey yapmaz) */
   link(sequenceName: string, groups: LinkGroup[]): Promise<LinkOutcome>;
+  /** v1.1.0: ses kliplerinin kanal tipleri (salt okuma; onaydaki "mono + stereo karışık" uyarısı için). Hata fırlatmaz. */
+  channels(sequenceName: string, items: LinkItem[]): Promise<ChannelsOutcome>;
   /** Yardımcı yoksa kullanıcıya gösterilecek kurulum talimatı. */
   installHint(): string[];
 }
@@ -305,10 +323,26 @@ class CepLinker implements Linker {
     return { ok: true, sequence, results, detail: "" };
   }
 
+  async channels(sequenceName: string, items: LinkItem[]): Promise<ChannelsOutcome> {
+    if (!items.length) return { ok: true, types: [], detail: "" };
+    try {
+      const types: (number | null)[] = [];
+      for (let i = 0; i < items.length; i += LINK_LIMITS.groupItems) {
+        const j = await post("/v1/channels", { sequence: sequenceName, items: items.slice(i, i + LINK_LIMITS.groupItems) }, LINK_TIMEOUT_MS);
+        const t = Array.isArray(j.types) ? (j.types as unknown[]) : [];
+        for (const x of t) types.push(typeof x === "number" && Number.isInteger(x) ? x : null);
+      }
+      if (types.length !== items.length) return { ok: false, types: items.map(() => null), detail: `yanıtta ${types.length}/${items.length} tip` };
+      return { ok: true, types, detail: "" };
+    } catch (e) {
+      return { ok: false, types: items.map(() => null), detail: e instanceof HelperError ? `[${e.stage}] ${e.message}` : raw(e) };
+    }
+  }
+
   installHint(): string[] {
     return [
       "Yardımcı: Premiere'de Window → Extensions (Legacy) → Spread Helper panelini aç; sunucu panel açıkken çalışır (paneli çalışma alanında açık bırak).",
-      "Menüde yoksa kurulu değil: Spread_Kurulum_v1.0.0.zip → KUR.cmd (KURULUM_TR.md → \"Kurulum\"), Premiere'i kapatıp aç.",
+      `Menüde yoksa kurulu değil: Spread_Kurulum_v${SPREAD_VERSION}.zip → KUR.cmd (KURULUM_TR.md → "Kurulum"), Premiere'i kapatıp aç.`,
       `Panel açık ama kırmızı "Spread Helper çalışmıyor" diyorsa oradaki hatayı getir (ör. localhost:${HELPER_PORT} kullanımda). Köprü kurulamasa da yardımcı paneldeki BAĞLA çalışır.`,
     ];
   }

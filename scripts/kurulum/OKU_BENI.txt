@@ -1,4 +1,4 @@
-SPREAD 1.0.0 — Premiere Pro için çok kameralı çekim düzenleyici
+SPREAD 1.1.0 — Premiere Pro için çok kameralı çekim düzenleyici
 ================================================================
 
 KURULUM (bir kez)
@@ -6,32 +6,39 @@ KURULUM (bir kez)
   2. KUR.cmd'ye çift tıkla. Yönetici olarak ÇALIŞTIRMA. Sonunda bir özet ekranı çıkar.
      "[ !! ]" satırı çıkarsa ya da Premiere'de menüde Spread yoksa: spread.ccx'e çift tıkla (Creative Cloud kurar).
   3. Premiere Pro'yu kapatıp yeniden aç.
-  4. Window > Extensions (Legacy) > Spread Helper — küçük paneli aç, bir köşede açık bırak.
-     Yeşil "● Spread Helper çalışıyor" yazmalı.
-  5. Window > UXP Plugins > Spread — ana panel.
+  4. Window > UXP Plugins > Spread — ana panel.
+  5. Window > Extensions (Legacy) > Spread Helper — tek satırlık küçük panel ("Spread Helper çalışıyor ●").
+     Onu Spread panelinin ARKASINA sekme olarak sürükle, sonra çalışma alanını kaydet
+     (Window > Workspaces > Save as New Workspace): ekranda tek panel kalır. Yardımcı, görünmezken de açık kalması
+     için Premiere'e "kalıcı" olduğunu söyler; kontrol: Spread'in üstündeki nokta yeşil kalmalı.
 
 GÜNLÜK KULLANIM (her çekim için; sıra hep aynı)
-  1. SPREAD      Her klibi kendi track'ine dağıtır. Zamanlar değişmez.
-  2. Premiere'de Clip > Synchronize (Audio). Menü gri ise: timeline'a tıkla, Ctrl+A.
-  3. TOPLA       Oturumları çekim sırasıyla dizer, kameraları ve sesleri kendi track'lerine koyar.
-  4. Kontrol     Timeline'a göz at: oturumlar sırada mı, sesler kameralarla hizalı mı.
-  5. BAĞLA       Harici sesleri kameralara göre keser ve her grubu tek bağ yapar.
-                 Spread "Spread Helper panelinde BAĞLA'ya bas" derse oradaki BAĞLA'ya bas
-                 (plan kutudan yapıştırılacaksa: Spread Helper > Ayrıntı > Planı yapıştır > BAĞLA).
+  1. Dağıt       Her klibi kendi track'ine dağıtır. Zamanlar değişmez.
+     Sonra Premiere'de Clip > Synchronize (Audio). Menü gri ise: timeline'a tıkla, Ctrl+A.
+  2. Topla       Oturumları çekim sırasıyla dizer, kameraları ve sesleri kendi track'lerine koyar.
+     Kontrol     Timeline'a göz at: oturumlar sırada mı, sesler kameralarla hizalı mı.
+  3. Bağla       Harici sesleri kameralara göre keser ve her grubu tek bağ yapar.
+                 Spread "Spread Helper panelinde Bağla'ya bas" derse o paneldeki Bağla düğmesine bas.
 
-  - Her işlem önce kısa bir özet gösterir. Okumadan "Evet" deme: dikkat gerektiren satırlar sarı yazılır.
+  - Panelde yalnız SIRADAKİ adımın düğmesi görünür. Biten adımda ✓ var; yeniden yapmak için adın üstüne tıkla → "Yeniden çalıştır".
+    Adım işaretleri yanlışsa: ⚙ Ayarlar > "Adımı elle çalıştır".
+  - Her işlem önce kısa bir onay gösterir (en çok 3 satır). Okumadan "Devam" deme.
   - Her işlem önce yedek sequence alır.
-  - Panel bir şey beklendiği gibi olmazsa DURUR ve ne yapacağını tek cümleyle söyler.
-  - Sıradaki adım mavi çerçeveyle, biten adım ✓ ile gösterilir.
-  - Bir sequence'ta ilk BAĞLA birkaç saniye daha sürer: panel önce Premiere'in kırpma komutlarını ölçer (düzeni değiştirmez).
-  - Kaynak eşleme (hangi ses hangi track'e, "Sil"), eşik ve boşluk ayarları "Gelişmiş ▸" altında. TOPLA'dan önce ayarla.
+  - Panel bir şey beklendiği gibi olmazsa DURUR: kırmızı tek satır + "Ne yapmalıyım?".
+  - Bir sequence'ta ilk Bağla birkaç saniye daha sürer: panel önce Premiere'in kırpma komutlarını ölçer (düzeni değiştirmez).
+  - Zoom TrLR varsayılan olarak "Sil": Premiere mono ve stereo sesleri aynı bağda kabul etmiyor
+    (1.0.0'dan yükseltmede kayıtlı TrLR seçimi bir kez "Sil"e çevrilir; istersen ⚙ Ayarlar'dan değiştir).
+    Bir grupta yine de mono + stereo varsa onayda "KARIŞIK KANAL" yazar; Premiere reddederse farklı olan
+    sesler (ör. stereo kamera sesi) bağ dışında kalır — HİÇBİR KLİP SİLİNMEZ, yerinde durur.
+  - Kaynak eşleme (hangi ses hangi track'e, "Sil"), eşik ve boşluk "⚙ Ayarlar" altında. Topla'dan önce ayarla.
 
 BİR ŞEY TERS GİDERSE
-  - Beğenmediğin bir sonuç: panelin yazdığı kadar Ctrl+Z bas (timeline'a tıkladıktan sonra) ya da yedek sequence'ı kullan.
+  - Beğenmediğin bir sonuç: panelin yazdığı kadar Ctrl+Z bas (timeline'a tıkladıktan sonra) ya da yedek sequence'ı aç.
   - Panel durduysa ya da tuhaf bir şey olduysa: "Sorun bildir"e bas. Rapor panoya kopyalanır ve masaüstüne
     SpreadRapor_<tarih>.txt olarak kaydedilir. Bu dosyayı gönder. Düğme işlem sürerken de çalışır;
     Premiere çöktüyse rapor önceki oturumların günlüğünü de içerir.
-  - "Yardımcı kapalı" yazıyorsa: Window > Extensions (Legacy) > Spread Helper panelini aç.
+  - Spread'in üstündeki nokta gri ve "Spread Helper paneli kapalı" yazıyorsa:
+    Window > Extensions (Legacy) > Spread Helper panelini aç. Dağıt ve Topla yardımcısız da çalışır.
 
 KALDIRMA
   KALDIR.cmd'ye çift tıkla. Kurulumun yaptığı her şeyi geri alır:

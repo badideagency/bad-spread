@@ -134,10 +134,10 @@ export async function runCollect(): Promise<void> {
     // BAĞLA kesimi yapılmışsa harici sesler çapalara bölünmüştür → senkron kanıtı (tam kayıtlar) yok, oturumlar güvenle yeniden
     // bulunamaz → TAHMİN YOK, başlamaz. Kesimsiz BAĞLA (yalnız silme/bağlama) sonrası TOPLA çalışır ama taşınanların bağı çözülür.
     const bs = bindState(rec, s0);
-    if (bs === "partial" || (bs === "applied" && rec!.bind!.created.length))
+    if (bs === "partial" || ((bs === "applied" || bs === "thinned") && rec!.bind!.created.length))
       throw new SpreadStop(
         bs === "partial"
-          ? "BAĞLA'dan sonra düzen değişmiş (kesilen parçaların bir kısmı yerinde, bir kısmı değil). TOPLA BAŞLAMADI, hiçbir şey değişmedi. " +
+          ? "BAĞLA'dan sonra düzen değişmiş (kesim kısmen ya da Ctrl+Z ile geri alınmış: silinenlerin bir kısmı geri gelmiş ya da kesilen parçalar yok). TOPLA BAŞLAMADI, hiçbir şey değişmedi. " +
               "BAĞLA öncesi yedek sequence'la çalış ya da BAĞLA'yı Ctrl+Z ile tamamen geri al."
           : "Bu sequence BAĞLA'dan geçti: sesler kesildi (harici sesler çapalara, kamera sesleri harici sessiz aralıklara), oturumları bulduran tam kayıtlar artık yok → oturumlar güvenle " +
               "yeniden bulunamaz (tahmin edilmez). TOPLA BAŞLAMADI, hiçbir şey değişmedi. Yeniden toplamak için BAĞLA öncesi yedek sequence'ı kullan " +
@@ -158,7 +158,13 @@ export async function runCollect(): Promise<void> {
             `${list.join("\n")}${keep.size > 8 ? `\n  … ${keep.size - 8} klip daha` : ""}\n` +
             "Park'ta kalsınlar mı (oturumlara karışmaz, analiz edilmez; zamanları değişmez)?\n" +
             "(Evet = kalsın. Hayır = hiçbir şey değişmez. Park kaydını bırakıp her şeyi senkron sonucundan yeniden bulmak için son TOPLA'yı " +
-            "Ctrl+Z ile tamamen geri al — panel bunu tanır.)"
+            "Ctrl+Z ile tamamen geri al — panel bunu tanır.)",
+          [
+            `PARK KAYDI: düzen son Topla'dan sonra değişmiş; son Topla ${keep.size} klibi park etmişti.`,
+            "Devam = park'ta kalırlar (oturumlara karışmaz, zamanları değişmez).",
+            "Vazgeç = hiçbir şey değişmez.",
+          ],
+          { title: "Park'taki klipler kalsın mı?" }
         );
         if (ans !== "Evet") {
           log("İptal edildi — hiçbir şey değişmedi.", "warn");
@@ -183,7 +189,13 @@ export async function runCollect(): Promise<void> {
         "AYNI KAYIT BÖLÜNMÜŞ — bir kaydın bir kısmı park'ta (önceki TOPLA), bir kısmı bir oturumda:\n" +
           `${split.map((x) => `  • ${x.rec.label}: park'ta ${x.parked.map(where).join(", ")} ↔ ${x.session.id} oturumunda`).join("\n")}\n` +
           "Oturum taşınırken park'taki parça yerinde kalırsa aynı kaydın parçaları birbirinden kayar. Park'taki parçalar kaydıyla birlikte " +
-          "oturuma alınsın mı? (Evet = park kaydından çıkar, oturumla aynı ofsetle taşınır; senkron tutarlılığı yine denetlenir. Hayır = hiçbir şey değişmez.)"
+          "oturuma alınsın mı? (Evet = park kaydından çıkar, oturumla aynı ofsetle taşınır; senkron tutarlılığı yine denetlenir. Hayır = hiçbir şey değişmez.)",
+        [
+          `AYNI KAYIT BÖLÜNMÜŞ: ${split.length} kaydın bir kısmı park'ta, bir kısmı bir oturumda.`,
+          "Devam = park'taki parçalar kaydıyla birlikte, aynı kaymayla oturuma alınır.",
+          "Vazgeç = hiçbir şey değişmez.",
+        ],
+        { title: "Bölünmüş kayıt birleştirilsin mi?" }
       );
       if (ans !== "Evet") {
         log("İptal edildi — hiçbir şey değişmedi.", "warn");
@@ -212,9 +224,10 @@ export async function runCollect(): Promise<void> {
         [
           `ŞÜPHELİ ÜYE: ${sus.length} kısa klip yalnız çok uzun bir kaydın içine düştüğü için oturuma bağlı görünüyor.`,
           ...sus.slice(0, 2).map((x) => "  • " + x.line),
-          ...(sus.length > 2 ? [`  … ${sus.length - 2} tane daha (Ayrıntı)`] : []),
+          ...(sus.length > 2 ? [`  … ${sus.length - 2} tane daha`] : []),
           "Park track'ine (zamanı değişmeden) alınsınlar mı? Evet = park'a · Hayır = oturumda kalsın (işlem sürer)",
-        ]
+        ],
+        { title: "Şüpheli klipler park'a alınsın mı?", yes: "Park'a al", no: "Oturumda kalsın" }
       );
       if (ans === "Evet") {
         for (const x of sus) for (const c of x.rec.clips) exclude.add(c);
@@ -229,7 +242,13 @@ export async function runCollect(): Promise<void> {
       const ans = await askUser(
         `AYRILAMAYAN OTURUM — tek anlamlı çözüm yok, TAHMİN EDİLMEDİ:\n${u.lines.map((l) => "  • " + l).join("\n")}\n` +
           `Bu ${u.recordings.length} kayıt (${recList(u.recordings)}) park track'lerine ZAMANI DEĞİŞMEDEN konup diğer oturumlarla devam edilsin mi?\n` +
-          "(Hayır → hiçbir şey değişmez. Premiere'de bu grupları ayrı ayrı senkronlamak da bir çözüm.)"
+          "(Hayır → hiçbir şey değişmez. Premiere'de bu grupları ayrı ayrı senkronlamak da bir çözüm.)",
+        [
+          `AYRILAMAYAN OTURUM: ${u.recordings.length} kayıt kesin ayrılamıyor (tahmin edilmez).`,
+          "Devam = bu kayıtlar zamanı değişmeden park'a, diğer oturumlar dizilir.",
+          "Vazgeç = hiçbir şey değişmez (Premiere'de ayrı ayrı senkronlamak da bir çözüm).",
+        ],
+        { title: "Ayrılamayan kayıtlar park'a alınsın mı?" }
       );
       if (ans !== "Evet") {
         log("İptal edildi — hiçbir şey değişmedi.", "warn");
@@ -248,9 +267,10 @@ export async function runCollect(): Promise<void> {
           `Kullanılacak sıra: ${a.sessions
             .slice(0, 4)
             .map((x) => x.id)
-            .join(" → ")}${a.sessions.length > 4 ? ` → … (${a.sessions.length} oturum)` : ""} (her oturumun içeriği Ayrıntı'da).`,
+            .join(" → ")}${a.sessions.length > 4 ? ` → … (${a.sessions.length} oturum)` : ""}.`,
           "Bu sırayla dizilsin mi? Hayır → hiçbir şey değişmez.",
-        ]
+        ],
+        { title: "Oturumlar bu sırayla dizilsin mi?" }
       );
       if (ans !== "Evet") {
         log("İptal edildi — hiçbir şey değişmedi.", "warn");
@@ -282,11 +302,11 @@ export async function runCollect(): Promise<void> {
       throw new SpreadStop(`Yeni düzende ${plan.conflicts.length} çakışma var — TOPLA BAŞLAMADI, hiçbir şey değişmedi.`, plan.conflicts);
     if (!plan.moves.length && !drop.length) {
       // hiçbir şey taşınmadı → kayıt bugünkü ayarla yenilenir (kesimsiz BAĞLA'nın kaydı durur)
-      saveRecord(record(bs === "applied" ? rec!.bind : null));
+      saveRecord(record(bs === "applied" || bs === "thinned" ? rec!.bind : null));
       saveMapping(mapping);
       log("✓ Zaten toplanmış: oturumlar sırayla, klipler cihaz / kaynak track'lerinde. Yapılacak bir şey yok.", "ok");
       log(CHECK_MSG, "head");
-      done("topla", "ok", "Zaten toplanmış; yapılacak bir şey yok.", "Timeline'ı gözle kontrol et, sonra BAĞLA.", true);
+      done("topla", "ok", "Zaten toplanmış; yapılacak bir şey yok.", "Timeline'ı gözle kontrol et, sonra Bağla.", true);
       return;
     }
     const newV = Math.max(0, plan.neededV - s0.vCount);
@@ -296,7 +316,7 @@ export async function runCollect(): Promise<void> {
     if (unknown.length) extra.push(`Dokunulmayan öğeler (yerinde kalır): ${unknown.map((x) => where(x.clip)).join(", ")}`);
     if (keep.size) extra.push(`Önceki TOPLA'dan park'ta: ${keep.size} klip (oturumlara karışmaz; zamanı değişmez, çerçeve büyüdüyse park track'i değişir).`);
     if (userParked.length) extra.push(`Senin kararınla park'a: ${userParked.length} klip (şüpheli üye).`);
-    if (bs === "applied") extra.push("DİKKAT: bu sequence BAĞLA'dan geçti (kesimsiz) — taşınan kliplerin bağları çözülür (clone); TOPLA'dan sonra BAĞLA'ya tekrar bas.");
+    if (bs === "applied" || bs === "thinned") extra.push("DİKKAT: bu sequence BAĞLA'dan geçti (kesimsiz) — taşınan kliplerin bağları çözülür (clone); TOPLA'dan sonra BAĞLA'ya tekrar bas.");
     // onay penceresinin özeti (yalnız görünüm; tam metin "Ayrıntı ▸" altında)
     const nS = plan.layouts.length;
     const notes = [
@@ -306,9 +326,9 @@ export async function runCollect(): Promise<void> {
     const summary: string[] = plan.moves.length
       ? [
           `${nS} oturum çekim sırasıyla sequence başından dizilecek; ${plan.moves.length} klip taşınacak (oturum içi konumlar korunur).`,
-          ...(dups.length ? [`ÇİFT KOPYA: ${drop.length} fazla kopya ilk adımda silinecek (${dups.map((d) => d.drop.map((c) => trackLabel(c.kind, c.track)).join("+")).join(", ")}).`] : []),
-          ...(a.vetoDecisions.length ? [`${a.vetoDecisions[0]}${a.vetoDecisions.length > 1 ? ` (+${a.vetoDecisions.length - 1} VETO daha, Ayrıntı)` : ""}`] : []),
-          ...(bs === "applied" ? ["DİKKAT: bu sequence BAĞLA'dan geçti — TOPLA'dan sonra BAĞLA'ya tekrar bas."] : []),
+          ...(dups.length ? [`ÇİFT KOPYA: ${drop.length} fazla kopya ilk adımda silinecek (hangileri: günlükte).`] : []),
+          ...(a.vetoDecisions.length ? [`${a.vetoDecisions[0]}${a.vetoDecisions.length > 1 ? ` (+${a.vetoDecisions.length - 1} VETO daha)` : ""}`] : []),
+          ...(bs === "applied" || bs === "thinned" ? ["DİKKAT: bu sequence Bağla'dan geçti, Topla'dan sonra Bağla'ya tekrar bas."] : []),
           ...(notes.length ? [`Not: ${notes.join("; ")}.`] : []),
           `Önce yedek sequence alınır ("${ctx.name}" kopyası)${newV + newA ? `; ${newV + newA} track açılır` : ""}. Devam?`,
         ]
@@ -318,7 +338,8 @@ export async function runCollect(): Promise<void> {
         ? confirmText(plan, a, newV, newA, extra)
         : `TOPLA — düzen zaten toplanmış (oturumlar sırayla, klipler cihaz / kaynak track'lerinde); yalnız çift kopyalar silinecek.\n${dupText(dups)}\n` +
             "Önce yedek sequence oluşturulacak. Devam?",
-      summary
+      summary,
+      { title: plan.moves.length ? `${plan.layouts.length} oturum toplansın mı?` : `${drop.length} çift kopya silinsin mi?` }
     );
     if (ans !== "Evet") {
       log("İptal edildi — hiçbir şey değişmedi.", "warn");
@@ -351,8 +372,8 @@ export async function runCollect(): Promise<void> {
       prev = s;
     }
     if (!plan.moves.length) {
-      forgetStopped();
-      saveRecord(record(bs === "applied" ? rec!.bind : null));
+      forgetStopped(ctx.guid);
+      saveRecord(record(bs === "applied" || bs === "thinned" ? rec!.bind : null));
       saveMapping(mapping);
       log(`✓ TOPLA tamam: ${drop.length} çift kopya silindi; düzen zaten toplanmıştı. (${executed.length} adım: ${executed.join(", ")})`, "ok");
       log(CHECK_MSG, "head");
@@ -467,7 +488,7 @@ export async function runCollect(): Promise<void> {
     );
     for (const l of plan.layouts) log(`   ${l.session.id}: ${secOf(l.newStart)}s–${secOf(l.newEnd)}s  ${l.session.label}`, "dim");
     for (const r of plan.parkedRecs) log(`   park: ${r.label} (${trackLabel(r.clips[0].kind, plan.placements.find((p) => p.x.clip === r.clips[0])!.track)}, zamanı aynı)`, "dim");
-    forgetStopped();
+    forgetStopped(ctx.guid);
     saveRecord(record(null));
     saveMapping(mapping);
     log(CHECK_MSG, "head");
@@ -476,7 +497,7 @@ export async function runCollect(): Promise<void> {
       "topla",
       "ok",
       `${nS} oturum toplandı${drop.length ? `, ${drop.length} çift kopya silindi` : ""}.`,
-      `Şimdi timeline'ı gözle kontrol et, sonra BAĞLA. Beğenmezsen Ctrl+Z × ${executed.length} ya da yedek sequence "${backupName}".`
+      `Şimdi timeline'ı gözle kontrol et, sonra Bağla. Beğenmezsen Ctrl+Z × ${executed.length} ya da yedek sequence "${backupName}".`
     );
   } catch (e) {
     if (executed.length && ctx) await rememberStopped(ctx, "TOPLA");

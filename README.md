@@ -1,12 +1,12 @@
-# Spread — Premiere Pro çok kameralı çekim düzenleyici (v1.0.0)
+# Spread — Premiere Pro çok kameralı çekim düzenleyici (v1.1.0)
 
-**Kurulum:** [`release/Spread_Kurulum_v1.0.0.zip`](release/Spread_Kurulum_v1.0.0.zip) → çıkart → **KUR.cmd** (yönetici izni gerekmez).
-Ayrıntı: **[KURULUM_TR.md](KURULUM_TR.md)** · Ekran görüntüleri: [docs/ekran](docs/ekran) · Sürüm notu: [docs/SURUM_NOTU_v1.0.0.md](docs/SURUM_NOTU_v1.0.0.md)
+**Kurulum:** [`release/Spread_Kurulum_v1.1.0.zip`](release/Spread_Kurulum_v1.1.0.zip) → çıkart → **KUR.cmd** (yönetici izni gerekmez).
+Ayrıntı: **[KURULUM_TR.md](KURULUM_TR.md)** · Ekran görüntüleri: [docs/ekran](docs/ekran) · Sürüm notu: [docs/SURUM_NOTU_v1.1.0.md](docs/SURUM_NOTU_v1.1.0.md)
 
 | Bileşen | Ne yapar |
 |---|---|
-| **Spread** 1.0.0 (`spread/`, UXP paneli) | **SPREAD** (her klip kendi track'ine) → Premiere *Clip › Synchronize* → **TOPLA** (oturumları senkron sonucundan bulur, çekim sırasıyla dizer; cihaz → V, kaynak → A; çift kopyaları siler) → gözle kontrol → **BAĞLA** (harici sesi her oturumun kendi kamerasına göre keser, harici sesin olmadığı yerde kamera sesini korur, her grubu tek bağ yapar). Kırpma komutlarının etkisi sequence başına bir kez **ölçülür** (kalibrasyon). Sade arayüz: üç numaralı adım, ilerleme, tek cümlelik sonuç + "Ayrıntı ▸", özetli onay, **Sorun bildir**. |
-| **Spread Helper** 1.0.0 (`cep-helper/`, CEP paneli) | Küçük panel: "● Spread Helper çalışıyor". Bağlama köprüsü (localhost:47731, token'lı) — Premiere'in UXP'sinde bağlama komutu yok. Köprü yoksa Spread'in planıyla **BAĞLA** (bölüm yalnız gerektiğinde görünür). |
+| **Spread** 1.1.0 (`spread/`, UXP paneli) | **① Dağıt** (SPREAD: her klip kendi track'ine) → Premiere *Clip › Synchronize* → **② Topla** (TOPLA: oturumları senkron sonucundan bulur, çekim sırasıyla dizer; cihaz → V, kaynak → A; çift kopyaları siler) → gözle kontrol → **③ Bağla** (BAĞLA: harici sesi her oturumun kendi kamerasına göre keser, harici sesin olmadığı yerde kamera sesini korur, her grubu tek bağ yapar; Premiere mono + stereo karışık grubu reddederse farklı kanal tipindeki sesleri — silmeden — bağ dışında bırakıp yeniden bağlar). Kırpma komutlarının etkisi sequence başına bir kez **ölçülür** (kalibrasyon; gerçek Premiere 26.5.1'de kanıtlandı). Sade Spectrum arayüzü: yalnız sıradaki adımın düğmesi, tek satır sonuç, başlık + 3 satırlık onay, **⚙ Ayarlar**, **Sorun bildir**. |
+| **Spread Helper** 1.1.0 (`cep-helper/`, CEP paneli) | Neredeyse görünmez tek satır: "Spread Helper çalışıyor ●" (Premiere'in CEP temasıyla); Spread panelinin arkasında sekme olarak durabilir. Bağlama köprüsü (localhost:47731, token'lı) — Premiere'in UXP'sinde bağlama ve ExtendScript'e erişim yok. Köprü yoksa Spread'in planıyla **Bağla** (düğme yalnız gerektiğinde). |
 | Spread Probe 0.1.1 (kök `index.ts`, `src/`) | API yoklama paneli (arşiv; yayımlanmaz). |
 
 - Geliştirici devir notu (kanıtlanmış davranışlar, tasarım, kararlar, riskler): **[handoff.md](handoff.md)**

@@ -77,7 +77,7 @@ export async function runSpread(): Promise<void> {
     const moving = plan.overwrite.length + plan.clone.length;
     if (!moving) {
       log("✓ Zaten dağıtılmış: her klip kendi hedef track'inde. Yapılacak bir şey yok.", "ok");
-      done("spread", "ok", "Zaten dağıtılmış; yapılacak bir şey yok.", "Sonra: Premiere'de Clip › Synchronize, ardından TOPLA.", true);
+      done("spread", "ok", "Zaten dağıtılmış; yapılacak bir şey yok.", "Sonra: Premiere'de Clip › Synchronize, ardından Topla.", true);
       return;
     }
     const newV = Math.max(0, plan.neededV - s0.vCount);
@@ -96,9 +96,10 @@ export async function runSpread(): Promise<void> {
         `${plan.counts.camera} kamera${plan.counts.videoOnly ? ` + ${plan.counts.videoOnly} sadece-video` : ""} ve ${plan.counts.audio} ses kendi track'ine dağıtılacak.`,
         `${newV + newA} yeni track açılacak (V ${newV}, A ${newA}); klip zamanları değişmez.`,
         ...(unknown ? [`DİKKAT: ${unknown} kamerada medya süresi okunamadı — kırpılmışsa işlem taşımadan sonra durur.`] : []),
-        ...(plan.warnings.length ? [`${plan.warnings.length} uyarı (Ayrıntı'da).`] : []),
+        ...(plan.warnings.length ? [`${plan.warnings.length} uyarı (Sorun bildir raporunda).`] : []),
         `Önce yedek sequence alınır ("${ctx.name}" kopyası). Devam?`,
-      ]
+      ],
+      { title: `${plan.placements.length} klip dağıtılsın mı?` }
     );
     if (ans !== "Evet") {
       log("İptal edildi — hiçbir şey değişmedi.", "warn");
@@ -169,7 +170,7 @@ export async function runSpread(): Promise<void> {
       "spread",
       "ok",
       `${plan.placements.length} klip kendi track'ine dağıtıldı.`,
-      "Sonra: Premiere'de Clip › Synchronize (menü gri ise timeline'a tıkla, Ctrl+A), ardından TOPLA."
+      "Sonra: Premiere'de Clip › Synchronize (menü gri ise timeline'a tıkla, Ctrl+A), ardından Topla."
     );
     log(`Beğenmezsen: timeline'a tıkla, Ctrl+Z'ye ${executed.length} kez bas — ya da yedek sequence "${backupName}"i kullan.`, "dim");
   } catch (e) {
