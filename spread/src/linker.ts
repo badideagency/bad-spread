@@ -22,7 +22,8 @@ export const HELPER_VERSION = SPREAD_VERSION; // yardımcı ve panel aynı sür�
 const PING_TIMEOUT_MS = 3000;
 /** Bağlama grupları yardımcıya parti parti gönderilir (uzun çekimlerde tek istek zaman aşımına uğramasın). */
 const LINK_BATCH = 8;
-const LINK_TIMEOUT_MS = 90000;
+// v1.1.0: yardımcı bir partiyi reddedilince bir kez daha dener (iki ExtendScript çağrısı, her biri en çok 170 sn) → istemci bekler
+const LINK_TIMEOUT_MS = 360000;
 /** Yardımcının (cep-helper/js/helper.js) kabul ettiği sınırlar — iki dosyada AYNI olmalı. BAĞLA planı kesmeden ÖNCE denetler. */
 export const LINK_LIMITS = { groupItems: 256, groupsPerRequest: 64, name: 1024, sequenceName: 512 };
 

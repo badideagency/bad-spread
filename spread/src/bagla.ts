@@ -207,7 +207,8 @@ function layoutMismatch(clips: ClipInfo[], lf: LayoutFrame, groups: LinkSpec[]):
  */
 function planText(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame, handoff: "panel" | "bridge"): string {
   return JSON.stringify(
-    { v: 1, kind: "spread-link-plan", panel: HELPER_VERSION, handoff, sequence: { name: ctx.name, guid: ctx.guid }, createdAt: bind.at, frame: lf, groups: bind.groups },
+    // created (v1.1.0): kesimin yarattığı parçalar — yardımcı panel "elle silinmiş" ile "Ctrl+Z ile geri alınmış"ı ayırsın (hiçbiri yoksa DUR)
+    { v: 1, kind: "spread-link-plan", panel: HELPER_VERSION, handoff, sequence: { name: ctx.name, guid: ctx.guid }, createdAt: bind.at, frame: lf, groups: bind.groups, created: bind.created },
     null,
     1
   );
@@ -234,7 +235,7 @@ async function handToPanel(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame, w
   const pr = readPanelLinkResult();
   const linkedInPanel = !!(pr && pr.ok && pr.planCreatedAt === bind.at);
   log(
-    `${cutNow ? "✓ KES tamam: kesme/silme tick düzeyinde doğrulandı" : "✓ KES tamam (daha önce yapılmış, bütün öğeler yerinde)"} — ` +
+    `${cutNow ? "✓ KES tamam: kesme/silme tick düzeyinde doğrulandı" : "✓ KES tamam (daha önce yapılmış ve doğrulanmış)"} — ` +
       (linkedInPanel ? `${bind.groups.length} grup Spread Helper panelinde zaten bağlanmış (${pr?.at ?? "?"}).` : `${bind.groups.length} grup bağlanmayı bekliyor.`),
     "ok"
   );
@@ -255,7 +256,7 @@ async function handToPanel(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame, w
     "warn",
     `Kesim tamam; ${bind.groups.length} grup bağlanmayı bekliyor.`,
     w.ok
-      ? "Spread Helper panelinde Bağla'ya bas (Window › Extensions › Spread Helper)."
+      ? "Spread Helper panelinde Bağla'ya bas (Window › Extensions (Legacy) › Spread Helper)."
       : "Plan dosyası yazılamadı: ⚙ Ayarlar → Raporu kopyala → Spread Helper'da durum satırına tıkla → Planı yapıştır → Bağla."
   );
 }
@@ -270,8 +271,8 @@ async function channelCheck(
   plan: BindPlan,
   targets: { group: Group; label: string }[],
   pingOk: boolean
-): Promise<{ mixed: { label: string; out: string[] }[]; unknown: number; detail: string }> {
-  if (!pingOk) return { mixed: [], unknown: 0, detail: "yardımcıya köprü yok — kanal tipi okunamadı (bağlamada Premiere reddederse yardımcı yine ikinci kez dener)" };
+): Promise<ChannelCheck> {
+  if (!pingOk) return { mixed: [], unknown: 0, kinds: "", detail: "yardımcıya köprü yok — kanal tipi okunamadı (bağlamada Premiere reddederse yardımcı yine ikinci kez dener)" };
   const src = new Map<string, ClipInfo>();
   const per = targets.map((t) => {
     const aud: { src: ClipInfo; track: number }[] = [
@@ -286,9 +287,10 @@ async function channelCheck(
     ctx.name,
     keys.map((k) => itemOf(src.get(k)!))
   );
-  if (!res.ok) return { mixed: [], unknown: 0, detail: `kanal tipi okunamadı: ${res.detail}` };
+  if (!res.ok) return { mixed: [], unknown: 0, kinds: "", detail: `kanal tipi okunamadı: ${res.detail}` };
   const typeOf = new Map(keys.map((k, i) => [k, res.types[i] ?? null]));
   const mixed: { label: string; out: string[] }[] = [];
+  const kinds = new Set<number>();
   let unknown = 0;
   for (const { t, aud } of per) {
     const nV = t.group.cams.length;
@@ -299,13 +301,68 @@ async function channelCheck(
     const m = mixedChannels(items);
     if (m === null) unknown++;
     if (m !== true) continue;
+    for (const x of items) if (x.kind === "A" && x.type !== null) kinds.add(x.type);
     mixed.push({
       label: t.label,
       out: channelOutliers(items).map((i) => `${trackLabel("A", aud[i - nV].track)} "${fileName(aud[i - nV].src)}" (${channelTypeName(items[i].type)})`),
     });
   }
-  return { mixed, unknown, detail: "" };
+  return { mixed, unknown, kinds: [...kinds].sort().map(channelTypeName).join(" + "), detail: "" };
 }
+
+interface ChannelCheck {
+  mixed: { label: string; out: string[] }[];
+  unknown: number;
+  /** karışık gruplardaki tipler ("mono + stereo") */
+  kinds: string;
+  detail: string;
+}
+
+/**
+ * v1.1.0 — "yalnız bağla" yolunda aynı kontrol (inceleme #9, M2): öğeler kesimden sonra ZATEN timeline'da → tipleri doğrudan
+ * kendilerinden okunur (salt okuma).
+ */
+async function channelCheckItems(ctx: SeqContext, groups: LinkSpec[], pingOk: boolean): Promise<ChannelCheck> {
+  if (!pingOk) return { mixed: [], unknown: 0, kinds: "", detail: "yardımcıya köprü yok — kanal tipi okunamadı" };
+  const uniq = new Map<string, LinkItemRec>();
+  for (const g of groups) for (const i of g.items) if (i.kind === "A") uniq.set(itemKey(i), i);
+  const keys = [...uniq.keys()];
+  const res = await getLinker().channels(
+    ctx.name,
+    keys.map((k) => uniq.get(k)!)
+  );
+  if (!res.ok) return { mixed: [], unknown: 0, kinds: "", detail: `kanal tipi okunamadı: ${res.detail}` };
+  const typeOf = new Map(keys.map((k, i) => [k, res.types[i] ?? null]));
+  const mixed: { label: string; out: string[] }[] = [];
+  const kinds = new Set<number>();
+  let unknown = 0;
+  for (const g of groups) {
+    const items: ChannelItem[] = g.items.map((i) => ({ kind: i.kind, track: i.track, type: i.kind === "A" ? (typeOf.get(itemKey(i)) ?? null) : null }));
+    const m = mixedChannels(items);
+    if (m === null) unknown++;
+    if (m !== true) continue;
+    for (const x of items) if (x.kind === "A" && x.type !== null) kinds.add(x.type);
+    mixed.push({
+      label: g.label,
+      out: channelOutliers(items).map((k) => `${trackLabel("A", g.items[k].track)} "${g.items[k].name}" (${channelTypeName(items[k].type)})`),
+    });
+  }
+  return { mixed, unknown, kinds: [...kinds].sort().map(channelTypeName).join(" + "), detail: "" };
+}
+
+/** Kanal kontrolünün günlük satırları (iki yolda aynı). */
+function logChannelCheck(chk: ChannelCheck): void {
+  if (chk.detail) log(`   ${chk.detail}`, "dim");
+  if (chk.unknown) log(`   ${chk.unknown} grupta bazı seslerin kanal tipi okunamadı — karışık olup olmadığı bilinmiyor`, "dim");
+  if (chk.mixed.length) {
+    log(`KARIŞIK KANAL: ${chk.mixed.length} grupta ${chk.kinds} ses var (Premiere böyle bir grubu bağlamayı reddedebilir):`, "warn");
+    for (const x of chk.mixed) log(`   • ${x.label} — reddedilirse bağ dışında kalacak (silinmez): ${x.out.join(", ")}`, "warn");
+  }
+}
+
+/** Onay özetindeki tek satır. */
+const mixedLine = (chk: ChannelCheck): string[] =>
+  chk.mixed.length ? [`KARIŞIK KANAL: ${chk.mixed.length} grupta ${chk.kinds}; Premiere reddederse farklı olanlar bağ dışında kalır (silinmez).`] : [];
 
 /**
  * Bağlama (köprü) — en son. Klip zamanları bağlamada değişmemeli.
@@ -360,6 +417,9 @@ async function linkGroups(ctx: SeqContext, groups: LinkSpec[], sF: Snapshot, edi
   if (bad.length) {
     const stop = new SpreadStop(`${bad.length}/${groups.length} grup bağlanamadı${edits ? " (kesme/silme doğru ve yerinde)" : ""}. ${again}`, bad);
     stop.retryLink = true; // yalnız arayüz ipucu
+    // ikinci deneme de reddedildiyse tekrar basmak aynı sonucu verir (inceleme #9, m7)
+    if (groups.some((t) => byId.get(t.id)?.retried && !byId.get(t.id)?.linked))
+      stop.hint = "Kesim yerinde ve doğru. Premiere bazı grupları, kanal tipi farklı sesler çıkarıldıktan sonra da bağlamadı — tekrar basmak aynı sonucu verir. Sorun bildir'e bas.";
     throw stop;
   }
   return { unverified, excluded, nExcluded };
@@ -425,7 +485,10 @@ function reportLinked(
   }
 }
 
-/** Kesme/silme önceden yapılıp doğrulanmış (kayıtta) ve bütün öğeler yerinde → YALNIZ bağlama. Düzenleme yok, yedek yok. */
+/**
+ * Kesme/silme önceden yapılıp doğrulanmış (kayıtta) → YALNIZ bağlama. Düzenleme yok, yedek yok. v1.1.0: kesimden sonra elle silinen
+ * öğeler varsa ("thinned") var olanlar bağlanır, eksikler yazılır.
+ */
 async function linkOnly(ctx: SeqContext, rec: CollectRecord, bind: BindRecord, s0: Snapshot, ping: PingResult): Promise<void> {
   const lf = layoutFrameOf(rec);
   // v1.1.0: kesimden sonra elle silinen / taşınan öğeler → gruplar o an VAR olan öğelere indirilir; eksikler raporlanır (durulmaz).
@@ -461,22 +524,28 @@ async function linkOnly(ctx: SeqContext, rec: CollectRecord, bind: BindRecord, s
   for (const g of bind.groups) log(`  ${g.label}`, "dim");
   if (!ping.ok) {
     await handToPanel(ctx, bind, lf, ping.detail, false);
-    forgetStopped();
+    forgetStopped(ctx.guid);
     return;
   }
+  // v1.1.0: kanal tipi (salt okuma) — karışık gruplar onayda tek satır (inceleme #9, M2)
+  const chk = await channelCheckItems(ctx, linkable, true);
+  logChannelCheck(chk);
   const ans = await askUser(
     `BAĞLA: kesme/silme daha önce yapıldı ve doğrulandı (TOPLA kaydı ${rec.at}); ` +
       (red.missing.length
         ? `kesimden sonra ${red.missing.length} öğe yok (elle silinmiş / taşınmış) — onlar bağlanmaz, ${linkable.length} grup var olan öğeleriyle bağlanır. `
         : `${bind.groups.length} grubun bütün öğeleri yerinde. `) +
-      "Kesilmiş düzen yeniden analiz edilmez — kayıttaki gruplar kullanılır. Kesme/silme yok → yalnız bağlama (yedek alınmaz). Devam?",
-    red.missing.length
-      ? [
-          `Kesim yerinde; ${linkable.length} grup yalnız bağlanacak.`,
-          `EKSİK: ${red.missing.length} öğe kesimden sonra silinmiş / taşınmış — onlar bağlanmaz.`,
-          "Kesme / silme yok, yedek alınmaz. Devam?",
-        ]
-      : [`Kesim yerinde; ${linkable.length} grup yalnız bağlanacak.`, "Kesme / silme yok, yedek alınmaz. Devam?"],
+      "Kesilmiş düzen yeniden analiz edilmez — kayıttaki gruplar kullanılır. Kesme/silme yok → yalnız bağlama (yedek alınmaz). " +
+      (chk.mixed.length
+        ? `KARIŞIK KANAL: ${chk.mixed.length} grupta ${chk.kinds} ses var; Premiere grubu reddederse yardımcı kanal tipi farklı sesleri çıkarıp grubu yeniden bağlar — o sesler bağ dışında, yerinde kalır (hiçbir klip silinmez). `
+        : "") +
+      "Devam?",
+    [
+      `Kesim yerinde; ${linkable.length} grup yalnız bağlanacak.`,
+      ...(red.missing.length ? [`EKSİK: ${red.missing.length} öğe kesimden sonra silinmiş / taşınmış — onlar bağlanmaz.`] : []),
+      ...mixedLine(chk),
+      "Kesme / silme yok, yedek alınmaz. Devam?",
+    ],
     { title: `${linkable.length} grup bağlansın mı?` }
   );
   if (ans !== "Evet") {
@@ -490,12 +559,12 @@ async function linkOnly(ctx: SeqContext, rec: CollectRecord, bind: BindRecord, s
   setHelperStatus(p2.ok, p2.detail);
   if (!p2.ok) {
     await handToPanel(ctx, bind, lf, p2.detail, false);
-    forgetStopped();
+    forgetStopped(ctx.guid);
     return;
   }
   const lr = await linkGroups(ctx, linkable, sF, false);
   saveBindRecord(ctx.guid, { ...bind, stage: "linked", at: new Date().toISOString() });
-  forgetStopped();
+  forgetStopped(ctx.guid);
   reportLinked(linkable.length, lr.unverified, [], { excluded: lr.excluded, nExcluded: lr.nExcluded, missing: red.missing });
 }
 
@@ -622,12 +691,7 @@ export async function runBind(): Promise<void> {
     const cached = plan.cuts.length ? loadTrimCal(ctx.guid, host) : null;
     // v1.1.0: kanal tipi (salt okuma) — karışık gruplar onayda tek satır
     const chk = await channelCheck(ctx, plan, groups, ping.ok);
-    if (chk.detail) log(`   ${chk.detail}`, "dim");
-    if (chk.unknown) log(`   ${chk.unknown} grupta bazı seslerin kanal tipi okunamadı — karışık olup olmadığı bilinmiyor`, "dim");
-    if (chk.mixed.length) {
-      log(`KARIŞIK KANAL: ${chk.mixed.length} grupta mono + stereo ses var (Premiere böyle bir grubu bağlamayı reddedebilir):`, "warn");
-      for (const x of chk.mixed) log(`   • ${x.label} — reddedilirse bağ dışında kalacak (silinmez): ${x.out.join(", ")}`, "warn");
-    }
+    logChannelCheck(chk);
 
     const ans = await askUser(
       `BAĞLA: ${plan.groups.length} grup (çapa = gruptaki en uzun kamera klibi). ` +
@@ -642,7 +706,7 @@ export async function runBind(): Promise<void> {
           : `Yardımcıya köprü YOK → yalnız KES yapılacak; ${groups.length} grup sonra Spread Helper panelindeki BAĞLA ile bağlanacak. `) +
         `${plan.warnings.length ? `${plan.warnings.length} uyarı (günlükte). ` : ""}` +
         (chk.mixed.length
-          ? `KARIŞIK KANAL: ${chk.mixed.length} grupta mono + stereo ses var; Premiere grubu reddederse yardımcı kanal tipi farklı sesleri ` +
+          ? `KARIŞIK KANAL: ${chk.mixed.length} grupta ${chk.kinds} ses var; Premiere grubu reddederse yardımcı kanal tipi farklı sesleri ` +
             "çıkarıp grubu yeniden bağlar — o sesler bağ dışında, yerinde kalır (hiçbir klip silinmez). "
           : "") +
         (plan.keptCamera.length
@@ -674,13 +738,11 @@ export async function runBind(): Promise<void> {
                 plan.deleteOutside.length ? `${plan.deleteOutside.length} çapa dışı ses` : "",
               ]
                 .filter(Boolean)
-                .join(", ")}.`,
+                .join(", ")}.${edits ? ` Önce yedek sequence alınır ("${ctx.name}" kopyası).` : ""}`,
             ]
           : []),
         ...(plan.keptCamera.length ? [`KAMERA SESİ KORUNACAK: ${plan.keptCamera.length} aralıkta (harici ses parçası olmayan yerler).`] : []),
-        ...(chk.mixed.length
-          ? [`KARIŞIK KANAL: ${chk.mixed.length} grupta mono + stereo; Premiere reddederse farklı olanlar bağ dışında kalır (silinmez).`]
-          : []),
+        ...mixedLine(chk),
         ...(plan.silent.length
           ? [`SESSİZ KALACAK: ${plan.silent[0]}${plan.silent.length > 1 ? ` (+${plan.silent.length - 1} aralık daha)` : ""}`]
           : []),
@@ -693,7 +755,7 @@ export async function runBind(): Promise<void> {
           ].filter(Boolean);
           return n.length ? [`Not: ${n.join("; ")}.`] : [];
         })(),
-        edits ? `Önce yedek sequence alınır ("${ctx.name}" kopyası). Devam?` : "Kesme/silme yok; yalnız bağlanacak. Devam?",
+        deletes.length ? "Devam?" : edits ? `Önce yedek sequence alınır ("${ctx.name}" kopyası). Devam?` : "Kesme/silme yok; yalnız bağlanacak. Devam?",
       ],
       { title: edits ? `${groups.length} grup kesilip bağlansın mı?` : `${groups.length} grup bağlansın mı?` }
     );
@@ -850,19 +912,19 @@ export async function runBind(): Promise<void> {
     setHelperStatus(p2.ok, p2.detail);
     if (!p2.ok) {
       await handToPanel(ctx, bind, lf, p2.detail, edits);
-      forgetStopped();
+      forgetStopped(ctx.guid);
       if (executed.length) log(`Beğenmezsen: yedek sequence "${backupName}"i kullan (ya da Ctrl+Z × ${executed.length}).`, "dim");
       return;
     }
     const lr = await linkGroups(ctx, specs, sF, edits);
     saveBindRecord(ctx.guid, { ...bind, stage: "linked" });
-    forgetStopped();
+    forgetStopped(ctx.guid);
     reportLinked(groups.length, lr.unverified, executed, { excluded: lr.excluded, nExcluded: lr.nExcluded, missing: [] });
     if (executed.length) log(`Beğenmezsen: yedek sequence "${backupName}"i kullan (ya da Ctrl+Z; ${LINK_UNDO_NOTE})`, "dim");
   } catch (e) {
     // kalibrasyon kural vermedi ama düzen doğrulanarak eski hâlinde → "yarım iş" kaydı tutulmaz (başka bir kayda da dokunulmaz)
     if (executed.length && ctx && !cutsDone && !calRestored) await rememberStopped(ctx, "BAĞLA");
-    else if (cutsDone) forgetStopped();
+    else if (cutsDone && ctx) forgetStopped(ctx.guid);
     reportStop("BAĞLA", e, executed, backupName, !calRestored && executed.length ? [LINK_UNDO_NOTE] : []);
   }
 }

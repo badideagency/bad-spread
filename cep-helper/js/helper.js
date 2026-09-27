@@ -138,7 +138,15 @@
       return c;
     });
     var at = typeof obj.createdAt === "string" ? obj.createdAt.slice(0, 64) : "?";
-    return { sequence: seq.name, createdAt: at, frame: { vPark: f.vPark, aPark: f.aPark, silTracks: f.silTracks.slice(), keptTracks: kept.slice() }, groups: groups };
+    // v1.1.0: kesimin yarattığı parçalar (yoksa null: eski plan → eksik öğede eskisi gibi DUR)
+    var created = null;
+    if (obj.created !== undefined) {
+      if (!Array.isArray(obj.created) || obj.created.length > PLAN_MAX_GROUPS * LIMITS.groupItems) throw bad("plan: created geçersiz");
+      created = obj.created.map(function (it, i) {
+        return cleanItem(it, "created " + i);
+      });
+    }
+    return { sequence: seq.name, createdAt: at, frame: { vPark: f.vPark, aPark: f.aPark, silTracks: f.silTracks.slice(), keptTracks: kept.slice() }, groups: groups, created: created };
   }
 
   /**
@@ -490,14 +498,31 @@
             if (lay.errors.length) throw stopWith("Düzen KES sonrası hâlinde değil — hiçbir şey yapılmadı.", lay.errors);
             // v1.1.0: kesimden sonra elle silinen / taşınan öğeler → plan grupları VAR olanlara indirilir (eksikler yazılır); indirilmiş
             // gruplar düzenden bulunanlarla yine BİREBİR aynı olmalı (Spread'in "yalnız bağla" yoluyla aynı kural)
-            var red = core.reduceToPresent(
-              plan.groups,
-              new Set(
-                clips.map(function (c) {
-                  return core.linkItemKey(core.linkItemOf(c));
-                })
-              )
+            var present = new Set(
+              clips.map(function (c) {
+                return core.linkItemKey(core.linkItemOf(c));
+              })
             );
+            var red = core.reduceToPresent(plan.groups, present);
+            // eksik öğe varsa: yalnız "elle silinmiş" kabul edilir — kesimin yarattığı parçalardan en az biri yerinde olmalı (Ctrl+Z ile
+            // geri alınan kesim parçaların HEPSİNİ birden götürür → DUR; Spread'in bindState "partial" kuralıyla aynı). Eski plan
+            // (created yok) → eskisi gibi DUR.
+            if (red.missing.length) {
+              var cr = plan.created;
+              var someCreated =
+                cr &&
+                (cr.length === 0 ||
+                  cr.some(function (it) {
+                    return present.has(core.linkItemKey(it));
+                  }));
+              if (!someCreated)
+                throw stopWith(
+                  cr
+                    ? "Kesilen parçaların hiçbiri timeline'da yok (kesim geri alınmış olabilir) — hiçbir şey yapılmadı. Spread'de Bağla'ya bas."
+                    : "Planın " + red.missing.length + " öğesi timeline'da yok ve bu plan eski sürümle yazılmış — hiçbir şey yapılmadı. Spread'de Bağla'ya bas.",
+                  red.missing
+                );
+            }
             var diff = core.compareLinkGroups(red.groups, lay.groups);
             if (diff.length)
               throw stopWith(
@@ -606,7 +631,7 @@
       persist: function (extId) {
         return jsx("spreadHelper_persist(" + literal(String(extId)) + ")", 10000).then(
           function (r) {
-            state.persistent = !!(r && r.ok === true && r.result === true);
+            state.persistent = !!(r && r.ok === true && r.result !== false);
             log("arka sekmede kalıcılık (setExtensionPersistent): " + (state.persistent ? "açık" : "açılamadı" + (r && r.error ? " — " + r.error : "")));
             emit("status");
             return state.persistent;

@@ -16,8 +16,8 @@
       .dot.bad { background: #e34850; }
       .dot.warn { background: #e68619; }
       .bad { color: #e34850; }
-      #bindbox { display: none; margin: 6px 0 0; }
-      #bind-msg { margin: 0 0 4px; }
+      #bindbox { display: none; margin: 4px 0 0; }
+      #btn-bind { display: none; padding: 0 10px; margin: 0 0 0 6px; flex-shrink: 0; }
       button { font: inherit; color: inherit; background: rgba(128, 128, 128, 0.18); border: 1px solid rgba(128, 128, 128, 0.45); border-radius: 12px; padding: 2px 12px; margin: 2px 4px 2px 0; cursor: pointer; }
       button.primary { background: #1473e6; border-color: #1473e6; color: #fff; font-weight: bold; }
       button:disabled { opacity: 0.5; cursor: default; }
@@ -29,11 +29,12 @@
     </style>
   </head>
   <body>
-    <div class="line" id="statusline" title="Ayrıntı için tıkla"><span id="srv">Spread Helper başlatılıyor…</span><span id="dot" class="dot warn"></span></div>
+    <!-- TEK satır: durum (ya da "Bağla bekliyor…" / son bağlamanın sonucu) + gerektiğinde Bağla düğmesi + nokta. Panel 60×20'ye
+         küçültülse de bekleyen bağlama görünür (inceleme #9, m3). Tıklayınca ayrıntı. -->
+    <div class="line"><span id="srv" title="Ayrıntı için tıkla">Spread Helper başlatılıyor…</span><button id="btn-bind" class="primary">Bağla</button><span id="dot" class="dot warn"></span></div>
 
+    <!-- yalnız bu panelde bağladıktan sonra, sorunlu gruplar (panel yeterince yüksekse görünür; özet zaten durum satırında) -->
     <div id="bindbox">
-      <div id="bind-msg"></div>
-      <button id="btn-bind" class="primary">Bağla</button>
       <div class="row" id="summary"></div>
       <div id="results"></div>
     </div>

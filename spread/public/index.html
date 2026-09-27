@@ -4,8 +4,7 @@
     <meta charset="utf-8" />
     <title>Spread</title>
     <script defer src="./index.js"></script>
-  </head>
-  <style>
+    <style>
     /* Spread v1.1.0 — sade panel. Premiere'in kendi panelleri gibi: Spectrum UXP bileşenleri (sp-heading, sp-body, sp-detail,
        sp-button, sp-action-button, sp-link, sp-progressbar, sp-divider) temayı (açık / koyu) kendileri izler. Arka plan ve yazı rengi
        VERİLMEZ (panel Premiere'in zeminini kullanır); tek özel renk hata satırı (kırmızı). UXP sınırları: flex "gap", "font"
@@ -103,6 +102,9 @@
     #ask-summary sp-body {
       margin: 2px 0;
     }
+    #ask-summary .attn {
+      font-weight: bold;
+    }
     #ask-text,
     #ask-more,
     #ask-more-toggle {
@@ -164,7 +166,8 @@
     .buttons-row sp-action-button {
       margin: 0 6px 6px 0;
     }
-  </style>
+    </style>
+  </head>
 
   <body>
     <!-- ANA GÖRÜNÜM -->
@@ -175,7 +178,7 @@
         <div id="helper-dot" class="dot" title="Spread Helper kontrol ediliyor…"></div>
       </div>
       <sp-detail id="status">Durum okunuyor…</sp-detail>
-      <sp-detail id="helperline"><span id="helper-short">Spread Helper paneli kapalı: Window › Extensions › Spread Helper</span></sp-detail>
+      <sp-detail id="helperline"><span id="helper-short">Spread Helper paneli kapalı: Window › Extensions (Legacy) › Spread Helper</span></sp-detail>
       <sp-divider size="small"></sp-divider>
 
       <div id="step-spread" class="step">
@@ -227,7 +230,7 @@
 
       <div id="result">
         <sp-body id="result-head"></sp-body>
-        <sp-link id="result-help" href="#">Ne yapmalıyım?</sp-link>
+        <sp-link id="result-help">Ne yapmalıyım?</sp-link>
         <sp-body id="result-hint" size="S"></sp-body>
       </div>
 
@@ -246,6 +249,13 @@
         <sp-heading size="XS" class="grow">Ayarlar</sp-heading>
       </div>
       <sp-divider size="small"></sp-divider>
+
+      <sp-detail class="section">ADIMI ELLE ÇALIŞTIR (adım işaretleri yanlışsa; işlemler kendi denetimlerini yine yapar)</sp-detail>
+      <div class="row buttons-row">
+        <sp-button id="man-spread" size="s" variant="secondary" disabled="true">Dağıt</sp-button>
+        <sp-button id="man-topla" size="s" variant="secondary" disabled="true">Topla</sp-button>
+        <sp-button id="man-bagla" size="s" variant="secondary" disabled="true">Bağla</sp-button>
+      </div>
 
       <sp-detail class="section">SES KAYNAKLARI → A TRACK ("Sil" = Bağla'da silinir; Topla'dan önce seç)</sp-detail>
       <div id="mapping"><sp-body size="S">(sequence okunuyor…)</sp-body></div>

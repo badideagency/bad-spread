@@ -25,6 +25,8 @@
   // dosyası değişene (Spread yeni bir plan yazana) kadar görünür; sonra yeni plan gösterilir.
   var last = null; // { at: string, seen: string, ok: boolean|null }
   var busy = false;
+  // durum satırında sunucu durumu yerine gösterilecek bağlama durumu ("Bağla bekliyor…" / son sonuç); null → sunucu durumu
+  var bindLine = null; // { text, cls }
 
   // ------------------------------------------------------------------ tema (CEP)
   function applyTheme() {
@@ -60,7 +62,8 @@
     var st = app.helper.state();
     if (st.listening) {
       set("dot", "", "dot ok");
-      set("srv", "Spread Helper çalışıyor", "");
+      if (bindLine) set("srv", bindLine.text, bindLine.cls);
+      else set("srv", "Spread Helper çalışıyor", "");
     } else if (st.error) {
       set("dot", "", "dot bad");
       set("srv", "Spread Helper çalışmıyor: " + st.error, "bad");
@@ -71,7 +74,7 @@
     set("ver", "Spread Helper " + st.version);
     set("listen", st.listening ? "dinliyor: localhost:" + st.port + " (" + st.addresses.join(", ") + (st.v6 && st.v6 !== "dinliyor" ? "; ::1 " + st.v6 : "") + ")" : "sunucu kapalı");
     set("env", "Premiere " + (st.premiere || "?") + " · Node " + st.node + " · ortak modül " + (st.core || "YOK"));
-    set("persist", st.persistent === true ? "açık" : st.persistent === false ? "açılamadı (panel görünmezken Premiere onu kapatabilir)" : "?");
+    set("persist", st.persistent === true ? "istendi (Premiere hata vermedi)" : st.persistent === false ? "istenemedi (panel görünmezken Premiere onu kapatabilir)" : "?");
     set("info", st.infoFile);
     var r = st.lastRequest;
     set("req", r ? hhmmss(r.at) + " " + r.method + " " + r.url + " → " + r.status + " (" + r.ms + " ms) · toplam " + st.requests : "henüz istek gelmedi");
@@ -92,18 +95,22 @@
       last = null; // yeni plan geldi → eski sonuç onun değil
       clearResult();
     }
-    var mine = last !== null;
-    if (box) box.style.display = p.waiting || mine ? "block" : "none";
+    var mine = last !== null && last.ok !== null;
+    if (box) box.style.display = mine ? "block" : "none";
     if (mine && last.ok === true) {
-      set("bind-msg", "✓ " + (last.at === "yapıştır" ? "Yapıştırılan plan" : "\"" + p.sequence + "\" planı") + " bu panelde bağlandı.", "");
+      bindLine = { text: last.summary || "✓ Bu panelde bağlandı", cls: "" };
       $("btn-bind").style.display = "none";
     } else if (mine && last.ok === false) {
-      set("bind-msg", "Bağlama tamamlanmadı — nedeni aşağıda. Düzeltip yeniden Bağla'ya bas.", "bad");
-      $("btn-bind").style.display = "";
+      bindLine = { text: "✗ Bağlama tamamlanmadı — ayrıntı için tıkla", cls: "bad" };
+      $("btn-bind").style.display = "inline-block";
     } else if (p.waiting) {
-      set("bind-msg", "\"" + p.sequence + "\" · " + p.groups + " grup bağlanmayı bekliyor.", "");
-      $("btn-bind").style.display = "";
+      bindLine = { text: "Bağla bekliyor: \"" + p.sequence + "\" · " + p.groups + " grup", cls: "" };
+      $("btn-bind").style.display = "inline-block";
+    } else {
+      bindLine = null;
+      $("btn-bind").style.display = "none";
     }
+    renderStatus();
   }
 
   function renderPlan() {
@@ -157,13 +164,14 @@
     var b1 = $("btn-bind");
     var b2 = $("btn-bind2");
     b1.disabled = b2.disabled = true;
-    $("bindbox").style.display = "block";
-    set("summary", "… bağlanıyor", "row");
+    bindLine = { text: "… bağlanıyor", cls: "" };
+    renderStatus();
     app.helper
       .bindFromPlan({ text: $("paste") ? $("paste").value : "" })
       .then(
         function (out) {
           last.ok = !!out.ok;
+          last.summary = out.summary;
           renderResult(out);
         },
         function (e) {
@@ -199,7 +207,7 @@
   $("btn-bind").addEventListener("click", onBind);
   $("btn-bind2").addEventListener("click", onBind);
   $("btn-plan").addEventListener("click", renderPlan);
-  $("statusline").addEventListener("click", toggleMore);
+  $("srv").addEventListener("click", toggleMore);
   if ($("paste")) $("paste").addEventListener("change", renderPlan);
   renderStatus();
   renderBindBox();

@@ -78,8 +78,9 @@ function spreadHelper_ping() {
  */
 function spreadHelper_persist(id) {
   try {
+    // dönüş: belge "true if successful", Adobe PProPanel tip dosyası "void" → istisna yoksa istek iletildi sayılır
     var r = app.setExtensionPersistent(String(id), 1); // docs: https://ppro-scripting.docsforadobe.dev/application/application/#appsetextensionpersistent
-    return spreadHelper_json({ ok: true, result: r === true || r === 1 });
+    return spreadHelper_json({ ok: true, result: r === false ? false : true });
   } catch (e) {
     return spreadHelper_err(e);
   }

@@ -37,6 +37,8 @@ export class SpreadStop extends Error {
    * (yalnız bağlar)" der
    */
   public retryLink = false;
+  /** yalnız arayüz: "Ne yapmalıyım?" metni (varsa diğer ipuçlarının yerine) */
+  public hint: string | null = null;
   constructor(message: string, public details: string[] = []) {
     super(message);
     this.name = "SpreadStop";
@@ -255,8 +257,10 @@ export function reportStop(op: string, e: unknown, executed: string[], backupNam
     log("Timeline'da değişiklik yapılmadı.", "warn");
   }
   for (const x of extra) log(x, "warn");
-  // v1.0.0 arayüz: tek cümle + ne yapılacağı (+ tam mesaj ve günlük "Ayrıntı ▸" altında) — yalnız görünüm
-  const hint = stop?.retryLink
+  // arayüz: tek cümle + "Ne yapmalıyım?" (tam mesaj günlükte → Sorun bildir) — yalnız görünüm
+  const hint = stop?.hint
+    ? stop.hint
+    : stop?.retryLink
     ? "Kesim yerinde ve doğru; yalnız bağlama olmadı. Spread Helper panelinin açık olduğunu kontrol et ve Bağla'ya tekrar bas (yalnız bağlar)."
     : executed.length && stop?.restored
       ? "Düzen değişmedi; geri alman gerekmez."
@@ -272,7 +276,34 @@ export function reportStop(op: string, e: unknown, executed: string[], backupNam
 // TOPLA / BAĞLA bir adımdan sonra DURURSA timeline'ın o anki hâli (klip kümesinin özeti) localStorage'da saklanır. Kullanıcı geri
 // almadan tekrar basarsa (timeline hâlâ birebir o hâlde) işlem BAŞLAMAZ: aksi hâlde park kopyaları "çapa dışı ses" sanılıp silinebilir,
 // ya da yarım düzen yeni bir yedeğe kopyalanır. localStorage yoksa koruma sessizce devre dışıdır (panel çökmez).
-const STOP_KEY = "spread.stoppedState.v1";
+// v1.1.0: sequence (GUID) başına ayrı kayıt — v1.0.0'da tek yuvaydı: yedek sequence'ta başarılı bir işlem ASLIN "yarım iş" kaydını
+// siliyordu (inceleme #9, m1; A7 "kayıtlar karışabilir mi"). Eski tek kayıt bir kez haritaya taşınır.
+const STOP_KEY = "spread.stoppedState.v2";
+const STOP_KEY_V1 = "spread.stoppedState.v1";
+type StopRec = { op?: string; digest?: string };
+
+function stopMap(): Record<string, StopRec> {
+  let m: Record<string, StopRec> = {};
+  try {
+    const raw = window.localStorage.getItem(STOP_KEY);
+    const j: unknown = raw ? JSON.parse(raw) : {};
+    if (j && typeof j === "object") m = j as Record<string, StopRec>;
+  } catch {
+    m = {};
+  }
+  try {
+    const old = window.localStorage.getItem(STOP_KEY_V1);
+    if (old) {
+      const r = JSON.parse(old) as { guid?: string } & StopRec;
+      if (r && typeof r.guid === "string" && !m[r.guid]) m[r.guid] = { op: r.op, digest: r.digest };
+      window.localStorage.setItem(STOP_KEY, JSON.stringify(m));
+      window.localStorage.removeItem(STOP_KEY_V1);
+    }
+  } catch {
+    /* eski kayıt okunamazsa geç */
+  }
+  return m;
+}
 
 function digest(s: Snapshot): string {
   const text = s.clips.map(keyFull).sort().join("\n") + `|${s.vCount}|${s.aCount}`;
@@ -289,15 +320,21 @@ function digest(s: Snapshot): string {
 export async function rememberStopped(ctx: SeqContext, op: string): Promise<void> {
   try {
     const s = await snapshot(ctx);
-    window.localStorage.setItem(STOP_KEY, JSON.stringify({ guid: ctx.guid, op, digest: digest(s) }));
+    const m = stopMap();
+    m[ctx.guid] = { op, digest: digest(s) };
+    window.localStorage.setItem(STOP_KEY, JSON.stringify(m));
   } catch {
     /* koruma yok */
   }
 }
 
-export function forgetStopped(): void {
+/** Yalnız BU sequence'ın "yarım iş" kaydını siler (başka sequence'larınkine dokunmaz). */
+export function forgetStopped(guid: string): void {
   try {
-    window.localStorage.removeItem(STOP_KEY);
+    const m = stopMap();
+    if (!(guid in m)) return;
+    delete m[guid];
+    window.localStorage.setItem(STOP_KEY, JSON.stringify(m));
   } catch {
     /* yoksa geç */
   }
@@ -305,19 +342,8 @@ export function forgetStopped(): void {
 
 /** Timeline, önceki bir DURDU'nun bıraktığı hâlde mi → öyleyse SpreadStop. */
 export function assertNotStopped(ctx: SeqContext, s: Snapshot, op: string): void {
-  interface Rec {
-    guid?: string;
-    op?: string;
-    digest?: string;
-  }
-  let rec: Rec | null;
-  try {
-    const raw = window.localStorage.getItem(STOP_KEY);
-    rec = raw ? (JSON.parse(raw) as Rec) : null;
-  } catch {
-    return;
-  }
-  if (rec && rec.guid === ctx.guid && rec.digest === digest(s))
+  const rec: StopRec | undefined = stopMap()[ctx.guid];
+  if (rec && rec.digest === digest(s))
     throw new SpreadStop(
       `Timeline, önceki ${rec.op ?? "işlem"} durduğunda kalan YARIM hâlde (geri alınmamış). ${op} BAŞLAMADI, hiçbir şey değişmedi. ` +
         "Önce geri al (DURDU mesajındaki kadar Ctrl+Z) ya da yedek sequence'ı kullan, sonra tekrar bas."

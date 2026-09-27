@@ -30,6 +30,10 @@ Sonuç: reddin nedeni kanal tipi uyumsuzluğu — Adobe'nin belgelediği kural v
 
 - **A2 varsayılan eşleme** (`spread/src/settings.ts` `DEFAULT_SIL`): kullanıcı seçmediyse **Zoom TrLR → "Sil"** (track almaz).
   Kaynak eşlemeden değiştirilebilir; kayıtlı seçim her zaman önce gelir.
+  - **Yükseltme (inceleme #9, M1):** v1.0.0'ın TOPLA'sı eşlemenin TAMAMINI kaydediyordu (kendiliğinden atanan track'ler dahil) →
+    kayıtlı "Zoom TrLR → A3" kullanıcı seçimi mi otomatik mi ayırt edilemez. `savedMap` bir kez (`spread.sourceMap.v11` bayrağı)
+    DEFAULT_SIL kaynaklarının kayıtlı track'ini "sil"e çevirir ve günlüğe yazar; sonra kullanıcının ⚙ Ayarlar'daki seçimi kalır.
+    Sonuç: v1.0.0'da TrLR'li toplanmış bir sequence'ta BAĞLA "Ayar TOPLA'dan sonra değişti — TOPLA'ya tekrar bas" der (doğru).
 - **A3 kanal tipi okuma + onay uyarısı:**
   - UXP'de klip düzeyinde kanal tipi API'si YOK (premierepro.d.ts 26.5: yalnız `SequenceSettings.getAudioChannelType`, d.ts:3551;
     upstream 27.0.0-beta.57'de de yok). Okuma yardımcıda, ExtendScript ile: `TrackItem.projectItem` →
@@ -55,21 +59,29 @@ Sonuç: reddin nedeni kanal tipi uyumsuzluğu — Adobe'nin belgelediği kural v
   ExtendScript'te var (PProPanel d.ts:1588) ama timeline örneklerine etkisi belgesiz ve proje genelinde ana klibi değiştirir →
   **yapılmadı**. Parça bağ dışında kalır ve raporlanır.
 - **A6 "yalnız bağla" hoşgörüsü:**
-  - `collect.ts` `bindState` yeni durum **"thinned"**: BAĞLA'nın sildiklerinden HİÇBİRİ geri gelmemiş ama kayıtlı öğelerin bir
-    kısmı yok (elle silinmiş / taşınmış). Kısmen geri alma ("partial") eskisi gibi durur.
+  - `collect.ts` `bindState` yeni durum **"thinned"**: BAĞLA'nın sildiklerinden HİÇBİRİ geri gelmemiş, kesimin yarattığı
+    parçalardan EN AZ BİRİ yerinde (ya da kesim parça yaratmadı) ama kayıtlı öğelerin bir kısmı yok (elle silinmiş / taşınmış).
+    Ctrl+Z bu durumu üretemez: parçaları tek transaction yerleştirir (TX-4), geri alınınca HEPSİ gider → "partial" → DUR (inceleme
+    #9, B1; senaryo `partial_undo`: Ctrl+Z ×1 ve ×3, Spread ve yardımcı panel). Bütün parçalar ELLE silindiyse de "partial" (DUR).
   - `sessions.ts` `reduceToPresent`: plan grupları o an var olan öğelere indirilir (anahtar birebir: tür, track, start, end, ad);
     indirilmiş gruplar yine ortak kuralla (`groupsFromLayout` + `compareLinkGroups`) birebir karşılaştırılır. Aynıysa var olanlar
     bağlanır, eksikler raporlanır ("EKSİK" onay satırı). Aynı değilse (ör. bir grubun çapa kamerası silinmiş → parça yeni çapaya
     sığmıyor) hiçbir şey yapılmadan DUR.
-  - Aynı kural yardımcı paneldeki BAĞLA'da da (`bindFromPlan`). TOPLA "thinned"i "applied" gibi görür (kesilmiş düzende TOPLA yok).
+  - Aynı kural yardımcı paneldeki BAĞLA'da da (`bindFromPlan`): KES planı artık `created` listesini de taşır; eksik öğe varken
+    kesilen parçalardan hiçbiri yoksa DUR ("kesim geri alınmış olabilir"); `created`'sız eski plan → eskisi gibi DUR.
+  - TOPLA "thinned"i her yerde "applied" gibi görür (kesilmiş düzende TOPLA yok; kesimsizse bağ kaydı ve DİKKAT satırı aynı).
 
 ### A7 — yedek sequence üzerinde çalışmak: kayıtlar karışabilir mi?
 
-**Karışmaz.** Bütün kayıtlar sequence **GUID**'ine bağlı, adına değil:
+**Karışmaz** (bir istisna vardı, düzeltildi). Kayıtlar sequence **GUID**'ine bağlı, adına değil:
 - TOPLA kaydı (çerçeve, eşleme, eşik, **park listesi**, **parmak izi**, BAĞLA aşaması): `settings.ts` `spread.collectRecord.v1[guid]`
   (`loadRecord` ayrıca `r.guid === guid` denetler);
 - kalibrasyon: `spread.trimCal.v1[guid]` (+ Premiere sürümü);
-- adım işaretleri `spread.steps.v1[guid]`; yarım iş kaydı `spread.stoppedState.v1` (guid ile).
+- adım işaretleri `spread.steps.v1[guid]`;
+- **yarım iş kaydı — DÜZELTİLDİ (inceleme #9, m1):** v1.0.0'da `spread.stoppedState.v1` TEK yuvaydı: asılda BAĞLA yarıda kalınca
+  kullanıcı (mesajın önerdiği gibi) yedekte çalışıp başarılı olursa asılın kaydı siliniyordu → asıl "YARIM hâlde" korumasını
+  kaybediyordu. Şimdi `spread.stoppedState.v2[guid]` (eski tek kayıt bir kez taşınır), `forgetStopped(guid)` yalnız o sequence'ınkini
+  siler. Senaryo `stop_per_guid`.
 
 Yedeğin GUID'i asılınkinden FARKLI olmak zorunda: `guard.ts` `makeBackup` yedeği "önceki listede OLMAYAN GUID" diye bulur; aynı GUID
 olsaydı yedek bulunamaz ve işlem "Yedek sequence oluşmadı" diye başlamazdı. Kullanıcının gerçek koşularında yedekler oluştu →
@@ -85,6 +97,16 @@ kendi ölçtü).
 
 **O2 / O4'ün toplanmaması** bununla açıklanmıyor; rapor gelmeden kod değiştirilmedi.
 
+### Belirsizlikler (v1.1.0)
+
+1. Karışık grubun ikinci denemede bağlanması mock'ta kanıtlı; gerçek Premiere'de ilk BAĞLA'da görülecek.
+2. `linkSelection()` ZATEN bağlı kliplerde ne yapar belgesiz (Adobe: bağlı klipler önce çözülmeli; Ctrl+L bağlıda "çöz" gibi
+   davranıyor — topluluk). BAĞLA'ya tekrar basmak (yalnız bağla) daha önce bağlanmış grupları yeniden bağlar; mock bunu sessizce
+   kabul ediyor (inceleme #9, m6). Gerçekte reddederse grup "bağlanamadı" görünür, hiçbir klip silinmez.
+3. Ana tip kuralı (çoğunluk, eşitlikte en üst A track) bir grupta tek mono Zoom izini dışarıda bırakabilir (ör. Tr1 mono + TrLR stereo
+   + korunan stereo kamera sesi → stereo çoğunlukta). TrLR varsayılan "Sil" olduğundan olağan değil; rapor satır satır yazar.
+4. `app.setExtensionPersistent` dönüşü: belge "true", Adobe PProPanel tip dosyası "void" → istisna yoksa "istendi" sayılır.
+
 ### A8 — mock
 
 - `M.chType` (ad → kanal tipi), `M.linkRejectMixed` (karışık seçimde `linkSelection()` false, gerçek 26.5.1 gibi), `M.channelApi`;
@@ -94,13 +116,15 @@ kendi ölçtü).
   `retry_fails`, `mixed_unknown` (tip okunamaz → ikinci deneme yok), `linkonly_thinned` (parça silinmiş → bağla; çapa kamerası
   silinmiş → DUR), `backup_copy` (A7), `helper_persist`; `mapping` varsayılanı da denetler.
 - TrLR'nin eski varsayılanına (A3'e eşlenir) dayanan 3 senaryo (`sync`, `sep23`, `regress_trim`) bu seçimi AÇIKÇA yapar (kullanıcı
-  TrLR'yi eşlemiş gibi); `panel_guard` (c0) artık A6'yı bekler (silinen parça → bağla + eksik yaz).
+  TrLR'yi eşlemiş gibi; geçiş bayrağıyla); `panel_guard` (c0) artık A6'yı bekler (silinen parça → bağla + eksik yaz); `mapping`
+  varsayılanı da denetler. Yani v1.0.0'ın 79 senaryosundan 74'ü aynen, 5'i bilerek güncellendi.
+- İnceleme #9 sonrası eklenen: `partial_undo`, `stop_per_guid`, `trlr_migration`, `linkonly_mixed`.
 
 ### BÖLÜM B — sade arayüz (mantık değişmedi)
 
 - **Spread paneli** (`spread/public/index.html`, `spread/src/ui.ts`, `spread/index.ts`):
   - Üstte "Spread ●" (yardımcı yalnız nokta, ayrıntı `title` ipucunda) + küçük/soluk sequence adı. Yardımcı kapalıysa nokta gri ve
-    tek satır "Spread Helper paneli kapalı: Window › Extensions › Spread Helper".
+    tek satır "Spread Helper paneli kapalı: Window › Extensions (Legacy) › Spread Helper".
   - ① Dağıt / ② Topla / ③ Bağla: **yalnız sıradaki adımın düğmesi görünür** (vurgulu); biten adımda ✓ (uyarılıysa !); gelecektekiler
     soluk. Biten adımın adına tıklayınca "Yeniden çalıştır" (aynı işlem). Bu yalnız GÖRÜNÜM: tıklama işleyicileri eskisi gibi,
     işlemler kendi denetimlerini yapar (ör. BAĞLA "Önce TOPLA'ya bas" der) — mock senaryoları düğmelere doğrudan basar, aynen geçer.
@@ -108,11 +132,17 @@ kendi ölçtü).
   - Altta tek satır sonuç / ilerleme (`sp-progressbar`). Hata kırmızı tek satır + "Ne yapmalıyım?" (`sp-link`) → ne yapılacağı.
     Ana ekranda teknik terim yok: `ui.ts` `plain()` / `humanize()` tick, transaction, action, A3/V1, API adları geçen metni sade bir
     cümleye düşürür; tam metin günlükte (⚙ Ayarlar) ve Sorun bildir raporunda.
-  - Onay: başlık + en çok 3 satır + [Vazgeç] [Devam] (`dialogBody`: soru cümleleri ve "Evet = / Hayır =" açıklamaları atılır,
-    dikkat satırları önce, sığmayan dikkat satırları "(+N dikkat daha — Sorun bildir raporunda)"). Başlık ve düğme adları runner'lardan
+  - Onay: başlık + en çok 3 satır + [Vazgeç] [Devam] (`dialogBody`: soru cümleleri ve "Evet = / Hayır =" açıklamaları atılır;
+    birden çok dikkat satırı TEK "DİKKAT — … · …" satırında birleşir; sıra: ilk olgu satırı → dikkat → silinecekler / yedek →
+    diğerleri; sığmayan satır sessizce düşmez: "(+N satır Sorun bildir raporunda)"). BAĞLA özetinde silinecekler ve yedek tek
+    satırda (inceleme #9, M3). Başlık ve düğme adları runner'lardan
     (`askUser(q, özet, { title, yes, no })`, yalnız görünüm; cevaplar yine "Evet" / "Hayır"). ŞÜPHELİ ÜYE'de düğmeler [Oturumda kalsın]
     [Park'a al] (orada "Hayır" işlemi SÜRDÜRÜR — "Vazgeç" yanıltırdı).
   - Günlük, Durum raporu, eşik, boşluk, kaynak eşleme, yardımcı ayrıntısı: **⚙ Ayarlar** görünümü (← Geri). Sorun bildir sağ altta.
+  - **Adımı elle çalıştır** (⚙ Ayarlar; inceleme #9, M5): adım işaretleri yanlışsa (başka makine, silinmiş panel verisi, Dağıt'ı
+    atlamak gerekirse) ana ekranda yalnız sıradaki düğme görünse de her adıma yol var; işlemler kendi denetimlerini yapar.
+  - Hata satırı ve ipuçları süzülmez (bizim cümlelerimiz; Ctrl+Z sayısı ve yedek adı hep görünür). Yalnız durdurma mesajından
+    türetilen tek cümle (`humanize`) teknik terim içeriyorsa sadeleşir; tırnak içi adlar ("Kurgu v2") önce atılır (inceleme #9, M4).
   - **Spectrum UXP bileşenleri** (sp-heading, sp-body, sp-detail, sp-button, sp-action-button, sp-link, sp-progressbar, sp-divider):
     Adobe'nin Premiere UXP belgesinde yerleşik (uxp-premiere-pro reference-spectrum/spectrum-uxp-widgets). Arka plan ve yazı rengi
     VERİLMEZ (panel Premiere zeminini, bileşenler temayı kendileri izler). Tek özel renk hata satırı (#e34850) ve yardımcı noktası.
@@ -122,8 +152,9 @@ kendi ölçtü).
     TAKLİTLE çizer. Gerçek görünüm Premiere'de Spectrum'un kendisi (açık temada da).
   - Asgari boyut 300 × 260 (yerleşik 320 × 360).
 - **Spread Helper paneli** (`cep-helper/index.html`, `js/panel.js`, `CSXS/manifest.xml`):
-  - Tek satır "Spread Helper çalışıyor ●" (hata: kırmızı tek satır). Köprüsüz Bağla yalnız plan `handoff:"panel"` ve bağlanmamışken
-    tek düğme; sonucu yeni plan gelene kadar. Başka hiçbir şey görünmez; ayrıntı (sürüm, dinleme, kalıcılık, son istek, plan,
+  - Tek satır "Spread Helper çalışıyor ●" (hata: kırmızı tek satır). Köprüsüz Bağla yalnız plan `handoff:"panel"` ve bağlanmamışken:
+    AYNI satırda "Bağla bekliyor: "Ana Kurgu" · 11 grup [Bağla]" (panel 60×20'ye küçültülse de görünür; inceleme #9, m3); sonucu
+    yeni plan gelene kadar o satırda. Başka hiçbir şey görünmez; ayrıntı (sürüm, dinleme, kalıcılık, son istek, plan,
     "Planı yapıştır", günlük) durum satırına TIKLAYINCA.
   - Tema: `window.__adobe_cep__.getHostEnvironment()` → `appSkinInfo.panelBackgroundColor.color` (0–255), `baseFontFamily`,
     `baseFontSize`; yazı rengi zeminin parlaklığından (CEP yazı rengi vermiyor). Değişince `com.adobe.csxs.events.ThemeColorChanged`.
@@ -134,7 +165,7 @@ kendi ölçtü).
     YAZMIYOR (CEP 12 Cookbook; kalıcılık olayı yalnız Photoshop / InDesign / InCopy için). Premiere'e özgü belgelenmiş araç:
     ExtendScript `app.setExtensionPersistent(extensionID, 1)` — belgedeki örnek yorumu '1 - for "Never unload me, even when not
     visible."' (premiere-scripting-guide docs/application/application.md; PProPanel Premiere.jsx:103). Yardımcı açılışta bunu kendi
-    Extension Id'siyle çağırır (`spreadHelper_persist`), sonucu ayrıntıda "arka sekmede kalıcılık: açık". **Bu ortamda gerçek
+    Extension Id'siyle çağırır (`spreadHelper_persist`), sonucu ayrıntıda "arka sekmede kalıcılık: istendi". **Bu ortamda gerçek
     Premiere yok → doğrulanamadı.** Kullanıcı doğrulaması (30 sn): Spread Helper'ı Spread'in arkasına sekme yap, Spread'de ⚙ Ayarlar
     → Spread Helper → **Yeniden dene**: "Bağlı — …" ve üstteki nokta yeşilse arka sekmedeki sunucu istek karşılıyor demektir.
 - **UXP'den ExtendScript / bağlama (araştırma):** YOK — yardımcı kaldırılamaz.
@@ -147,6 +178,31 @@ kendi ölçtü).
 - **Doğrulama:** BÖLÜM A dahil bütün mock senaryoları aynen geçer; ekran görüntüleri `docs/ekran` (dar 300 px + geniş 560 px;
   başlangıç, dağıtıldı, onaylar, ilerleme, toplandı, bitti, hata + "Ne yapmalıyım?", ⚙ Ayarlar, yeniden çalıştır, yardımcı kapalı;
   Spread Helper: çalışıyor, bağla bekliyor, hata, açık tema).
+
+### İnceleme #9 (bağımsız alt ajan, 330abe7 + ea9e6a0) ve düzeltmeler
+
+Denetim: npm run check PASS, zip / ccx bayt bayt, Wine PASS, ekran görüntüleri yeniden üretilebilir. Kararlar: (a) A'nın mantığı
+doğru — **FAIL** (B1, M1, M2); (b) B'de mantık dosyalarında davranış farkı yok — PASS; (c) bağ dışında bırakırken hiçbir klip
+silinmiyor — PASS. Bulgular ve düzeltmeler:
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| B1 | Kesimden sonra kısmi Ctrl+Z "thinned" sayılıyordu → BAĞLA kalanları bağlıyordu (Spread + yardımcı panel) | "thinned" yalnız kesilen parçalardan en az biri yerindeyse; plan `created` taşır, yardımcı aynı kuralı uygular; `partial_undo` |
+| M1 | TrLR varsayılanı, TOPLA'yı daha önce çalıştıran (eşlemesi kayıtlı) kullanıcıya hiç uygulanmıyordu | bir kerelik geçiş: kayıtlı TrLR track'i "sil"e (günlükte not); `trlr_migration` |
+| M2 | "Yalnız bağla" yolunda KARIŞIK KANAL uyarısı yoktu | `channelCheckItems` (öğeler zaten timeline'da); `linkonly_mixed` |
+| M3 | Onay gövdesi silinecekleri ve yedek satırını sessizce düşürüyordu | dikkat satırları tek satırda birleşir, silinecek / yedek önceliği, düşen satır "(+N satır…)" notuyla; BAĞLA'da silinecek + yedek tek satır |
+| M4 | `plain()` "Kurgu v2" gibi adlarda Ctrl+Z ipucunu gizliyordu | ipuçları / sonuçlar süzülmez; `humanize` tırnak içini atıp denetler, track adı yalnız büyük harf |
+| M5 | Yalnız sıradaki düğme görünce adım işaretleri yanlışsa ileri gidilemiyordu | ⚙ Ayarlar ▸ "Adımı elle çalıştır" (Dağıt / Topla / Bağla) |
+| m1 | "Yarım iş" kaydı tek yuva (yedekte başarılı işlem aslınkini siliyordu) | GUID başına harita; `stop_per_guid` |
+| m2 | setExtensionPersistent dönüşü (void olabilir) | istisna yoksa "istendi" |
+| m3 | Yardımcı panel 30 px'te Bağla görünmüyordu | bekleyen bağlama ve düğme durum satırında |
+| m4 | Dikkat satırları Premiere'de kalın değildi | `index.html` `.attn` |
+| m5 | Belgelerde fazla iddia (arka sekme "devam eder", inceleme, "aynen") | düzeltildi (doğrulanmadı / 74 aynen + 5 bilerek) |
+| m6 | Mock bağlı klipleri yeniden bağlamayı sessizce kabul ediyor | belirsizlik olarak yazıldı (gerçek davranış belgesiz) |
+| m7 | İkinci deneme de başarısızken ipucu "tekrar bas" diyordu | `SpreadStop.hint`: "tekrar basmak aynı sonucu verir — Sorun bildir" |
+| m8 | TOPLA "thinned"i yarım "applied" gibi görüyordu | her yerde aynı |
+| m9 | Menü yolu "Extensions" / "Extensions (Legacy)" karışık | her yerde "Window › Extensions (Legacy) › Spread Helper" |
+| NIT | yalnız bağlada "bütün öğeler yerinde" günlüğü; istemci zaman aşımı 90 sn (yardımcı 2 × 170 sn); "mono + stereo" her karışıklıkta; beklenmeyen hata başlığı "BAĞLA:"; ⚙ Ayarlar açıkken onay görünmez; `<style>` yeri; `sp-link href` | metin düzeltildi; 360 sn; gerçek tip adları; adım adı; onay ana görünüme döner; düzeltildi |
 
 ## v1.0.0 ürünleştirme — mantık değişmedi
 

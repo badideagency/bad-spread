@@ -124,26 +124,27 @@ function dropQuestion(line: string): string {
     .trim();
 }
 
+/** Dikkat satırının kısası (birleştirmek için): ilk ";", " (" ya da " — " öncesi. */
+const shortAttn = (l: string): string => (l.split(/;|\s\(|\s—\s/)[0] ?? l).trim().replace(/\.$/, "");
+
 /**
- * Onay gövdesi: en çok `max` satır. Dikkat satırları önce (sıra korunur); ilk "olgu" satırı (ne yapılacak) yer varsa kalır; sığmayan
- * dikkat satırları son satıra "(+N dikkat daha — Sorun bildir raporunda)" diye eklenir. Tam metin günlükte (→ Sorun bildir).
+ * Onay gövdesi: en çok `max` satır (başlık ayrı).
+ *  - Soru cümleleri ve "Evet = / Hayır =" açıklamaları atılır (düğmeler söylüyor).
+ *  - Birden çok dikkat satırı TEK satırda birleşir: "DİKKAT — KAMERA SESİ KORUNACAK: 2 aralıkta · KARIŞIK KANAL: 2 grupta …".
+ *  - Sıra: ilk olgu satırı → dikkat satırı → silinecekler / yedek satırı → diğerleri. Sığmayan satır SESSİZCE düşmez: son satıra
+ *    "(+N satır Sorun bildir raporunda)" eklenir (tam metin günlükte). (inceleme #9, M3)
  */
 function dialogBody(lines: string[], max = 3): string[] {
   const ls = lines.map(dropQuestion).filter(Boolean);
-  if (ls.length <= max) return ls;
-  const idx = ls.map((l, i) => ({ l, i }));
-  const attn = idx.filter((x) => ATTENTION.test(x.l));
-  const rest = idx.filter((x) => !ATTENTION.test(x.l));
-  const pick: { l: string; i: number }[] = [];
-  if (rest.length && attn.length < max) pick.push(rest[0]);
-  const room = max - pick.length;
-  const a = attn.slice(0, room);
-  pick.push(...a);
-  for (const x of rest.slice(1)) if (pick.length < max) pick.push(x);
-  pick.sort((x, y) => x.i - y.i);
-  const out = pick.map((x) => x.l);
-  const hidden = attn.length - a.length;
-  if (hidden > 0) out[out.length - 1] += ` (+${hidden} dikkat daha — Sorun bildir raporunda)`;
+  const attn = ls.filter((l) => ATTENTION.test(l));
+  const rest = ls.filter((l) => !ATTENTION.test(l));
+  const attnLine = attn.length > 1 ? `DİKKAT — ${attn.map(shortAttn).join(" · ")}` : attn[0];
+  const prio = (l: string) => (/silinecek|yedek/i.test(l) ? 0 : 1);
+  const tail = rest.slice(1).sort((a, b) => prio(a) - prio(b));
+  const order = [...(rest[0] !== undefined ? [rest[0]] : []), ...(attnLine !== undefined ? [attnLine] : []), ...tail];
+  if (order.length <= max) return order;
+  const out = order.slice(0, max);
+  out[max - 1] += ` (+${order.length - max} satır Sorun bildir raporunda)`;
   return out;
 }
 
@@ -166,6 +167,7 @@ export function ask(question: string, summary?: string[], opts: AskOptions = {})
   }
   show("progress", false);
   show("result", false);
+  showSettings(false); // onay ana görünümde; kullanıcı ⚙ Ayarlar'daysa oraya dön
   box.style.display = "block";
   log(`❓ SORU: ${question}`, "warn");
   try {
@@ -213,7 +215,7 @@ export function setHelperStatus(ok: boolean, detail: string): void {
     dot.className = ok ? "dot on" : "dot off";
     dot.setAttribute("title", ok ? `Spread Helper hazır (${detail})` : `Spread Helper kapalı — ${detail}`);
   }
-  setText("helper-short", "Spread Helper paneli kapalı: Window › Extensions › Spread Helper");
+  setText("helper-short", "Spread Helper paneli kapalı: Window › Extensions (Legacy) › Spread Helper");
   show("helperline", !ok);
 }
 
@@ -296,7 +298,7 @@ export function progress(frac: number, text: string): void {
     show("progress", !isAsking());
     const bar = maybe("progress-bar");
     if (bar) bar.setAttribute("value", String(Math.round(Math.max(0.02, Math.min(1, frac)) * 100)));
-    setText("progress-text", plain(text));
+    setText("progress-text", text);
   } catch {
     /* gösterge yoksa geç */
   }
@@ -320,8 +322,8 @@ function paintResult(kind: ResultKind, headline: string, hint: string, details: 
   show("progress", false);
   const r = maybe("result");
   if (r) r.className = CLASS[kind];
-  setText("result-head", `${ICON[kind]} ${plain(headline)}`);
-  setText("result-hint", plain(hint));
+  setText("result-head", `${ICON[kind]} ${headline}`);
+  setText("result-hint", hint);
   show("result-hint", false);
   show("result-help", !!hint);
   show("result", true);
@@ -369,14 +371,17 @@ export function opFinish(): void {
 
 // ------------------------------------------------------------------ insan dilinde tek cümle, teknik terim yok
 
-/** Ana ekranda geçmemesi gereken terimler (tick, transaction, track index, API adları…). */
-const TECH = /\btick\b|transaction|\baction\b|addAction|\bTX-?\d|\bguid\b|ExtendScript|linkSelection|getLinkedItems|\bAPI\b|\b[AV]\d+\b|createCloneAction|executeTransaction|ClipProjectItem|\bindex\b/i;
-
-/** Ana ekrana giden metin: teknik terim içeriyorsa sade bir cümleye düşer (tam metin günlükte / Sorun bildir'de). */
-function plain(text: string): string {
-  if (!text || !TECH.test(text)) return text;
-  return "Ayrıntı Sorun bildir raporunda.";
-}
+/**
+ * Durdurma mesajının ana ekrana düşmemesi gereken terimleri (tick, transaction, action, TX, API adları, "A3" / "V1" track adları).
+ * Tırnak içi metin (sequence / klip adları: "Kurgu v2", "Action Cam") ÖNCE atılır; track adı yalnız BÜYÜK harfle (inceleme #9, M4).
+ * Sonuçlar, ipuçları ve ilerleme metinleri bizim yazdığımız sade cümleler → süzülmez (Ctrl+Z sayısı, yedek adı hep görünür).
+ */
+const TECH = /tick|transaction|\baction|\bTX-?\d|\bguid\b|ExtendScript|linkSelection|getLinkedItems|\bAPI\b|createCloneAction|executeTransaction|ClipProjectItem/i;
+const TRACK = /\b[AV]\d+\b/;
+const technical = (s: string): boolean => {
+  const bare = s.replace(/"[^"]*"/g, "");
+  return TECH.test(bare) || TRACK.test(bare);
+};
 
 const HUMAN: [RegExp, string][] = [
   [/^Önce TOPLA'ya bas: bu sequence için TOPLA kaydı yok/, "Önce Topla'ya bas: bu sequence henüz toplanmadı."],
@@ -412,7 +417,7 @@ export function humanize(message: string): string {
   if (m) s = m[1];
   if (/^[A-ZÇĞİÖŞÜ\s]+$/.test(s)) s = s.charAt(0) + s.slice(1).toLocaleLowerCase("tr");
   s = s.charAt(0).toLocaleUpperCase("tr") + s.slice(1);
-  if (TECH.test(s)) return "Beklenmeyen bir durum; işlem durdu.";
+  if (technical(s)) return "Beklenmeyen bir durum; işlem durdu.";
   if (s.length > 120) s = s.slice(0, 117) + "…";
   return /[.!?…]$/.test(s) ? s : s + ".";
 }

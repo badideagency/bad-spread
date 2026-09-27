@@ -33,8 +33,9 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
 6. **Window → UXP Plugins → Spread**: ana panel.
 7. **Window → Extensions (Legacy) → Spread Helper**: tek satırlık küçük panel (**"Spread Helper çalışıyor ●"**).
    - Onu **Spread panelinin arkasına sekme olarak sürükle**, sonra çalışma alanını kaydet: **Window → Workspaces → Save as New
-     Workspace**. Ekranda tek panel kalır; yardımcı arkada çalışmaya devam eder (panel görünmezken de bellekte kalması için
-     Premiere'e "kalıcı" denir — Adobe'nin `app.setExtensionPersistent` komutu).
+     Workspace**. Ekranda tek panel kalır. Panel görünmezken de bellekte kalması için Premiere'e "kalıcı" denir (Adobe'nin
+     `app.setExtensionPersistent` komutu); gerçek Premiere'de arka sekmede çalışmaya devam ettiği henüz doğrulanmadı — kontrol:
+     Spread'in üstündeki nokta yeşil kalmalı (⚙ Ayarlar → Spread Helper → **Yeniden dene**).
    - Spread'in üstündeki nokta **yeşil** olmalı (üstüne gelince ayrıntı).
 
 **Kaldırmak:** **KALDIR.cmd**'ye çift tıkla. Kurulumun yaptığı her şeyi geri alır:
@@ -47,11 +48,13 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
 
 - **Üstte:** "Spread" ve yardımcı noktası (yeşil = hazır, gri = kapalı; ayrıntı noktanın ipucunda). Altında küçük harfle aktif
   sequence'ın adı.
-  - Yardımcı kapalıysa tek satır: **"Spread Helper paneli kapalı: Window › Extensions › Spread Helper"**. Dağıt ve Topla
+  - Yardımcı kapalıysa tek satır: **"Spread Helper paneli kapalı: Window › Extensions (Legacy) › Spread Helper"**. Dağıt ve Topla
     yardımcısız da çalışır.
 - **Üç adım:** ① Dağıt, ② Topla, ③ Bağla.
   - Yalnız **sıradaki** adımın düğmesi görünür (vurgulu). Biten adımda **✓** (uyarılıysa **!**); gelecektekiler soluk.
   - Biten bir adımı yeniden yapmak için **adının üstüne tıkla → "Yeniden çalıştır"**.
+  - Adım işaretleri yanlışsa (başka bilgisayar, silinmiş panel verisi, Dağıt'ı atlaman gerekiyorsa): **⚙ Ayarlar → Adımı elle
+    çalıştır** (Dağıt / Topla / Bağla). İşlemler kendi denetimlerini yine yapar.
   - Dağıt'tan sonra "Sonra: Clip › Synchronize" hatırlatması çıkar.
   - ✓ işaretleri bu panelin bu sequence'ta yaptığı işlere göredir. Bir işlemi elle geri aldıysan ✓ kalabilir; işlemler yine kendi
     denetimlerini yapar.
@@ -59,7 +62,8 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
   toplandı."). Hata **kırmızı** tek satırdır; altındaki **"Ne yapmalıyım?"** ne yapılacağını söyler ("Ctrl+Z × 5 ya da yedek
   sequence …"). Teknik ayrıntı ana ekranda yok — günlükte ve Sorun bildir raporunda.
 - **Onay:** başlık + en çok 3 satır + **[Vazgeç] [Devam]**. Dikkat gerektiren şeyler (ÇİFT KOPYA, VETO, ŞÜPHELİ, KAMERA SESİ
-  KORUNACAK, SESSİZ KALACAK, KARIŞIK KANAL, EKSİK…) kalın ve önce. Tam metin günlükte (→ Sorun bildir).
+  KORUNACAK, SESSİZ KALACAK, KARIŞIK KANAL, EKSİK…) kalın; birden çoksa tek "DİKKAT — … · …" satırında. Silinecekler ve yedek
+  satırı önceliklidir; sığmayan satır "(+N satır Sorun bildir raporunda)" diye belirtilir. Tam metin günlükte (→ Sorun bildir).
   - **"Şüpheli klipler"** sorusunda düğmeler **[Oturumda kalsın] [Park'a al]**: "Oturumda kalsın" işlemi sürdürür.
 - **Sorun bildir** (sağ altta): tek bir rapor hazırlar. İçinde sürümler, Durum raporu, son Topla/Bağla günlükleri, kalibrasyon
   sonucu, yardımcı durumu ve son hata vardır.
@@ -269,7 +273,9 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
   ya da eşik değişmiş. Hiçbir şey değişmedi. TOPLA'ya bas, sonra BAĞLA'ya.
 - **Mono + stereo (v1.1.0):** Premiere bir bağda farklı kanal tipindeki sesleri kabul etmiyor (Adobe: bağdaki bütün ses klipleri
   aynı kanal tipinde olmalı). Bu yüzden:
-  - **Zoom TrLR** (stereo karışım) için seçim yapmadıysan varsayılan **"Sil"**dir (⚙ Ayarlar'dan değiştirilebilir).
+  - **Zoom TrLR** (stereo karışım) için seçim yapmadıysan varsayılan **"Sil"**dir (⚙ Ayarlar'dan değiştirilebilir). 1.0.0'dan
+    yükseltmede kayıtlı TrLR seçimi bir kez "Sil"e çevrilir (1.0.0 her eşlemeyi kendiliğinden kaydettiği için seçimin senin mi
+    otomatik mi olduğu bilinemiyor); böyle toplanmış bir sequence'ta Bağla "Topla'ya tekrar bas" der.
   - Onayda bir grupta mono + stereo varsa tek satır: **"KARIŞIK KANAL: N grupta mono + stereo…"** (tipler Spread Helper'dan okunur).
   - Premiere grubu reddederse yardımcı, grubun asıl tipinden (en çok sesin tipi; eşitse en üstteki A track'inki) farklı sesleri
     **çıkarıp grubu yeniden bağlar**. Çıkarılanlar **bağ dışında, yerinde** kalır — **hiçbir klip silinmez**; sonuç satırında
@@ -277,7 +283,8 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
   - Stereo kamera sesinin korunan parçası da buna dahil. Onu tek kanala (mono) çevirmenin belgelenmiş bir yolu yok (Premiere'in
     Modify › Audio Channels'ı timeline'daki kliplere etki etmiyor) → bağ dışında kalır.
 - **Kesimden sonra bir parçayı elle sildiysen** ve Bağla'ya yeniden bastıysan: Spread durmaz, **var olanları bağlar**, eksikleri yazar
-  (onayda "EKSİK: N öğe"). Bir grubun **çapa kamerası** silindiyse gruplar değiştiği için hiçbir şey yapmadan durur.
+  (onayda "EKSİK: N öğe"). Bir grubun **çapa kamerası** silindiyse gruplar değiştiği için hiçbir şey yapmadan durur. Kesimi
+  **Ctrl+Z** ile (kısmen) geri aldıysan bu "elle silinmiş" sayılmaz: Bağla durur (önce kalanını da geri al ya da yedeği aç).
 - Bağlama adımında yardımcı düşerse (**"… grup bağlanamadı (kesme/silme doğru ve yerinde)"**), yardımcıyı düzelt ve **BAĞLA'ya tekrar bas**,
   ya da Spread Helper panelinde durum satırına tıkla → **Bağla**. Panel kesimi hatırlar; bu kez **yalnız bağlar**. Yeniden kesmez, yedek almaz.
 - **BAĞLA'dan sonra TOPLA** çalışmaz. Harici sesler kesildiği için oturumları bulduran tam kayıtlar artık yok; panel tahmin etmez.

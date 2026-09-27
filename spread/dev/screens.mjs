@@ -71,7 +71,7 @@ const DARK = { red: 35, green: 35, blue: 35 };
 const LIGHT = { red: 214, green: 214, blue: 214 };
 const helperStates = {
   "20-yardimci-calisiyor": { listening: true, waiting: false, bg: DARK, h: 26 },
-  "21-yardimci-bagla-bekliyor": { listening: true, waiting: true, bg: DARK, h: 80 },
+  "21-yardimci-bagla-bekliyor": { listening: true, waiting: true, bg: DARK, h: 26 },
   "22-yardimci-hata": { listening: false, error: "localhost:47731 kullanımda (EADDRINUSE)", bg: DARK, h: 26 },
   "23-yardimci-acik-tema": { listening: true, waiting: false, bg: LIGHT, h: 26 },
 };

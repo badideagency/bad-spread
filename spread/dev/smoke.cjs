@@ -1463,6 +1463,7 @@ scenarios.regress_trim = async () => {
   // gerçek koşudaki gibi TrLR de eşlenmiş (A3) → A kamera kılavuzu A5'te (gerçek rapordaki satır)
   setupFromReport(R0912, ["A27", "A30"]);
   lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": 2 })); // v1.1.0: TrLR varsayılanı "Sil" — bu senaryo TrLR'yi A3'e eşleyen kullanıcıyı sınar
+  lsStore.set("spread.sourceMap.v11", "1"); // v1.1.0 geçişi yapılmış: kullanıcı TrLR'yi bilerek A3'e eşlemiş
   const out = await clickAndWait("btn-collect", yes, doneRe);
   if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + failLines(out));
   const collected = snapList();
@@ -1540,6 +1541,7 @@ scenarios.mixed_channels = async () => {
   // A3 + A4: TrLR eşlenmiş (v1.0.0 gerçek denemesindeki gibi) → her Zoom grubunda mono + stereo → Premiere reddeder → ikinci deneme
   setupFromReport(R0912, ["A27", "A30"]);
   lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": 2 }));
+  lsStore.set("spread.sourceMap.v11", "1"); // v1.1.0 geçişi yapılmış: kullanıcı TrLR'yi bilerek A3'e eşlemiş
   M.chType = REAL_CH;
   M.linkRejectMixed = true;
   const out = await clickAndWait("btn-collect", yes, doneRe);
@@ -1550,7 +1552,7 @@ scenarios.mixed_channels = async () => {
   let sum = [];
   const out2 = await clickAndWait("btn-bind", async (x) => ((qB = x), (sum = askSummary()), yes()), doneRe);
   const nMixed = Number((out2.match(/KARIŞIK KANAL: (\d+) grupta mono \+ stereo ses var/) ?? [])[1] ?? 0);
-  if (!nMixed || !sum.some((l) => /^KARIŞIK KANAL: \d+ grupta mono \+ stereo; Premiere reddederse farklı olanlar bağ dışında kalır \(silinmez\)/.test(l)) || !/KARIŞIK KANAL: \d+ grupta mono \+ stereo ses var; Premiere grubu reddederse/.test(qB))
+  if (!nMixed || !sum.some((l) => /KARIŞIK KANAL: \d+ grupta mono \+ stereo/.test(l)) || !/KARIŞIK KANAL: \d+ grupta mono \+ stereo ses var; Premiere grubu reddederse/.test(qB))
     fail("onayda karışık kanal uyarısı yok:\n" + sum.join("\n"));
   else ok(`A3: BAĞLA onayında tek satır "KARIŞIK KANAL: ${nMixed} grupta mono + stereo…" (özet + tam metin; tipler yardımcıdan, salt okuma)`);
   if (!/✓ BAĞLA tamam/.test(out2) || !/⚠ \d+ ses bağ dışında kaldı \(\d+ grupta\): kanal tipi grubun geri kalanından farklı/.test(out2) || !counters.rejectedLinks)
@@ -1615,6 +1617,28 @@ scenarios.panel_mixed = async () => {
   checkLinksExcluding(S, eb.groups, "panel yolu bağları");
 };
 
+scenarios.linkonly_mixed = async () => {
+  // inceleme #9 M2: "yalnız bağla" yolunda da (kesme bitmiş, köprü sonradan açılmış) onayda KARIŞIK KANAL satırı + ikinci deneme
+  setupFromReport(R0912, ["A27", "A30"]);
+  lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": 2 }));
+  lsStore.set("spread.sourceMap.v11", "1");
+  M.chType = REAL_CH;
+  M.linkRejectMixed = true;
+  const out = await clickAndWait("btn-collect", yes, doneRe);
+  if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + failLines(out));
+  await stopHelper();
+  const o1 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ KES tamam/.test(o1)) return fail("köprüsüz KES tamamlanmadı:\n" + failLines(o1));
+  await startHelper();
+  let sum = [];
+  const o2 = await clickAndWait("btn-bind", async () => ((sum = askSummary()), yes()), doneRe);
+  if (!sum.some((l) => /KARIŞIK KANAL: 11 grupta mono \+ stereo/.test(l)) || !/KARIŞIK KANAL: 11 grupta mono \+ stereo ses var/.test(o2))
+    fail("yalnız bağla onayında karışık kanal uyarısı yok:\n" + sum.join("\n"));
+  else ok("yalnız bağla (kesim önceden) onayında da 'KARIŞIK KANAL: 11 grupta mono + stereo'");
+  if (!/✓ BAĞLA tamam/.test(o2) || !/⚠ 13 ses bağ dışında kaldı/.test(o2)) fail("yalnız bağla ikinci denemeyle tamamlanmadı:\n" + failLines(o2));
+  else ok("yalnız bağla: reddedilen gruplar ikinci denemede bağlandı, 13 ses bağ dışında (silinmedi)");
+};
+
 scenarios.retry_fails = async () => {
   // ikinci deneme de reddedilirse: hangi grup, neden — DUR (kesim yerinde; tekrar basmak yalnız bağlar)
   setupFromReport(R0912, ["A27", "A30"]);
@@ -1635,6 +1659,7 @@ scenarios.mixed_unknown = async () => {
   // kanal tipi OKUNAMAZSA ikinci deneme YOK (tahmin yok) — v1.0.0'daki gibi hangi grup, neden
   setupFromReport(R0912, ["A27", "A30"]);
   lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": 2 }));
+  lsStore.set("spread.sourceMap.v11", "1"); // v1.1.0 geçişi yapılmış: kullanıcı TrLR'yi bilerek A3'e eşlemiş
   M.chType = REAL_CH;
   M.linkRejectMixed = true;
   M.channelApi = false;
@@ -1692,6 +1717,59 @@ scenarios.linkonly_thinned = async () => {
   else ok("çapa kamerası da silinince gruplar değişiyor → BAĞLA hiçbir şey yapmadan DURDU (tahmin yok)");
 };
 
+scenarios.partial_undo = async () => {
+  // inceleme #9 B1: kesimden sonra Ctrl+Z (parçaları TEK transaction yerleştirir → geri alınınca HEPSİ gider) "elle silinmiş" SAYILMAZ:
+  // Spread de yardımcı panel de hiçbir şey bağlamadan DURMALI (×1 ve ×3)
+  await collectThen(smallSpec());
+  await stopHelper();
+  const o1 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ KES tamam/.test(o1)) return fail("köprüsüz KES tamamlanmadı:\n" + failLines(o1));
+  for (const k of [1, 3]) {
+    const snap = deepCopy();
+    const stack = undoStack.slice();
+    for (let i = 0; i < k; i++) undo();
+    const h = await startHelper();
+    const n0 = counters.links;
+    const tx0 = counters.txNames.length;
+    const o2 = await clickAndWait("btn-bind", yes, doneRe);
+    const r = await h.bindFromPlan({});
+    if (!/✗ BAĞLA DURDU: BAĞLA'dan sonra düzen değişmiş/.test(o2) || counters.links !== n0 || counters.txNames.length !== tx0)
+      fail(`Ctrl+Z × ${k} sonrası Spread BAĞLA durmadı:\n${failLines(o2)}`);
+    else ok(`Ctrl+Z × ${k} (kesim geri alındı) → Spread BAĞLA hiçbir şey yapmadan DURDU ("düzen değişmiş")`);
+    if (r.ok || !/Kesilen parçaların hiçbiri timeline'da yok/.test(r.summary) || counters.links !== n0) fail(`Ctrl+Z × ${k} sonrası yardımcı panel: ${r.summary}`);
+    else ok(`Ctrl+Z × ${k} → yardımcı paneldeki Bağla da DURDU ("kesilen parçaların hiçbiri yok"), hiçbir şey bağlanmadı`);
+    await stopHelper();
+    restore(snap);
+    undoStack.length = 0;
+    undoStack.push(...stack);
+    mockGen++;
+  }
+};
+
+scenarios.stop_per_guid = async () => {
+  // inceleme #9 m1 (A7): "yarım iş" koruması sequence başına — yedekte başarılı işlem ASLIN yarım iş kaydını silmez
+  await collectThen(smallSpec());
+  await startHelper();
+  hooks.beforeTx = (name) => name === "BAĞLA: kesim hazırlığı" && (M.setSem = "noop");
+  const o1 = await clickAndWait("btn-bind", yes, doneRe);
+  hooks.beforeTx = null;
+  M.setSem = "real";
+  if (!/✗ BAĞLA DURDU: İLK PARÇA TUTMADI/.test(o1)) return fail("asılda yarım iş oluşmadı:\n" + failLines(o1));
+  const copies = state.sequences.filter((x) => x.name === "Ana Kurgu Copy");
+  const copy = copies[copies.length - 1]; // BAĞLA'nın yedeği (TOPLA sonrası düzen)
+  state.activeGuid = copy.guid;
+  mockGen++;
+  const o2 = await clickAndWait("btn-collect", yes, doneRe);
+  const o3 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ TOPLA tamam|Zaten toplanmış/.test(o2) || !/✓ BAĞLA tamam/.test(o3)) return fail("yedekte TOPLA / BAĞLA tamamlanmadı:\n" + failLines(o2 + "\n" + o3));
+  state.activeGuid = "guid-main-edit";
+  mockGen++;
+  const n = counters.txNames.length;
+  const o4 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/YARIM hâlde/.test(o4) || counters.txNames.length !== n) fail("yedekteki başarılı işlemler aslın yarım iş kaydını sildi:\n" + failLines(o4));
+  else ok("yedekte Topla + Bağla başarılı; asıl hâlâ 'YARIM hâlde' diye korunuyor (kayıt sequence GUID'ine bağlı)");
+};
+
 scenarios.backup_copy = async () => {
   // A7: eklentinin kendi yedeği (createCloneAction kopyası) üzerinde çalışmak. Kayıtlar (TOPLA kaydı + park listesi + parmak izi,
   // kalibrasyon, adım işaretleri, yarım iş) sequence GUID'ine bağlı; yedek YENİ GUID alır (makeBackup yeni GUID'i şart koşar)
@@ -1727,6 +1805,22 @@ scenarios.backup_copy = async () => {
   const tx2 = txOf("BAĞLA: kalibrasyon").length;
   if (!/✓ BAĞLA tamam/.test(o4) || tx2 - tx1 !== CAL_TX.length || calKeys() !== [copy.guid, orig.guid].sort().join()) fail(`asılda BAĞLA / kalibrasyon: ${calKeys()}\n${failLines(o4)}`);
   else ok("asılda BAĞLA: yedeğin kalibrasyonunu KULLANMADI, kendi ölçtü (kayıtlar GUID'e bağlı, adla karışmaz)");
+};
+
+scenarios.trlr_migration = async () => {
+  // M1 (inceleme #9): v1.0.0'ın TOPLA'sı eşlemenin TAMAMINI kaydediyordu → yükseltmede kayıtlı "Zoom TrLR → A3" bir kez "Sil"e
+  // çevrilir; kullanıcı sonra A3'ü seçerse o seçim kalır (yeniden çevrilmez)
+  setupSync(sep23());
+  lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom Tr1": 0, "Zoom Tr2": 1, "Zoom TrLR": 2, DJI: 3 }));
+  await scan();
+  if (selectOf("Zoom TrLR")?.value !== "sil" || lsStore.get("spread.sourceMap.v11") !== "1" || !/"Zoom TrLR":"sil"/.test(lsStore.get("spread.sourceMap.v1") ?? ""))
+    fail(`geçiş: TrLR=${selectOf("Zoom TrLR")?.value}, bayrak=${lsStore.get("spread.sourceMap.v11")}, kayıt=${lsStore.get("spread.sourceMap.v1")}`);
+  else ok("yükseltme: v1.0.0'dan kalan 'Zoom TrLR → A3' bir kez 'Sil'e çevrildi (günlükte not)");
+  await setMap("Zoom TrLR", 2);
+  await scan();
+  if (selectOf("Zoom TrLR")?.value !== "2") fail(`geçişten sonra kullanıcı seçimi korunmadı: ${selectOf("Zoom TrLR")?.value}`);
+  else ok("geçişten sonra kullanıcının 'Zoom TrLR → A3' seçimi kalıcı (yeniden çevrilmez)");
+  lsStore.clear();
 };
 
 scenarios.helper_persist = async () => {
@@ -1899,6 +1993,7 @@ scenarios.sep23 = async () => {
   const spec = sep23();
   setupSync(spec);
   lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": 2 })); // v1.1.0: TrLR varsayılanı "Sil" — bu senaryo TrLR'yi A3'e eşleyen kullanıcıyı sınar
+  lsStore.set("spread.sourceMap.v11", "1"); // v1.1.0 geçişi yapılmış: kullanıcı TrLR'yi bilerek A3'e eşlemiş
   let q = "";
   const out = await clickAndWait("btn-collect", async (x) => ((q = x), yes()), doneRe);
   if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + out.split("\n").filter((l) => /DURDU|•|HATA|ÇAKIŞMA|AYRIL|SIRA/.test(l)).join("\n"));
@@ -2072,6 +2167,7 @@ scenarios.sync = async () => {
   const spec = syncDataset();
   setupSync(spec);
   lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": 2 })); // v1.1.0: TrLR varsayılanı "Sil" — bu senaryo TrLR'yi A3'e eşleyen kullanıcıyı sınar
+  lsStore.set("spread.sourceMap.v11", "1"); // v1.1.0 geçişi yapılmış: kullanıcı TrLR'yi bilerek A3'e eşlemiş
   const out = await clickAndWait("btn-collect", yes, doneRe);
   if (!/✓ TOPLA tamam/.test(out)) return fail("TOPLA tamamlanmadı:\n" + out.split("\n").filter((l) => /DURDU|•|HATA|ÇAKIŞMA/.test(l)).join("\n"));
   const pre = JSON.parse(JSON.stringify(undoStack[0]), rev).sequences.find((x) => x.guid === "guid-main-edit");

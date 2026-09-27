@@ -36,7 +36,7 @@ import {
 } from "./src/ui";
 
 let busy = false;
-const ACTIONS = ["btn-spread", "btn-collect", "btn-bind", "btn-status", "btn-channels", "rerun-spread", "rerun-topla", "rerun-bagla"];
+const ACTIONS = ["btn-spread", "btn-collect", "btn-bind", "btn-status", "btn-channels", "rerun-spread", "rerun-topla", "rerun-bagla", "man-spread", "man-topla", "man-bagla"];
 let lastSeqGuid: string | null = null; // kaynak eşlemesi en son bu sequence için tarandı
 let activeGuid: string | null = null; // adım göstergesi (şu an aktif sequence; yoksa null)
 let opGuid: string | null = null; // işlemin başladığı sequence (adım sonucu ona yazılır)
@@ -128,7 +128,7 @@ async function exclusive(label: string, fn: () => Promise<void>): Promise<void> 
     await fn();
   } catch (e) {
     log(`Beklenmeyen hata: ${errText(e)}`, "err");
-    opEnd("err", `${label}: beklenmeyen hata.`, "Sorun bildir'e bas ve raporu gönder.", [errText(e)]);
+    opEnd("err", `${({ SPREAD: "Dağıt", TOPLA: "Topla", BAĞLA: "Bağla" } as Record<string, string>)[label] ?? label}: beklenmeyen hata.`, "Sorun bildir'e bas ve raporu gönder.", [errText(e)]);
   } finally {
     busy = false; // önce kilit (gösterge hata verse de panel kilitli kalmasın)
     opFinish();
@@ -250,6 +250,11 @@ function init(): void {
   for (const id of ["spread", "topla", "bagla"] as StepId[]) {
     on(`name-${id}`, () => toggleRerun(id));
     on(`rerun-${id}`, actions[id]);
+    // ⚙ Ayarlar ▸ "Adımı elle çalıştır": adım işaretleri yanlışsa (ör. başka makine, silinmiş panel verisi) her adıma yol (inceleme #9, M5)
+    on(`man-${id}`, () => {
+      showSettings(false);
+      actions[id]();
+    });
   }
   on("btn-settings", () => showSettings(true));
   on("btn-back", () => showSettings(false));

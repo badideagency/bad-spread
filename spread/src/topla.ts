@@ -302,7 +302,7 @@ export async function runCollect(): Promise<void> {
       throw new SpreadStop(`Yeni düzende ${plan.conflicts.length} çakışma var — TOPLA BAŞLAMADI, hiçbir şey değişmedi.`, plan.conflicts);
     if (!plan.moves.length && !drop.length) {
       // hiçbir şey taşınmadı → kayıt bugünkü ayarla yenilenir (kesimsiz BAĞLA'nın kaydı durur)
-      saveRecord(record(bs === "applied" ? rec!.bind : null));
+      saveRecord(record(bs === "applied" || bs === "thinned" ? rec!.bind : null));
       saveMapping(mapping);
       log("✓ Zaten toplanmış: oturumlar sırayla, klipler cihaz / kaynak track'lerinde. Yapılacak bir şey yok.", "ok");
       log(CHECK_MSG, "head");
@@ -316,7 +316,7 @@ export async function runCollect(): Promise<void> {
     if (unknown.length) extra.push(`Dokunulmayan öğeler (yerinde kalır): ${unknown.map((x) => where(x.clip)).join(", ")}`);
     if (keep.size) extra.push(`Önceki TOPLA'dan park'ta: ${keep.size} klip (oturumlara karışmaz; zamanı değişmez, çerçeve büyüdüyse park track'i değişir).`);
     if (userParked.length) extra.push(`Senin kararınla park'a: ${userParked.length} klip (şüpheli üye).`);
-    if (bs === "applied") extra.push("DİKKAT: bu sequence BAĞLA'dan geçti (kesimsiz) — taşınan kliplerin bağları çözülür (clone); TOPLA'dan sonra BAĞLA'ya tekrar bas.");
+    if (bs === "applied" || bs === "thinned") extra.push("DİKKAT: bu sequence BAĞLA'dan geçti (kesimsiz) — taşınan kliplerin bağları çözülür (clone); TOPLA'dan sonra BAĞLA'ya tekrar bas.");
     // onay penceresinin özeti (yalnız görünüm; tam metin "Ayrıntı ▸" altında)
     const nS = plan.layouts.length;
     const notes = [
@@ -326,9 +326,9 @@ export async function runCollect(): Promise<void> {
     const summary: string[] = plan.moves.length
       ? [
           `${nS} oturum çekim sırasıyla sequence başından dizilecek; ${plan.moves.length} klip taşınacak (oturum içi konumlar korunur).`,
-          ...(dups.length ? [`ÇİFT KOPYA: ${drop.length} fazla kopya ilk adımda silinecek (${dups.map((d) => d.drop.map((c) => trackLabel(c.kind, c.track)).join("+")).join(", ")}).`] : []),
+          ...(dups.length ? [`ÇİFT KOPYA: ${drop.length} fazla kopya ilk adımda silinecek (hangileri: günlükte).`] : []),
           ...(a.vetoDecisions.length ? [`${a.vetoDecisions[0]}${a.vetoDecisions.length > 1 ? ` (+${a.vetoDecisions.length - 1} VETO daha)` : ""}`] : []),
-          ...(bs === "applied" ? ["DİKKAT: bu sequence BAĞLA'dan geçti — TOPLA'dan sonra BAĞLA'ya tekrar bas."] : []),
+          ...(bs === "applied" || bs === "thinned" ? ["DİKKAT: bu sequence BAĞLA'dan geçti — TOPLA'dan sonra BAĞLA'ya tekrar bas."] : []),
           ...(notes.length ? [`Not: ${notes.join("; ")}.`] : []),
           `Önce yedek sequence alınır ("${ctx.name}" kopyası)${newV + newA ? `; ${newV + newA} track açılır` : ""}. Devam?`,
         ]
@@ -372,8 +372,8 @@ export async function runCollect(): Promise<void> {
       prev = s;
     }
     if (!plan.moves.length) {
-      forgetStopped();
-      saveRecord(record(bs === "applied" ? rec!.bind : null));
+      forgetStopped(ctx.guid);
+      saveRecord(record(bs === "applied" || bs === "thinned" ? rec!.bind : null));
       saveMapping(mapping);
       log(`✓ TOPLA tamam: ${drop.length} çift kopya silindi; düzen zaten toplanmıştı. (${executed.length} adım: ${executed.join(", ")})`, "ok");
       log(CHECK_MSG, "head");
@@ -488,7 +488,7 @@ export async function runCollect(): Promise<void> {
     );
     for (const l of plan.layouts) log(`   ${l.session.id}: ${secOf(l.newStart)}s–${secOf(l.newEnd)}s  ${l.session.label}`, "dim");
     for (const r of plan.parkedRecs) log(`   park: ${r.label} (${trackLabel(r.clips[0].kind, plan.placements.find((p) => p.x.clip === r.clips[0])!.track)}, zamanı aynı)`, "dim");
-    forgetStopped();
+    forgetStopped(ctx.guid);
     saveRecord(record(null));
     saveMapping(mapping);
     log(CHECK_MSG, "head");
