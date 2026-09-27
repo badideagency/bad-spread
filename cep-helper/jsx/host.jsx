@@ -1,7 +1,8 @@
 // Spread Helper — ExtendScript tarafı (Premiere Pro). ES3: JSON / Array.indexOf / forEach YOK (bu dosya `npm run check:jsx` ile
 // ES3 olarak ayrıştırılır). Dışarıya açık fonksiyonlar: spreadHelper_ping(), spreadHelper_read() (salt okuma: aktif sequence'ın
 // klipleri — yardımcı paneldeki BAĞLA grupları düzenden bulur), spreadHelper_channels(req) (v1.1.0, salt okuma: seslerin kanal tipi),
-// spreadHelper_link(req), spreadHelper_persist(id) (v1.1.0: panel arka sekmedeyken bellekte kalsın).
+// spreadHelper_link(req), spreadHelper_persist(id) (v1.1.0: panel arka sekmedeyken bellekte kalsın); v1.2.0 güncelleme sonrası yeniden
+// başlatma: spreadHelper_projects(), spreadHelper_saveProjects(), spreadHelper_quit().
 // Her Premiere DOM çağrısının yanında "docs:" yorumu = Premiere Pro Scripting Guide (https://ppro-scripting.docsforadobe.dev/,
 // kaynağı github.com/docsforadobe/premiere-scripting-guide) sayfası; kılavuzda OLMAYAN tek üye getLinkedItems() için Adobe'nin
 // PProPanel örneğindeki tip tanımı. `npm run check:jsx` her DOM üyesinin yanında bu yorumun olduğunu denetler.
@@ -14,7 +15,7 @@
 // Bağlama: seçimi temizle → grubun kliplerini setSelected(true, true) → seçimi say → Sequence.linkSelection() → seçimi temizle →
 // her klibin getLinkedItems() sonucu gruptaki diğer bütün klipleri içeriyor mu (doğrulama).
 
-var SPREAD_HELPER_JSX = "1.1.0";
+var SPREAD_HELPER_JSX = "1.2.0";
 
 function spreadHelper_q(s) {
   var out = "\"";
@@ -81,6 +82,77 @@ function spreadHelper_persist(id) {
     // dönüş: belge "true if successful", Adobe PProPanel tip dosyası "void" → istisna yoksa istek iletildi sayılır
     var r = app.setExtensionPersistent(String(id), 1); // docs: https://ppro-scripting.docsforadobe.dev/application/application/#appsetextensionpersistent
     return spreadHelper_json({ ok: true, result: r === false ? false : true });
+  } catch (e) {
+    return spreadHelper_err(e);
+  }
+}
+
+/**
+ * v1.2.0 - acik projeler (Premiere yeniden baslatilmadan once kaydedilip DOGRULANACAKLAR). Collection 0 ya da 1 tabanli olabilir
+ * (belge / ornek celiskisi, yukarida) -> 0..n taranir, documentID ile tekillestirilir.
+ */
+function spreadHelper_openProjects() {
+  var out = [];
+  var seen = {};
+  var ps = app.projects; // docs: https://ppro-scripting.docsforadobe.dev/application/application/#appprojects
+  var n = ps.numProjects; // docs: https://ppro-scripting.docsforadobe.dev/collection/projectcollection/#projectcollectionnumprojects
+  for (var i = 0; i <= n; i++) {
+    var p = ps[i];
+    if (!p) continue;
+    var id = String(p.documentID); // docs: https://ppro-scripting.docsforadobe.dev/general/project/#projectdocumentid
+    if (seen[id]) continue;
+    seen[id] = true;
+    out.push(p);
+  }
+  return out;
+}
+
+/** v1.2.0 - acik projelerin adi ve yolu (yol bos = proje hic kaydedilmemis: yardimci o zaman Premiere'i KAPATMAZ). */
+function spreadHelper_projects() {
+  try {
+    var ps = spreadHelper_openProjects();
+    var rows = [];
+    for (var i = 0; i < ps.length; i++) {
+      // docs: https://ppro-scripting.docsforadobe.dev/general/project/#projectname
+      var nm = String(ps[i].name);
+      rows.push({ name: nm, path: String(ps[i].path || "") }); // docs: https://ppro-scripting.docsforadobe.dev/general/project/#projectpath
+    }
+    var act = app.project; // docs: https://ppro-scripting.docsforadobe.dev/application/application/#appproject
+    return spreadHelper_json({ ok: true, projects: rows, active: act ? String(act.path || "") : "" }); // docs: https://ppro-scripting.docsforadobe.dev/general/project/#projectpath
+  } catch (e) {
+    return spreadHelper_err(e);
+  }
+}
+
+/**
+ * v1.2.0 - acik projelerin HEPSINI kaydeder. Belge: save() "Returns 0 if successful" -> 0 disinda bir sayi ya da false = kaydedilmedi
+ * (DUR). Donus belgesiz bir deger (undefined / true) ise yardimci dosyanin degisme zamanindan dogrular.
+ */
+function spreadHelper_saveProjects() {
+  try {
+    var ps = spreadHelper_openProjects();
+    var saved = [];
+    for (var i = 0; i < ps.length; i++) {
+      var r = ps[i].save(); // docs: https://ppro-scripting.docsforadobe.dev/general/project/#projectsave
+      // docs: https://ppro-scripting.docsforadobe.dev/general/project/#projectpath
+      if (r === false || (typeof r === "number" && r !== 0)) return spreadHelper_json({ ok: false, error: "save() " + String(r) + " dondu: " + String(ps[i].path) });
+      saved.push(String(ps[i].path || "")); // docs: https://ppro-scripting.docsforadobe.dev/general/project/#projectpath
+    }
+    var act = app.project; // docs: https://ppro-scripting.docsforadobe.dev/application/application/#appproject
+    return spreadHelper_json({ ok: true, saved: saved, active: act ? String(act.path || "") : "" }); // docs: https://ppro-scripting.docsforadobe.dev/general/project/#projectpath
+  } catch (e) {
+    return spreadHelper_err(e);
+  }
+}
+
+/**
+ * v1.2.0 - Premiere'i kapatir. Yalniz yardimci projeleri kaydedip dosyalarin yazildigini dogruladiktan SONRA cagirir. Belge: "user
+ * will be prompted to save any changes" -> arada degisen bir sey kalsa da Premiere kaydetmeyi sorar, sessizce kaybetmez.
+ */
+function spreadHelper_quit() {
+  try {
+    app.quit(); // docs: https://ppro-scripting.docsforadobe.dev/application/application/#appquit
+    return spreadHelper_json({ ok: true });
   } catch (e) {
     return spreadHelper_err(e);
   }

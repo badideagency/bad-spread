@@ -3,8 +3,8 @@
 // onay: başlık + en çok 3 satır + [Vazgeç] [Devam]; günlük, Durum raporu, eşik, boşluk, kaynak eşleme "⚙ Ayarlar" görünümünde.
 // YALNIZ görünüm: hiçbir karar burada verilmez. Ayrıntılı günlük (#log, Ayarlar'da) her zaman yazılır ve arka plan günlüğüne
 // (journal.ts: bellek + dosya) düşer → "Sorun bildir" raporu. Ana ekranda teknik terim yok (tick, transaction, track index…).
-// Tema: Spectrum UXP bileşenleri (sp-*) Premiere temasını kendileri izler; burada renk VERİLMEZ (tek istisna: hata satırı kırmızı,
-// index.html). UXP'nin --uxp-host-* CSS değişkenleri Premiere'de desteklenmiyor (Adobe uxp-premiere-pro css-styling belgesi).
+// Tema (v1.2.0): BadIdea tasarım dili, sabit koyu tema — renkler yalnız index.html'deki tokenlarda; burada renk VERİLMEZ. Spectrum
+// bileşeni yok (sabit koyu zeminde Premiere'in açık temasında açık renge dönerlerdi); düğmeler odaklanabilir <div>.
 // DOM: yalnız getElementById / createElement / appendChild / textContent / className / style / set/removeAttribute (UXP'de hepsi var).
 
 import { beginOp, currentOpLines, endOp, noteError, record } from "./journal";
@@ -173,7 +173,7 @@ export function ask(question: string, summary?: string[], opts: AskOptions = {})
   const sum = maybe("ask-summary");
   if (sum) {
     clear(sum);
-    for (const l of dialogBody(summary && summary.length ? summary : autoSummary(question))) addLine(sum, l, "sp-body", ATTENTION.test(l) ? "attn" : "");
+    for (const l of dialogBody(summary && summary.length ? summary : autoSummary(question))) addLine(sum, l, "div", ATTENTION.test(l) ? "line attn" : "line");
   }
   show("progress", false);
   show("result", false);
@@ -229,7 +229,26 @@ export function setHelperStatus(ok: boolean, detail: string): void {
   show("helperline", !ok);
 }
 
-// ------------------------------------------------------------------ adımlar: ① Dağıt ✓ / ② Topla [Topla] / ③ Bağla
+// ------------------------------------------------------------------ güncelleme şeridi (v1.2.0; TEK vurgu: krem dolgu)
+
+/**
+ * Üstte ince şerit: yeni sürüm varsa "Yeni sürüm 1.x.x · Güncelle"; yardımcı kapalıysa (güncellemeyi o yapar) "… · Güncellemek için
+ * Spread Helper açık olmalı" (vurgusuz, tıklanmaz). null → gizli.
+ */
+export function setUpdateStrip(v: { version: string; helperOk: boolean } | null): void {
+  const s = maybe("update-strip");
+  if (!s) return;
+  if (!v) {
+    s.style.display = "none";
+    return;
+  }
+  s.textContent = v.helperOk ? `Yeni sürüm ${v.version} · Güncelle` : `Yeni sürüm ${v.version} · Güncellemek için Spread Helper açık olmalı`;
+  s.className = v.helperOk ? "" : "wait";
+  s.setAttribute("title", v.helperOk ? "Notları gör ve güncelle" : "Window › Extensions (Legacy) › Spread Helper panelini aç");
+  s.style.display = "block";
+}
+
+// ------------------------------------------------------------------ adımlar: (1) Dağıt ✓ / (2) Topla [Topla] / (3) Bağla
 
 export interface StepView {
   state: "todo" | "done" | "warn";
@@ -260,7 +279,7 @@ export function renderSteps(steps: Record<StepId, StepView>, next: StepId | null
     if (b) b.style.display = next === id ? "" : "none";
     const canRerun = v.state !== "todo" && next !== id;
     if (!canRerun) rerunOpen.delete(id);
-    show(`rerun-${id}`, canRerun && rerunOpen.has(id));
+    show(`rerun-${id}`, canRerun && rerunOpen.has(id), "flex");
   });
   show("sync-hint", steps.spread.state === "done" && steps.topla.state === "todo");
 }
@@ -307,7 +326,7 @@ export function progress(frac: number, text: string): void {
   try {
     show("progress", !isAsking());
     const bar = maybe("progress-bar");
-    if (bar) bar.setAttribute("value", String(Math.round(Math.max(0.02, Math.min(1, frac)) * 100)));
+    if (bar) bar.style.width = `${Math.round(Math.max(0.02, Math.min(1, frac)) * 100)}%`;
     setText("progress-text", text);
   } catch {
     /* gösterge yoksa geç */

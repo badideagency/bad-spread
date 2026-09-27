@@ -24,6 +24,10 @@ const PING_TIMEOUT_MS = 3000;
 const LINK_BATCH = 8;
 // v1.1.0: yardımcı bir partiyi reddedilince bir kez daha dener (iki ExtendScript çağrısı, her biri en çok 170 sn) → istemci bekler
 const LINK_TIMEOUT_MS = 360000;
+/** v1.2.0: indirme + Adobe kurucusu (yardımcı UPIA'ya en çok 5 dk tanır) */
+const UPDATE_TIMEOUT_MS = 420000;
+/** v1.2.0: projeleri kaydetme (yardımcı en çok 2 dk) */
+const RESTART_TIMEOUT_MS = 180000;
 /** Yardımcının (cep-helper/js/helper.js) kabul ettiği sınırlar — iki dosyada AYNI olmalı. BAĞLA planı kesmeden ÖNCE denetler. */
 export const LINK_LIMITS = { groupItems: 256, groupsPerRequest: 64, name: 1024, sequenceName: 512 };
 
@@ -82,9 +86,27 @@ export interface LinkOutcome {
   detail: string;
 }
 
+/** v1.2.0: yardımcının kurduğu güncelleme (paneli Adobe'nin kurucusu kuramadıysa "manual": .ccx Creative Cloud'da açıldı). */
+export interface UpdateOutcome {
+  version: string;
+  panel: "installed" | "manual";
+  backup: string;
+  ccx?: string;
+  why?: string;
+}
+
 export interface Linker {
   readonly name: string;
   ping(): Promise<PingResult>;
+  /**
+   * v1.2.0: güncellemeyi yardımcıya yaptırır — yardımcı latest.json'u kendisi okur, indirir, sha256'yı doğrular, yedekleyip kurar.
+   * Gövdede yalnız beklenen sürüm ve panelin sürümü gider. Hata fırlatır (eski sürüm yerinde kalır).
+   */
+  update(version: string): Promise<UpdateOutcome>;
+  /** v1.2.0: açık projeler kaydedilip doğrulanırsa Premiere'i yeniden başlatır; doğrulanamazsa hata fırlatır (Premiere kapanmaz). */
+  restart(): Promise<{ project: string }>;
+  /** v1.2.0 ↻: yardımcıya panelini yeniden yüklemesini söyler (sunucu kısa süre kapanır). Ulaşılamazsa false. */
+  reloadHelper(): Promise<boolean>;
   /** @param sequenceName aktif olması beklenen sequence (yardımcı başka sequence'ta hiçbir şey yapmaz) */
   link(sequenceName: string, groups: LinkGroup[]): Promise<LinkOutcome>;
   /** v1.1.0: ses kliplerinin kanal tipleri (salt okuma; onaydaki "mono + stereo karışık" uyarısı için). Hata fırlatmaz. */
@@ -119,6 +141,22 @@ export function helperPlanPath(platform: string, home: string): string {
 /** Yardımcı paneldeki BAĞLA'nın sonucu (yardımcı: resultPath ile AYNI kural). */
 export function helperResultPath(platform: string, home: string): string {
   return helperInfoPath(platform, home).replace(/helper\.json$/, "link-result.json");
+}
+
+/** v1.2.0: yardımcının güncelleme günlüğü (updater.js update.log; bilgi dosyasıyla aynı klasör) — Sorun bildir raporu için. */
+export function readUpdateLog(maxLines = 120): string[] {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require("os") as UxpOs;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs") as UxpFs;
+    const p = helperInfoPath(os.platform(), os.homedir()).replace(/helper\.json$/, "update.log"); // uxp.d.ts:L9198 OS.platform, uxp.d.ts:L9232 OS.homedir
+    const r = fs.readFileSync(p, { encoding: "utf-8" }); // uxp.d.ts:L8985 fs.readFileSync
+    const lines = (typeof r === "string" ? r : "").split(/\r?\n/).filter((l) => l.trim());
+    return lines.slice(-maxLines);
+  } catch {
+    return [];
+  }
 }
 
 export interface PanelLinkResult {
@@ -302,6 +340,31 @@ class CepLinker implements Linker {
       return { ok: true, helper, premiere, sequence, detail: `bağlı (yardımcı ${helper}, Premiere ${premiere})` };
     } catch (e) {
       return { ok: false, detail: e instanceof HelperError ? `[${e.stage}] ${e.message}` : raw(e) };
+    }
+  }
+
+  async update(version: string): Promise<UpdateOutcome> {
+    const j = await post("/v1/update", { version, panel: SPREAD_VERSION }, UPDATE_TIMEOUT_MS);
+    return {
+      version: String(j.version ?? version),
+      panel: j.panel === "installed" ? "installed" : "manual",
+      backup: String(j.backup ?? ""),
+      ...(typeof j.ccx === "string" ? { ccx: j.ccx } : {}),
+      ...(typeof j.why === "string" ? { why: j.why } : {}),
+    };
+  }
+
+  async restart(): Promise<{ project: string }> {
+    const j = await post("/v1/restart", {}, RESTART_TIMEOUT_MS);
+    return { project: String(j.project ?? "") };
+  }
+
+  async reloadHelper(): Promise<boolean> {
+    try {
+      await post("/v1/reload", {}, PING_TIMEOUT_MS);
+      return true;
+    } catch {
+      return false;
     }
   }
 

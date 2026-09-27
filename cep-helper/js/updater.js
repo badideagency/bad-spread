@@ -165,40 +165,74 @@
     return by;
   }
 
-  // ------------------------------------------------------------------ yeniden başlatıcı (Windows, bağımsız süreç)
+  // ------------------------------------------------------------------ yeniden başlatıcı (Windows, ayrı süreç)
   /**
-   * restart-spread.cmd — yalnız ASCII, CRLF. Argümanlar: 1 Premiere.exe tam yolu, 2 süreç adı (ör. "Adobe Premiere Pro.exe"),
-   * 3 açılacak proje (boş olabilir), 4 günlük dosyası. Premiere'in kapanmasını en çok ~5 dk bekler (1 sn aralık); kapanmazsa
-   * HİÇBİR ŞEY açmaz (ikinci Premiere yok). Bekleme: tasklist süzgeci + find; uyku: ping (timeout /t konsol ister).
+   * restart-spread.cmd — yalnız ASCII, CRLF. Girdiler YALNIZ ortam değişkenlerinden (Unicode / boşluk / "( ) &" içeren yollar
+   * komut satırında bozulmasın): SPREAD_IMG süreç adı (Premiere.exe yolunun son parçası), SPREAD_EXE Premiere.exe tam yolu,
+   * SPREAD_PRJ açılacak proje (boş olabilir), SPREAD_LOG günlük, SPREAD_MAX en çok kaç yoklama (1 sn arayla).
+   * Bekleme: "tasklist /NH | find /I" — 0 = çalışıyor, 1 = kapandı, 2 = HATA (hata ya da süre dolması → HİÇBİR ŞEY açılmaz: ikinci
+   * Premiere yok). Uyku: ping (timeout /t yönlendirilmiş girdide belgesiz). Tasarım Wine'da sınandı (scripts/test-restarter-wine.sh).
    */
   var RESTART_CMD = [
     "@echo off",
+    "setlocal EnableExtensions DisableDelayedExpansion",
     "rem Spread Helper - Premiere yeniden baslatici (v1.2.0). Premiere kapaninca ayni projeyle yeniden acar.",
-    "setlocal",
-    'set "EXE=%~1"',
-    'set "IMG=%~2"',
-    'set "PROJ=%~3"',
-    'set "LOG=%~4"',
+    'if not defined SPREAD_MAX set "SPREAD_MAX=300"',
     "set /a N=0",
-    '>>"%LOG%" echo %date% %time% baslatici: "%IMG%" kapanmasi bekleniyor',
+    '>>"%SPREAD_LOG%" echo %date% %time% baslatici: "%SPREAD_IMG%" kapanmasi bekleniyor',
     ":wait",
-    'tasklist /FI "IMAGENAME eq %IMG%" /NH 2>nul | find /I "%IMG%" >nul',
-    "if errorlevel 1 goto :start",
+    'tasklist /NH 2>nul | find /I "%SPREAD_IMG%" >nul',
+    "if errorlevel 2 goto :err",
+    "if errorlevel 1 goto :gone",
     "set /a N+=1",
-    "if %N% GEQ 300 goto :giveup",
+    "if %N% geq %SPREAD_MAX% goto :late",
     "ping -n 2 127.0.0.1 >nul",
     "goto :wait",
-    ":start",
-    "rem Premiere kapandiktan sonra dosyalar serbest kalsin",
-    "ping -n 3 127.0.0.1 >nul",
-    'if "%PROJ%"=="" (start "" "%EXE%") else (start "" "%EXE%" "%PROJ%")',
-    '>>"%LOG%" echo %date% %time% baslatici: Premiere yeniden acildi',
+    ":gone",
+    "rem Premiere kapandi; dosyalar serbest kalsin",
+    "ping -n 4 127.0.0.1 >nul",
+    'if not exist "%SPREAD_EXE%" goto :noexe',
+    'if defined SPREAD_PRJ if exist "%SPREAD_PRJ%" goto :withprj',
+    'start "" "%SPREAD_EXE%"',
+    "goto :started",
+    ":withprj",
+    'start "" "%SPREAD_EXE%" "%SPREAD_PRJ%"',
+    ":started",
+    '>>"%SPREAD_LOG%" echo %date% %time% baslatici: Premiere yeniden acildi',
     "exit /b 0",
-    ":giveup",
-    '>>"%LOG%" echo %date% %time% baslatici: Premiere 5 dakikada kapanmadi - hicbir sey acilmadi',
-    "exit /b 1",
+    ":late",
+    '>>"%SPREAD_LOG%" echo %date% %time% baslatici: Premiere %SPREAD_MAX% sn icinde kapanmadi - hicbir sey acilmadi',
+    "exit /b 2",
+    ":err",
+    '>>"%SPREAD_LOG%" echo %date% %time% baslatici: surec listesi okunamadi - hicbir sey acilmadi',
+    "exit /b 3",
+    ":noexe",
+    '>>"%SPREAD_LOG%" echo %date% %time% baslatici: Premiere.exe bulunamadi - hicbir sey acilmadi',
+    "exit /b 4",
     "",
   ].join("\r\n");
+
+  /**
+   * Yeniden başlatıcıyı başlatır. Neden bu biçim (kaynaklar handoff.md'de): Node'un "detached" seçeneği konsolsuz süreç açar →
+   * içindeki her tasklist / ping yeni bir konsol penceresi açar ve Wine sınamasında süreç listesi okunamayınca İKİNCİ Premiere açıldı.
+   * `cmd /c start "" /b cmd /c call …` ile açılan torun süreç, CEP motoru kapanınca öldürülen iş nesnesinden (job) çıkar (libuv
+   * win/process.c; Wine'da sınandı). Değerler yalnız ortam değişkeniyle geçer (windowsVerbatimArguments: komut satırı sabit).
+   */
+  function restarterSpawnArgs(comspec, cmdPath, vars, baseEnv) {
+    var env = {};
+    Object.keys(baseEnv || {}).forEach(function (k) {
+      env[k] = baseEnv[k];
+    });
+    Object.keys(vars).forEach(function (k) {
+      env[k] = vars[k];
+    });
+    env.SPREAD_RESTARTER = cmdPath;
+    return {
+      cmd: comspec,
+      args: ["/d", "/c", 'start "" /b cmd /d /c call "%SPREAD_RESTARTER%"'],
+      opts: { stdio: "ignore", windowsHide: true, windowsVerbatimArguments: true, env: env },
+    };
+  }
 
   /**
    * @param deps { https, crypto, zlib, fs, path, os, childProcess, env, jsx(script, timeoutMs) → Promise<obj>, log(line),
@@ -298,6 +332,13 @@
       deps.fs.mkdirSync(deps.path.dirname(p), { recursive: true });
       deps.fs.writeFileSync(p, data);
     }
+    /** Önce yanına ".new", sonra üstüne taşı (fs.rename Windows'ta var olanın yerine geçer; yarım yazılmış dosya kalmaz). */
+    function replaceFile(root, rel, data) {
+      var p = deps.path.join.apply(null, [root].concat(rel.split("/")));
+      deps.fs.mkdirSync(deps.path.dirname(p), { recursive: true });
+      deps.fs.writeFileSync(p + ".new", data);
+      deps.fs.renameSync(p + ".new", p);
+    }
 
     /** Yardımcı klasörünü yedekler, yeni dosyaları yazar; yarıda kalırsa yedeği geri yükler. */
     function installHelper(by, version) {
@@ -319,7 +360,7 @@
         names.forEach(function (n) {
           var rel = n.slice("SpreadHelper/".length);
           if (deps.faultAfter !== undefined && written.length >= deps.faultAfter) throw new Error("sınama: yazma hatası");
-          writeFile(ext, rel, by[n]);
+          replaceFile(ext, rel, by[n]);
           written.push(rel);
         });
       } catch (e) {
@@ -328,7 +369,25 @@
         throw fail("helper", "yardımcı dosyaları yazılamadı: " + e.message + " — eski sürüm geri yüklendi");
       }
       ulog("yardımcı " + version + " yazıldı (" + written.length + " dosya)");
+      pruneBackups(3);
       return { backup: backup, files: written.length, old: old, written: written };
+    }
+
+    /** En yeni `keep` yedek kalır (adlar zaman damgalı → alfabetik sıra = zaman sırası). */
+    function pruneBackups(keep) {
+      try {
+        var root = deps.path.join(deps.dataDir, "yedek");
+        var dirs = deps.fs.readdirSync(root).filter(function (n) {
+          return /^helper-/.test(n);
+        });
+        dirs.sort();
+        dirs.slice(0, Math.max(0, dirs.length - keep)).forEach(function (n) {
+          deps.fs.rmSync(deps.path.join(root, n), { recursive: true, force: true });
+          ulog("eski yedek silindi: " + n);
+        });
+      } catch (e) {
+        /* temizlenemezse sorun değil */
+      }
     }
 
     function restore(ext, backup, old, written) {
@@ -339,6 +398,11 @@
         .filter(function (rel) {
           return old.indexOf(rel) < 0;
         })
+        .concat(
+          written.map(function (rel) {
+            return rel + ".new";
+          })
+        )
         .forEach(function (rel) {
           try {
             deps.fs.unlinkSync(deps.path.join.apply(null, [ext].concat(rel.split("/"))));
@@ -349,11 +413,14 @@
       ulog("yedek geri yüklendi: " + backup);
     }
 
+    /** KUR.cmd'deki sıra: %CommonProgramW6432%, %CommonProgramFiles%, C:\Program Files\Common Files (sınama: deps.upiaCandidates). */
     function findUpia() {
       var env = deps.env || {};
-      var cands = [env.CommonProgramW6432, env.CommonProgramFiles, "C:\\Program Files\\Common Files"].filter(Boolean);
+      var cands = deps.upiaCandidates || [env.CommonProgramW6432, env.CommonProgramFiles, "C:\\Program Files\\Common Files"].filter(Boolean).map(function (c) {
+        return c + "\\" + UPIA_REL;
+      });
       for (var i = 0; i < cands.length; i++) {
-        var p = cands[i] + "\\" + UPIA_REL;
+        var p = cands[i];
         try {
           if (deps.fs.statSync(p).isFile()) return p;
         } catch (e) {
@@ -363,32 +430,15 @@
       return null;
     }
 
-    /** spread.ccx → UnifiedPluginInstallerAgent /install (KUR.cmd ile aynı). Olmazsa .ccx Creative Cloud'la açılır. */
-    function installCcx(ccx, version) {
-      var dir = deps.path.join(deps.dataDir, "indirilen");
-      deps.fs.mkdirSync(dir, { recursive: true });
-      var file = deps.path.join(dir, "spread-" + version + ".ccx");
-      deps.fs.writeFileSync(file, ccx);
-      var upia = findUpia();
-      var openCcx = function (why) {
-        ulog("panel UPIA ile kurulamadı (" + why + ") — spread.ccx Creative Cloud'la açılıyor: " + file);
-        try {
-          var cp = deps.childProcess.spawn("explorer.exe", [file], { detached: true, stdio: "ignore", windowsHide: false });
-          cp.unref();
-        } catch (e) {
-          ulog(".ccx açılamadı: " + e.message);
-        }
-        return { panel: "manual", ccx: file, why: why };
-      };
-      if (!upia) return Promise.resolve(openCcx("UnifiedPluginInstallerAgent bulunamadı"));
-      ulog("panel kuruluyor: \"" + upia + "\" /install \"" + file + "\"");
+    /** UPIA'yı çalıştırır, çıktısını toplar. Hata fırlatmaz: { code, out } (başlatılamadı / zaman aşımı → code null). */
+    function runUpia(upia, args, ms) {
       return new Promise(function (resolve) {
         var out = "";
         var cp;
         try {
-          cp = deps.childProcess.spawn(upia, ["/install", file], { windowsHide: true });
+          cp = deps.childProcess.spawn(upia, args, { windowsHide: true });
         } catch (e) {
-          return resolve(openCcx("başlatılamadı: " + e.message));
+          return resolve({ code: null, out: "başlatılamadı: " + e.message });
         }
         var t = setTimeout(function () {
           try {
@@ -396,22 +446,72 @@
           } catch (e) {
             /* geç */
           }
-          resolve(openCcx("5 dakikada bitmedi"));
-        }, 5 * 60 * 1000);
+          resolve({ code: null, out: out + " (" + ms / 1000 + " sn içinde bitmedi)" });
+        }, ms);
         var collect = function (d) {
           out += String(d);
-          if (out.length > 4000) out = out.slice(-4000);
+          if (out.length > 8000) out = out.slice(-8000);
         };
         if (cp.stdout) cp.stdout.on("data", collect);
         if (cp.stderr) cp.stderr.on("data", collect);
         cp.on("error", function (e) {
           clearTimeout(t);
-          resolve(openCcx("hata: " + e.message));
+          resolve({ code: null, out: "hata: " + e.message });
         });
         cp.on("close", function (code) {
           clearTimeout(t);
-          ulog("UPIA çıkış kodu " + code + (out.trim() ? " — " + out.trim().replace(/\s+/g, " ").slice(0, 400) : ""));
-          resolve(code === 0 ? { panel: "installed" } : openCcx("çıkış kodu " + code));
+          resolve({ code: code, out: out });
+        });
+      });
+    }
+
+    /**
+     * spread.ccx → UnifiedPluginInstallerAgent /install (KUR.cmd ile aynı yol ve bayrak; Adobe belgesi: /install /remove /list).
+     * Çıkış kodu belgesiz ve güvenilmez (topluluk: hep 0) → kurulum "/list all" çıktısında "Spread" ve yeni sürüm AYNI satırda
+     * görülürse sayılır. Görülmezse .ccx Creative Cloud'la açılır (Adobe: .ccx'e çift tıklamak Install penceresini açar) ve
+     * kullanıcıya "Install'a bas" denir. Önceki sürüm otomatik kaldırılmaz.
+     */
+    function installCcx(ccx, version) {
+      var dir = deps.path.join(deps.dataDir, "indirilen");
+      deps.fs.mkdirSync(dir, { recursive: true });
+      var file = deps.path.join(dir, "spread-" + version + ".ccx");
+      // önceki güncellemelerin .ccx'leri silinir (yalnız bu sürümünki kalır)
+      try {
+        deps.fs.readdirSync(dir).forEach(function (n) {
+          if (/^spread-.*\.ccx$/.test(n) && n !== "spread-" + version + ".ccx") deps.fs.unlinkSync(deps.path.join(dir, n));
+        });
+      } catch (e) {
+        /* geç */
+      }
+      deps.fs.writeFileSync(file, ccx);
+      var upia = findUpia();
+      var openCcx = function (why) {
+        ulog("panel Adobe kurucusuyla kurulamadı (" + why + ") — spread.ccx Creative Cloud'la açılıyor: " + file);
+        try {
+          var cp = deps.childProcess.spawn((deps.env && deps.env.ComSpec) || "cmd.exe", ["/d", "/c", 'start "" "%SPREAD_CCX%"'], {
+            stdio: "ignore",
+            windowsHide: true,
+            windowsVerbatimArguments: true,
+            env: Object.assign({}, deps.env || {}, { SPREAD_CCX: file }),
+          });
+          if (cp && cp.unref) cp.unref();
+        } catch (e) {
+          ulog(".ccx açılamadı: " + e.message);
+        }
+        return { panel: "manual", ccx: file, why: why };
+      };
+      if (!upia) return Promise.resolve(openCcx("UnifiedPluginInstallerAgent bulunamadı"));
+      ulog("panel kuruluyor: \"" + upia + "\" /install \"" + file + "\"");
+      return runUpia(upia, ["/install", file], 5 * 60 * 1000).then(function (r1) {
+        ulog("UPIA /install çıkış kodu " + r1.code + (r1.out.trim() ? " — " + r1.out.trim().replace(/\s+/g, " ").slice(0, 400) : ""));
+        return runUpia(upia, ["/list", "all"], 60 * 1000).then(function (r2) {
+          var row = String(r2.out)
+            .split(/\r?\n/)
+            .filter(function (l) {
+              return /Spread/.test(l) && !/Spread Helper/.test(l) && l.indexOf(version) >= 0;
+            })[0];
+          ulog("UPIA /list all: " + (row ? "doğrulandı — " + row.trim().replace(/\s+/g, " ") : "\"Spread " + version + "\" satırı YOK"));
+          return row ? { panel: "installed" } : openCcx("kurulum doğrulanamadı: /install kodu " + r1.code + ", /list all'da Spread " + version + " yok");
         });
       });
     }
@@ -420,16 +520,19 @@
      * Güncelle: latest.json (yeniden, sabit adresten) → sürüm isteğe uyuyor mu → indir → sha256 → zip → paket denetimi →
      * yardımcı (yedekli) → panel (UPIA). sha256 / zip / paket denetimi düşerse HİÇBİR ŞEYE dokunulmaz.
      */
-    function update(expected, current) {
+    function update(expected, current, panel) {
       if (busy) return Promise.reject(fail("busy", "bir güncelleme zaten sürüyor"));
       busy = true;
-      ulog("başladı: istenen " + expected + ", yüklü " + current);
+      panel = panel || current;
+      ulog("başladı: istenen " + expected + ", yüklü yardımcı " + current + ", panel " + panel);
       var info;
       return latest()
         .then(function (l) {
           info = l;
           if (l.version !== expected) throw fail("latest", "yayındaki sürüm " + l.version + " (istenen " + expected + ") — panel yeniden denetlesin");
-          if (cmpVersion(l.version, current) <= 0) throw fail("latest", "yüklü sürüm (" + current + ") zaten " + l.version + " ya da yeni");
+          // yardımcı ya da panel eskiyse güncellenir (ör. panel önceki güncellemede elle kurulmamış kaldıysa)
+          if (cmpVersion(l.version, current) <= 0 && cmpVersion(l.version, panel) <= 0)
+            throw fail("latest", "yüklü sürümler (yardımcı " + current + ", panel " + panel + ") zaten " + l.version + " ya da yeni");
           ulog("indiriliyor: " + l.zip_url);
           return get(l.zip_url, MAX_ZIP, 0);
         })
@@ -502,12 +605,9 @@
           deps.fs.writeFileSync(cmd, RESTART_CMD);
           var proj = r.active || paths[0] || "";
           ulog("yeniden başlatıcı: \"" + deps.hostApp + "\" (" + img + ") → " + (proj || "(proje yok)"));
-          var cp = deps.childProcess.spawn(deps.env.ComSpec || "cmd.exe", ["/d", "/c", cmd, deps.hostApp, img, proj, logFile], {
-            detached: true,
-            stdio: "ignore",
-            windowsHide: true,
-          });
-          cp.unref();
+          var sp = restarterSpawnArgs((deps.env && deps.env.ComSpec) || "cmd.exe", cmd, { SPREAD_IMG: img, SPREAD_EXE: deps.hostApp, SPREAD_PRJ: proj, SPREAD_LOG: logFile, SPREAD_MAX: "300" }, deps.env);
+          var cp = deps.childProcess.spawn(sp.cmd, sp.args, sp.opts);
+          if (cp && cp.unref) cp.unref();
           return { ok: true, project: proj, image: img };
         });
     }
@@ -552,6 +652,7 @@
     ZIP_PREFIX: ZIP_PREFIX,
     UPDATE_REPO: UPDATE_REPO,
     RESTART_CMD: RESTART_CMD,
+    restarterSpawnArgs: restarterSpawnArgs,
     KIT_FILES: KIT_FILES,
     EXT_DIR_NAME: EXT_DIR_NAME,
   };

@@ -1,4 +1,4 @@
-SPREAD 1.1.0 — Premiere Pro için çok kameralı çekim düzenleyici
+SPREAD 1.2.0 — Premiere Pro için çok kameralı çekim düzenleyici
 ================================================================
 
 KURULUM (bir kez)
@@ -7,7 +7,7 @@ KURULUM (bir kez)
      "[ !! ]" satırı çıkarsa ya da Premiere'de menüde Spread yoksa: spread.ccx'e çift tıkla (Creative Cloud kurar).
   3. Premiere Pro'yu kapatıp yeniden aç.
   4. Window > UXP Plugins > Spread — ana panel.
-  5. Window > Extensions (Legacy) > Spread Helper — tek satırlık küçük panel ("Spread Helper çalışıyor ●").
+  5. Window > Extensions (Legacy) > Spread Helper — tek satırlık küçük panel ("Spread Helper çalışıyor ↻ ●").
      Onu Spread panelinin ARKASINA sekme olarak sürükle, sonra çalışma alanını kaydet
      (Window > Workspaces > Save as New Workspace): ekranda tek panel kalır. Yardımcı, görünmezken de açık kalması
      için Premiere'e "kalıcı" olduğunu söyler; kontrol: Spread'in üstündeki nokta yeşil kalmalı.
@@ -21,16 +21,30 @@ GÜNLÜK KULLANIM (her çekim için; sıra hep aynı)
                  Spread "Spread Helper panelinde Bağla'ya bas" derse o paneldeki Bağla düğmesine bas.
 
   - Panelde yalnız SIRADAKİ adımın düğmesi görünür. Biten adımda ✓ var; yeniden yapmak için adın üstüne tıkla → "Yeniden çalıştır".
-    Adım işaretleri yanlışsa: ⚙ Ayarlar > "Adımı elle çalıştır".
+    Adım işaretleri yanlışsa: Ayarlar > "Adımı elle çalıştır".
   - Her işlem önce kısa bir onay gösterir (en çok 3 satır). Okumadan "Devam" deme.
   - Her işlem önce yedek sequence alır.
   - Panel bir şey beklendiği gibi olmazsa DURUR: kırmızı tek satır + "Ne yapmalıyım?".
   - Bir sequence'ta ilk Bağla birkaç saniye daha sürer: panel önce Premiere'in kırpma komutlarını ölçer (düzeni değiştirmez).
   - Zoom TrLR varsayılan olarak "Sil": Premiere mono ve stereo sesleri aynı bağda kabul etmiyor
-    (1.0.0'dan yükseltmede kayıtlı TrLR seçimi bir kez "Sil"e çevrilir; istersen ⚙ Ayarlar'dan değiştir).
+    (1.0.0'dan yükseltmede kayıtlı TrLR seçimi bir kez "Sil"e çevrilir; istersen Ayarlar'dan değiştir).
     Bir grupta yine de mono + stereo varsa onayda "KARIŞIK KANAL" yazar; Premiere reddederse farklı olan
     sesler (ör. stereo kamera sesi) bağ dışında kalır — HİÇBİR KLİP SİLİNMEZ, yerinde durur.
-  - Kaynak eşleme (hangi ses hangi track'e, "Sil"), eşik ve boşluk "⚙ Ayarlar" altında. Topla'dan önce ayarla.
+  - Kaynak eşleme (hangi ses hangi track'e, "Sil"), eşik ve boşluk "Ayarlar" altında. Topla'dan önce ayarla.
+
+GÜNCELLEME (1.2.0 son elle kurulum; bundan sonrakiler panelden gelir)
+  - Spread açılışta ve 6 saatte bir yeni sürüm var mı diye bakar. Varsa panelin üstünde ince bir şerit çıkar:
+    "Yeni sürüm 1.x.x · Güncelle". Tıkla → notlar → Güncelle.
+  - Güncellemeyi Spread Helper yapar (açık olmalı): indirir, dosyanın bozulmadığını doğrular (sha256), eskisini yedekler, kurar.
+    Bir şey tutmazsa eski sürüm yerinde kalır.
+  - Sonra "Premiere yeniden başlasın mı?" diye sorar. "Yeniden başlat" derseniz önce açık projeler KAYDEDİLİR; kaydedildiği
+    doğrulanamazsa Premiere kapatılmaz. Kapanınca birkaç saniye içinde aynı projeyle yeniden açılır.
+  - Creative Cloud penceresi açılırsa (Adobe kurucusu paneli kuramadıysa) "Install"a bas.
+  - Elle denetlemek için: Ayarlar > "Güncellemeleri denetle". İnternet yoksa sessizce geçer.
+
+YENİLE (↻)
+  - Spread'in başlığındaki ↻: Spread Helper'ı ve Spread'i yeniden yükler, timeline'ı baştan okur (panel takılırsa).
+  - Spread Helper'daki ↻ yalnız onu yeniden yükler.
 
 BİR ŞEY TERS GİDERSE
   - Beğenmediğin bir sonuç: panelin yazdığı kadar Ctrl+Z bas (timeline'a tıkladıktan sonra) ya da yedek sequence'ı aç.

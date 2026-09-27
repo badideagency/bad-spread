@@ -1,6 +1,6 @@
 {
   "name": "spread-probe",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "commonjs",
   "scripts": {
@@ -22,7 +22,8 @@
     "check:core": "node scripts/check-core.mjs",
     "check:xml": "python3 scripts/check-xml.py",
     "regress:trim": "npm run build:spread && bash scripts/regress-trim.sh",
-    "package:kurulum": "bash scripts/package-kurulum.sh"
+    "package:kurulum": "bash scripts/package-kurulum.sh",
+    "publish-update": "node scripts/publish-update.mjs"
   },
   "devDependencies": {
     "@adobe/cc-ext-uxp-types": "^7.3.1",
@@ -38,5 +39,5 @@
     "typescript-eslint": "^8.70.1",
     "vite": "^8.3.1"
   },
-  "description": "Spread — Premiere Pro UXP eklentisi (Spread v1.1.0: Dağıt / Topla / Bağla) + CEP yardımcı paneli (Spread Helper v1.1.0) + API yoklama paneli (Spread Probe v0.1.1, arşiv)"
+  "description": "Spread — Premiere Pro UXP eklentisi (Spread v1.2.0: Dağıt / Topla / Bağla) + CEP yardımcı paneli (Spread Helper v1.2.0) + API yoklama paneli (Spread Probe v0.1.1, arşiv)"
 }

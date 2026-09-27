@@ -1,9 +1,9 @@
 /*
- * Spread Helper paneli v1.1.0 — yalnız ARAYÜZ. Sunucu, plan okuma ve BAĞLA mantığı js/helper.js'te (Node testleri aynı kodu çalıştırır).
- * Görünen: tek satır "Spread Helper çalışıyor ●" (hata varsa kırmızı tek satır). Köprüsüz BAĞLA yalnız Spread "yardımcı panelinden
- * bağla" dediğinde (plan.handoff === "panel", henüz bağlanmamış) tek düğme olarak çıkar. Gerisi gizli: durum satırına tıklayınca.
- * Renkler Premiere'in CEP temasından: window.__adobe_cep__.getHostEnvironment() → appSkinInfo (CSInterface.getHostEnvironment'ın alt
- * çağrısı; Adobe-CEP/CEP-Resources CSInterface.js) ve tema değişince "com.adobe.csxs.events.ThemeColorChanged".
+ * Spread Helper paneli v1.2.0 — yalnız ARAYÜZ. Sunucu, plan okuma, BAĞLA ve güncelleme mantığı js/helper.js / js/updater.js'te (Node
+ * testleri aynı kodu çalıştırır). Görünen: tek satır "Spread Helper çalışıyor ↻ ●" (hata varsa kırmızı tek satır). Köprüsüz BAĞLA
+ * yalnız Spread "yardımcı panelinden bağla" dediğinde (plan.handoff === "panel", henüz bağlanmamış) tek düğme olarak çıkar. Gerisi
+ * gizli: durum satırına tıklayınca. v1.2.0: Spread paneliyle aynı sabit koyu dil (index.html) — Premiere'in CEP temasına uyma
+ * (v1.1.0) kaldırıldı; ↻ bu paneli yeniden yükler (sunucu önce kapanır, port boşalır).
  * Dosyadan / planından gelen metinler yalnız textContent ile yazılır.
  */
 (function () {
@@ -27,27 +27,6 @@
   var busy = false;
   // durum satırında sunucu durumu yerine gösterilecek bağlama durumu ("Bağla bekliyor…" / son sonuç); null → sunucu durumu
   var bindLine = null; // { text, cls }
-
-  // ------------------------------------------------------------------ tema (CEP)
-  function applyTheme() {
-    try {
-      if (!window.__adobe_cep__ || typeof window.__adobe_cep__.getHostEnvironment !== "function") return;
-      var env = JSON.parse(window.__adobe_cep__.getHostEnvironment());
-      var skin = env && env.appSkinInfo;
-      var c = skin && skin.panelBackgroundColor && skin.panelBackgroundColor.color;
-      if (!c) return;
-      var bg = "rgb(" + Math.round(c.red) + "," + Math.round(c.green) + "," + Math.round(c.blue) + ")";
-      // yazı rengi zeminin parlaklığından (CEP tema yazı rengi vermiyor; Adobe örnekleri de böyle yapar)
-      var lum = (0.299 * c.red + 0.587 * c.green + 0.114 * c.blue) / 255;
-      document.documentElement.style.background = bg;
-      document.body.style.background = bg;
-      document.body.style.color = lum > 0.5 ? "#1f1f1f" : "#d8d8d8";
-      if (skin.baseFontFamily) document.body.style.fontFamily = skin.baseFontFamily;
-      if (skin.baseFontSize) document.body.style.fontSize = skin.baseFontSize + "px";
-    } catch (e) {
-      /* tema okunamazsa varsayılan renkler */
-    }
-  }
 
   // ------------------------------------------------------------------ durum satırı
   function renderStatus() {
@@ -193,13 +172,6 @@
     if (open) renderPlan();
   }
 
-  applyTheme();
-  try {
-    if (window.__adobe_cep__ && typeof window.__adobe_cep__.addEventListener === "function")
-      window.__adobe_cep__.addEventListener("com.adobe.csxs.events.ThemeColorChanged", applyTheme); // CSInterface.THEME_COLOR_CHANGED_EVENT
-  } catch (e) {
-    /* olay yoksa tema açılışta okunur */
-  }
   if (app) {
     app.onLog = renderLog;
     if (app.helper) app.helper.subscribe(renderStatus);
@@ -208,6 +180,20 @@
   $("btn-bind2").addEventListener("click", onBind);
   $("btn-plan").addEventListener("click", renderPlan);
   $("srv").addEventListener("click", toggleMore);
+  // ↻ Yenile: sunucuyu kapat (port boşalsın), paneli yeniden yükle
+  $("btn-reload").addEventListener("click", function () {
+    if (busy) return;
+    if (app && app.helper && typeof app.helper.stop === "function")
+      app.helper.stop().then(
+        function () {
+          window.location.reload();
+        },
+        function () {
+          window.location.reload();
+        }
+      );
+    else window.location.reload();
+  });
   if ($("paste")) $("paste").addEventListener("change", renderPlan);
   renderStatus();
   renderBindBox();

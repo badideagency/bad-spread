@@ -33,7 +33,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "1.1.0";
+  var VERSION = "1.2.0";
   var PORT = 47731;
   var MAX_BODY = 1024 * 1024;
   /** Köprü komutları (v1.2.0: + güncelleme, yeniden başlatma, ↻ yeniden yükleme). */
@@ -219,7 +219,9 @@
           dataDir: deps.path.dirname(file),
           extDir: deps.extDir || null,
           hostApp: deps.hostApp || null,
-          platform: platform,
+          platform: deps.updaterPlatform || platform,
+          upiaCandidates: deps.upiaCandidates,
+          faultAfter: deps.faultAfter,
         });
       return updater;
     }
@@ -425,7 +427,8 @@
             var u = getUpdater();
             if (!u) throw new Error("güncelleme bu ortamda yok");
             if (!body || typeof body.version !== "string" || !/^\d+\.\d+\.\d+$/.test(body.version)) throw bad("version geçersiz");
-            return u.update(body.version, VERSION);
+            var panelVer = typeof body.panel === "string" && /^\d+\.\d+\.\d+$/.test(body.panel) ? body.panel : VERSION;
+            return u.update(body.version, VERSION, panelVer);
           }
           if (req.url === "/v1/restart") {
             // v1.2.0: projeler kaydedilip DOĞRULANMADAN kapatma yok (updater.prepareRestart); yanıt gittikten sonra app.quit
@@ -900,6 +903,17 @@
       var evalScript = function (script, cb) {
         window.__adobe_cep__.evalScript(script, cb);
       };
+      // v1.2.0: CSInterface.getSystemPath ile aynı alt çağrı (Adobe-CEP/CEP-Resources CEP_12.x/CSInterface.js:589-601 —
+      // decodeURI + "file:///" öneki Windows'ta atılır). "extension" = bu eklentinin klasörü, "hostApplication" = Premiere.exe
+      // (CSInterface.js:200-203 SystemPath.EXTENSION / HOST_APPLICATION).
+      var systemPath = function (kind) {
+        try {
+          var p0 = decodeURI(window.__adobe_cep__.getSystemPath(kind));
+          return process.platform === "win32" ? p0.replace("file:///", "") : p0.replace("file://", "");
+        } catch (e) {
+          return null;
+        }
+      };
       try {
         app.helper = createHelper({
           http: nodeRequire("http"),
@@ -910,6 +924,20 @@
           evalScript: evalScript,
           core: window.SpreadCore || null,
           log: logLine,
+          // v1.2.0 güncelleme (js/updater.js) ve ↻ yeniden yükleme
+          createUpdater: window.SpreadUpdater ? window.SpreadUpdater.createUpdater : null,
+          https: nodeRequire("https"),
+          zlib: nodeRequire("zlib"),
+          childProcess: nodeRequire("child_process"),
+          env: process.env,
+          extDir: systemPath("extension"),
+          hostApp: systemPath("hostApplication"),
+          reload: function () {
+            logLine("↻ yeniden yükleniyor (Spread'den istendi)");
+            app.helper.stop().then(function () {
+              window.location.reload();
+            });
+          },
         });
         logLine("Spread Helper " + VERSION + " açıldı (Node " + (typeof process !== "undefined" && process.version ? process.version : "?") + ", günlük: " + logFile + ")");
         app.helper.start().catch(function (e) {
