@@ -225,6 +225,16 @@
         });
       return updater;
     }
+    // v1.2.0 ↻: bağlama (köprü ya da bu paneldeki BAĞLA) sürerken yeniden yükleme reddedilir (yarım bağ kalmasın)
+    var working = 0;
+    function during(p) {
+      working++;
+      var end = function () {
+        working--;
+      };
+      p.then(end, end);
+      return p;
+    }
     // açık bağlantılar (yeniden yüklemede port hemen boşalsın: keep-alive soketleri de kapatılır)
     var sockets = [];
     function track(srv) {
@@ -444,6 +454,8 @@
           if (req.url === "/v1/reload") {
             // v1.2.0 ↻: yanıt gittikten sonra sunucu kapanır (port boşalır) ve panel kendini yeniden yükler
             if (typeof deps.reload !== "function") throw new Error("yeniden yükleme bu ortamda yok");
+            var ub = getUpdater();
+            if (working > 0 || (ub && ub.isBusy())) throw new Error("Spread Helper meşgul (bağlama ya da güncelleme sürüyor); bitince yeniden dene");
             setTimeout(function () {
               deps.reload();
             }, 300);
@@ -458,7 +470,7 @@
           }
           var clean = cleanLinkRequest(body);
           log("link: " + clean.groups.length + " grup, sequence \"" + clean.sequence + "\"");
-          return linkWithRetry(clean).then(function (r) {
+          return during(linkWithRetry(clean)).then(function (r) {
             r.results.forEach(function (x) {
               delete x.types;
             });
@@ -827,8 +839,15 @@
           createdAt: at,
         };
       },
-      bindFromPlan: bindFromPlan,
+      bindFromPlan: function (opts) {
+        return during(bindFromPlan(opts));
+      },
       updater: getUpdater,
+      /** v1.2.0 ↻ (bu paneldeki): bağlama / güncelleme sürüyor mu */
+      isWorking: function () {
+        var u = getUpdater();
+        return working > 0 || !!(u && u.isBusy());
+      },
       stop: function () {
         state.listening = false;
         removeInfo();
@@ -909,7 +928,8 @@
       var systemPath = function (kind) {
         try {
           var p0 = decodeURI(window.__adobe_cep__.getSystemPath(kind));
-          return process.platform === "win32" ? p0.replace("file:///", "") : p0.replace("file://", "");
+          // Windows: "file:///C:/…" → "C:\…" (cmd'nin start / if exist'i ve basename için ters bölü)
+          return process.platform === "win32" ? path.win32.normalize(p0.replace("file:///", "")) : p0.replace("file://", "");
         } catch (e) {
           return null;
         }

@@ -37,7 +37,7 @@ GÜNCELLEME (1.2.0 son elle kurulum; bundan sonrakiler panelden gelir)
     "Yeni sürüm 1.x.x · Güncelle". Tıkla → notlar → Güncelle.
   - Güncellemeyi Spread Helper yapar (açık olmalı): indirir, dosyanın bozulmadığını doğrular (sha256), eskisini yedekler, kurar.
     Bir şey tutmazsa eski sürüm yerinde kalır.
-  - Sonra "Premiere yeniden başlasın mı?" diye sorar. "Yeniden başlat" derseniz önce açık projeler KAYDEDİLİR; kaydedildiği
+  - Sonra "Projeyi kaydedip Premiere'i yeniden başlatayım mı?" diye sorar. "Yeniden başlat" derseniz önce açık projeler KAYDEDİLİR; kaydedildiği
     doğrulanamazsa Premiere kapatılmaz. Kapanınca birkaç saniye içinde aynı projeyle yeniden açılır.
   - Creative Cloud penceresi açılırsa (Adobe kurucusu paneli kuramadıysa) "Install"a bas.
   - Elle denetlemek için: Ayarlar > "Güncellemeleri denetle". İnternet yoksa sessizce geçer.

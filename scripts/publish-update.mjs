@@ -23,9 +23,10 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url)); // Windows / boşluklu / Türkçe yollarda da doğru
 const U = require(join(ROOT, "cep-helper/js/updater.js"));
 
 const args = process.argv.slice(2);
@@ -57,7 +58,8 @@ const zipBuf = readFileSync(ZIP);
 const sha256 = createHash("sha256").update(zipBuf).digest("hex");
 
 // paket, yardımcının kuracağı paketle aynı denetimden geçmeli (zip okunur, gerekli dosyalar, sürümler)
-U.checkKit(U.readZip(require("node:zlib"), zipBuf), VER);
+const kit = U.checkKit(U.readZip(require("node:zlib"), zipBuf), VER);
+U.checkCcx(require("node:zlib"), kit["spread.ccx"], VER);
 
 const rel = `releases/Spread_Kurulum_v${VER}.zip`;
 const latest = U.validateLatest({

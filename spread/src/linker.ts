@@ -24,8 +24,8 @@ const PING_TIMEOUT_MS = 3000;
 const LINK_BATCH = 8;
 // v1.1.0: yardımcı bir partiyi reddedilince bir kez daha dener (iki ExtendScript çağrısı, her biri en çok 170 sn) → istemci bekler
 const LINK_TIMEOUT_MS = 360000;
-/** v1.2.0: indirme + Adobe kurucusu (yardımcı UPIA'ya en çok 5 dk tanır) */
-const UPDATE_TIMEOUT_MS = 420000;
+/** v1.2.0: indirme (≤ 60 sn / istek) + Adobe kurucusu /install (≤ 5 dk) + /list all (≤ 1 dk) + pay */
+const UPDATE_TIMEOUT_MS = 600000;
 /** v1.2.0: projeleri kaydetme (yardımcı en çok 2 dk) */
 const RESTART_TIMEOUT_MS = 180000;
 /** Yardımcının (cep-helper/js/helper.js) kabul ettiği sınırlar — iki dosyada AYNI olmalı. BAĞLA planı kesmeden ÖNCE denetler. */

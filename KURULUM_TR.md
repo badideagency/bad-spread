@@ -98,7 +98,7 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
   1. paketi indirir ve **sha256** ile doğrular — tutmazsa hiçbir şeye dokunmaz;
   2. Spread Helper klasörünü **yedekler**, yenisini yazar — yarıda kalırsa yedeği geri koyar (eski sürüm yerinde);
   3. Spread panelini Adobe'nin kurucusuyla kurar; kuramazsa Creative Cloud'un **Install** penceresini açar → **Install**'a bas.
-- Sonra **"Premiere yeniden başlasın mı?" [Sonra] [Yeniden başlat]**. "Yeniden başlat": açık projelerin hepsi **kaydedilir** ve
+- Sonra **"Projeyi kaydedip Premiere'i yeniden başlatayım mı?" [Sonra] [Yeniden başlat]**. "Yeniden başlat": açık projelerin hepsi **kaydedilir** ve
   kaydedildiği dosyadan doğrulanır; biri bile doğrulanamazsa (ör. hiç kaydedilmemiş "Adsız" proje) **Premiere kapatılmaz**.
   Kapanınca birkaç saniye içinde aynı projeyle yeniden açılır.
 - Güncelleme günlüğü Sorun bildir raporuna eklenir.

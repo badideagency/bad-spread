@@ -10,7 +10,7 @@ Dağıt / Topla / Bağla mantığı **değişmedi** (v1.1.0 gerçek Premiere'de 
 - Güncellemeyi **Spread Helper** yapar (açık olmalı): indirir, **sha256** ile doğrular (tutmazsa hiçbir şeye dokunmaz), kendi klasörünü
   **yedekler** ve yeniler (yarıda kalırsa yedekten geri koyar), Spread panelini Adobe'nin kurucusuyla kurar (kuramazsa Creative Cloud'un
   **Install** penceresini açar).
-- **"Premiere yeniden başlasın mı?" [Sonra] [Yeniden başlat]** → açık projeler **kaydedilir ve dosyadan doğrulanır**; biri bile
+- **"Projeyi kaydedip Premiere'i yeniden başlatayım mı?" [Sonra] [Yeniden başlat]** → açık projeler **kaydedilir ve dosyadan doğrulanır**; biri bile
   doğrulanamazsa **Premiere kapatılmaz**. Kapanınca aynı projeyle yeniden açılır.
 - Yayın yeri herkese açık `badideagency/bad-spread-updates` (yalnız kurulum zip'i + `latest.json`; kaynak kod yok). Her adım
   güncelleme günlüğünde; **Sorun bildir** raporu onu da içerir.
@@ -79,7 +79,7 @@ Spread Helper:
   bozuk sha256, internet yok, yardımcı kapalı, kurulum başarısız, yazma hatası → geri yükleme, kaydedip yeniden başlatma, kaydedilemeyen
   proje → kapatma yok, ↻).
 - Yeniden başlatıcı Wine'da sahte bir Premiere'le (Windows Node 17.7.1) sınandı: üst süreç kapandıktan sonra da yaşıyor, aynı projeyle
-  açıyor; süreç listesi okunamazsa ya da süre dolarsa hiçbir şey açmıyor.
+  açıyor; süreç listesi okunamazsa, Premiere listede hiç görülmezse ya da süre dolarsa hiçbir şey açmıyor.
 - KUR.cmd / KALDIR.cmd Wine sınaması; bağımsız alt ajan incelemesi (liste: `handoff.md`).
 - **Gerçek Premiere'de bakılacak:** ilk panel güncellemesinde (1.2.0 → sonraki) Premiere'in kapanıp aynı projeyle yeniden açılması;
   Adobe kurucusunun paneli güncellemesi; yeni görünüm.

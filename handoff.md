@@ -48,7 +48,7 @@ Kullanıcının BadIdea panel projesindeki (`badideagency/badidea-panel` `.claud
   localStorage'da) `latest.json`'u okur (manifest ağ izni: yalnız `https://raw.githubusercontent.com` eklendi). 15 sn zaman aşımı
   (UXP'de `fetch` iptali belgelerde çelişkili → `linker.ts`teki gibi yarış). Hata / internet yok → sessiz (günlükte soluk satır).
   Yeni sürüm ve Premiere ≥ `min_premiere` → üstte şerit "Yeni sürüm 1.x.x · Güncelle" (TEK vurgu rengi). Yardımcıya ulaşılamıyorsa
-  şerit vurgusuz: "… · Güncellemek için Spread Helper açık olmalı". ⚙ Ayarlar ▸ "Güncellemeleri denetle" elle denetler.
+  şerit vurgusuz: "… · Güncellemek için Spread Helper açık olmalı" (tıklanınca yalnız yardımcı yeniden denenir). ⚙ Ayarlar ▸ "Güncellemeleri denetle" elle denetler.
 - Şerit → onay: başlık "Yeni sürüm 1.x.x", notlar (≤ 3 satır), [Şimdi değil] [Güncelle] → `POST /v1/update { version, panel }`.
   Gövdede adres / yol YOK: yardımcı `latest.json`'u kendisi, sabit adresten yeniden okur.
 - **Spread Helper (CEP, Node 17.7.1)** `cep-helper/js/updater.js`:
@@ -63,16 +63,19 @@ Kullanıcının BadIdea panel projesindeki (`badideagency/badidea-panel` `.claud
      /list`). **Çıkış kodu belgesiz ve güvenilmez** (topluluk: hep 0) → `/list all` çıktısında "Spread" ve yeni sürüm aynı satırda
      görülürse kuruldu sayılır; görülmezse .ccx Creative Cloud'la açılır (`cmd /c start "" "%SPREAD_CCX%"`; Adobe: .ccx'e çift
      tıklamak Install penceresini açar) ve kullanıcıya "Install'a bas" denir. Eski sürüm otomatik kaldırılmaz.
-  d) Spread sorar: "Premiere yeniden başlasın mı?" [Sonra] [Yeniden başlat].
+  d) Spread sorar: "Projeyi kaydedip Premiere'i yeniden başlatayım mı?" [Sonra] [Yeniden başlat].
 - **Yeniden başlat** (`POST /v1/restart`): ExtendScript `spreadHelper_projects()` açık projelerin adı + yolu (`app.projects`,
   `numProjects`, `Project.path`, 0..n taranır, `documentID` ile tekilleştirilir) → yolu boş (hiç kaydedilmemiş) proje varsa DUR →
   her projenin dosya değişme zamanı → `spreadHelper_saveProjects()` (`Project.save()`, belge: "Returns 0 if successful"; 0 dışı sayı ya
   da false → DUR) → değişme zamanı İLERİ GİTMEDİYSE DUR. **Doğrulanamayan tek bir proje bile varsa Premiere KAPATILMAZ**
   ("Premiere kapatılmadı: proje kaydedilemedi."). Sonra yeniden başlatıcı başlar, yanıt gider, 800 ms sonra `app.quit()` (belge:
   "user will be prompted to save any changes" → arada değişen bir şey olsa da Premiere sorar, sessizce kaybetmez).
-- **Yeniden başlatıcı** (`restart-spread.cmd`, yalnız ASCII + CRLF, girdiler yalnız ortam değişkeni): `tasklist /NH | find /I
-  "<süreç adı>"` — 0 çalışıyor, 1 kapandı, **2 hata → hiçbir şey açılmaz**; en çok 300 yoklama; kapanınca 3 sn bekler,
-  `start "" "<Premiere.exe>" "<proje>"`. Süreç adı Premiere.exe yolunun son parçası (CSInterface `getSystemPath("hostApplication")`,
+- **Yeniden başlatıcı** (`restart-spread.cmd`, yalnız ASCII + CRLF, girdiler yalnız ortam değişkeni): `tasklist /NH /FO CSV | find /I
+  "<süreç adı>"` (CSV: uzun ad kesilmez) — 0 çalışıyor, 1 yok, **2 hata → hiçbir şey açılmaz**. "Yok" ancak Premiere ÖNCE çalışırken
+  GÖRÜLDÜYSE "kapandı" sayılır (başlatıcı app.quit'ten önce başlar); **hiç görülmediyse** (liste boş / okunamadı — ör. bozuk WMI —,
+  ad eşleşmedi) hiçbir şey açılmaz (inceleme #12, Major). En çok 300 yoklama; kapanınca 3 sn bekler, `start "" "<Premiere.exe>" "<proje>"`.
+  Yollar Windows biçimine çevrilir (`path.win32.normalize`: CEP `getSystemPath` "C:/…" verir). Başlatıcı gerçekten başlamadan ('spawn'
+  olayı; 'error' ya da 5 sn → DUR) Premiere kapatılmaz. Süreç adı Premiere.exe yolunun son parçası (CSInterface `getSystemPath("hostApplication")`,
   CSInterface.js:200-203, 589-601).
   - Başlatma biçimi: `spawn(ComSpec, ["/d","/c",'start "" /b cmd /d /c call "%SPREAD_RESTARTER%"'], {windowsHide,
     windowsVerbatimArguments, env})`. Neden: Node'un `detached`'ı konsolsuz süreç açar → içindeki her tasklist / ping yeni bir
@@ -81,7 +84,7 @@ Kullanıcının BadIdea panel projesindeki (`badideagency/badidea-panel` `.claud
     1.43 win/process.c).
   - Sınama: `scripts/test-restarter-wine.sh` — sahte Premiere = Windows Node 17.7.1 (CEP 12'nin Node'u), yardımcının KENDİ kodunu
     çalıştırır; yollar boşluk, parantez, "&", Türkçe harf içerir. (1) üst süreç kapandıktan sonra da yaşar, aynı exe'yi aynı
-    projeyle açar; (2) süreç listesi okunamıyor → açmaz; (3) süre doldu → açmaz. **PASS.**
+    projeyle açar; (2) süreç listesi okunamıyor → açmaz; (3) süre doldu → açmaz; (4) Premiere listede hiç görülmedi → açmaz. **PASS.**
 - Başarısızlık: yardımcı yazılırken hata → yedekten geri; sha256 / paket → hiçbir şey; kurucu → .ccx elle; kaydetme → kapatma yok.
   Her adım `update.log`'da (bilgi dosyasıyla aynı klasör); **Sorun bildir raporu "GÜNCELLEME GÜNLÜĞÜ" bölümüyle** onu da içerir.
 - Sürüm uyumu: güncelleme yardımcıdan VEYA panelden biri eskiyse yapılır (`panel` alanı; ör. önceki güncellemede .ccx elle
@@ -113,7 +116,8 @@ Kullanıcının BadIdea panel projesindeki (`badideagency/badidea-panel` `.claud
     → **Poppins paketlenemez.** Yazı tipi HİÇ verilmez = UXP'nin varsayılanı, Premiere'in arayüz yazı tipi (belge:
     `font-family.md:26`). Neden "Segoe UI" bile yazılmadı: bir aile bulunamazsa yedek listesinin atlandığı açık bir hata kaydı var
     (uxp-photoshop#504) → ✓ ⚠ › ← gibi işaretler boş kutu olabilirdi; v1.1.0'da varsayılan yazı tipi bunları sorunsuz çizdi.
-    Türkçe harfler Premiere'in arayüz yazı tipinde tam.
+    Türkçe harfler Premiere'in arayüz yazı tipinde tam. Tek istisna günlük / rapor kutuları: `Consolas, monospace` (Consolas yoksa
+    Premiere'in yazı tipi — UXP genel aileleri desteklemiyor).
   - CSS `transition` / `animation` **desteklenmiyor** (uxp-premiere-pro `known-issues.md:80`). CSS'te 120–160 ms geçişler yazılı
     (ileride desteklenirse) ama bugün Premiere'de değişimler anlık.
   - `box-shadow` yalnız bir özellik bayrağıyla (UXP 8.0) → kullanılmadı (zaten gölge yok). `gap`, `:focus-visible`,
@@ -146,6 +150,32 @@ basılınca küçülmez, ↻ basınca %95.
 Bilerek uygulanmayanlar: [Devam]'ı krem (vurgu) yapmak — kullanıcının kuralı "vurgu YALNIZ sıradaki adım düğmesi ve güncelleme
 şeridi" (bunun yerine yüzey-4); yardımcı kapalı noktasını amber yapmak — v1.1.0 isteği "● gri"; `tabular-nums` — UXP CSS listesinde
 yok; şeridi başlığın altına taşımak — istek "panelin üstünde ince bir şerit".
+
+### İnceleme #12 (bağımsız alt ajan, e0cdaf1..8341025) ve düzeltmeler
+
+Kararlar: A) mantık dosyalarında davranış farkı yok — PASS (21 mantık dosyasında diff boş; helper.js / host.jsx'te bağlama yolu
+aynı; eski 89 senaryonun hiçbir beklentisi değişmedi); B) kaydetmeden kapatma yok — PASS (app.quit tek yoldan; bütün hata yolları
+başlatıcıdan ve quit'ten ÖNCE durur; sahte bağımlılıklarla yoklandı); C) sha256 tutmazsa hiçbir şey değişmez — PASS; D) public
+depoya kaynak kod gitmez — PASS (zip içeriği listelendi: derlenmiş JS + yardımcının dağıtılan JS'i; .ts / belge / betik yok).
+Ajan sınamaları kendisi çalıştıramadı (izin reddi); sınama kanıtı ana oturumun koşuları.
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| Major | Boş `tasklist` çıktısı (bozuk WMI) ya da 25 karakteri aşan süreç adı "kapandı" sayılıp Premiere erken açılabilirdi | Premiere önce çalışırken görülmediyse "kapandı" sayılmaz → hiçbir şey açılmaz; `/FO CSV` (ad kesilmez); Wine senaryo 4 |
+| Minor | ↻ sırasında (yardımcı yanıtı + 600 ms) kilit açıktı → bir işlem başlayıp yeniden yüklemeyle yarıda kesilebilirdi | kilit yeniden yüklemeye kadar kapalı (düğmeler pasif); yeniden yükleme olmazsa 5 sn sonra açılır |
+| Minor | Yardımcı bağlama / güncelleme sürerken ↻ yardımcıyı yeniden yüklüyordu | `/v1/reload` ve yardımcıdaki ↻ o sırada reddeder (bağlama sayacı + güncelleyici meşgul); Spread yalnız kendini yeniler |
+| Minor | Geri yüklemede yarıda kalan dosyanın `.new`'i kalıyordu; ilk hatada duruyordu | yazılmaya başlanan her dosyanın `.new`'i silinir; her dosya ayrı geri yüklenir, eksik kalırsa açıkça söylenir; kilitli dosya (EBUSY) senaryosu |
+| Minor | Paket denetimi spread.ccx'in kendi sürümünü denetlemiyordu | `checkCcx`: kimlik + sürüm (yardımcı ve yayın betiği) |
+| Minor | CEP yolları "C:/…" (cmd için) | `path.win32.normalize` |
+| Minor | İki alt süreçte 'error' dinleyicisi yoktu; başlatıcı başlamazsa Premiere yine kapanırdı | 'error' dinleyicileri; başlatıcı 'spawn' vermeden quit yok ("yeniden başlatma hazırlanamadı") |
+| Nit | `zip_url` "%2e%2e" ile depo dışına çıkabiliyordu | `%`, `?`, `#` reddi + ayrıştırılmış adres öneki |
+| Nit | İstenen soru metni görünmüyordu | onay başlığı "Projeyi kaydedip Premiere'i yeniden başlatayım mı?" |
+| Nit | prepareRestart güncelleme sürerken çağrılabilir | reddeder |
+| Nit | Panel zaman aşımı (420 sn) yardımcının en kötü süresinden kısa | 600 sn |
+| Nit | publish-update ROOT `URL.pathname` | `fileURLToPath` |
+| Nit | update.log hiç kısalmıyor | 256 KB'ı aşınca son 128 KB |
+| Nit | "Ne yapmalıyım?" klavyeyle açılmıyordu; belge iddiaları | `on()` ile; handoff düzeltildi |
+| Nit | Enter / Boşluk'ta UXP ayrıca tıklama üretirse çift tetik (doğrulanmadı) | zararsız: `exclusive` kilitli, `answer` tek sefer — gerçek Premiere'de bakılacak |
 
 ### Belirsizlikler / gerçek Windows + Premiere'de bakılacak (v1.2.0)
 

@@ -70,7 +70,17 @@
     if (!Array.isArray(notes) || notes.length < 1 || notes.length > 3) throw fail("latest", "latest.json: notes 1–3 madde olmalı");
     for (var i = 0; i < notes.length; i++)
       if (typeof notes[i] !== "string" || !notes[i].trim() || notes[i].length > 300) throw fail("latest", "latest.json: notes[" + i + "] geçersiz");
-    if (typeof o.zip_url !== "string" || o.zip_url.indexOf(ZIP_PREFIX) !== 0 || !/\.zip$/.test(o.zip_url) || /[\s"'<>\\]|\.\./.test(o.zip_url))
+    // yüzde kodlaması da reddedilir ("%2e%2e" normalleşince başka depoya çıkabilirdi); ayrıştırılmış adres de aynı önekle başlamalı
+    var zu = null;
+    try {
+      zu = typeof o.zip_url === "string" ? new URL(o.zip_url) : null;
+    } catch (e) {
+      zu = null;
+    }
+    if (
+      typeof o.zip_url !== "string" || o.zip_url.indexOf(ZIP_PREFIX) !== 0 || !/\.zip$/.test(o.zip_url) || /[\s"'<>\\%?#]|\.\./.test(o.zip_url) ||
+      !zu || zu.href !== o.zip_url || zu.href.indexOf(ZIP_PREFIX) !== 0
+    )
       throw fail("latest", "latest.json: zip_url güncelleme deposunun bir zip'i değil");
     if (typeof o.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(o.sha256)) throw fail("latest", "latest.json: sha256 geçersiz");
     if (typeof o.min_premiere !== "string" || !/^\d+(\.\d+){0,2}$/.test(o.min_premiere)) throw fail("latest", "latest.json: min_premiere geçersiz");
@@ -165,13 +175,32 @@
     return by;
   }
 
+  /** spread.ccx'in kendi manifest'i: kimlik com.badideagency.spread ve sürüm = paketin sürümü (eski bir .ccx paketlenmesin). */
+  function checkCcx(zlib, ccx, version) {
+    var man = null;
+    readZip(zlib, ccx).forEach(function (e) {
+      if (e.name === "manifest.json") man = e.data;
+    });
+    if (!man) throw fail("kit", "spread.ccx içinde manifest.json yok");
+    var m;
+    try {
+      m = JSON.parse(man.toString("utf8"));
+    } catch (e) {
+      throw fail("kit", "spread.ccx manifest.json JSON değil");
+    }
+    if (!m || m.id !== "com.badideagency.spread") throw fail("kit", "spread.ccx başka bir eklentinin (" + (m && m.id) + ")");
+    if (m.version !== version) throw fail("kit", "spread.ccx sürümü " + m.version + ", paket " + version);
+  }
+
   // ------------------------------------------------------------------ yeniden başlatıcı (Windows, ayrı süreç)
   /**
    * restart-spread.cmd — yalnız ASCII, CRLF. Girdiler YALNIZ ortam değişkenlerinden (Unicode / boşluk / "( ) &" içeren yollar
    * komut satırında bozulmasın): SPREAD_IMG süreç adı (Premiere.exe yolunun son parçası), SPREAD_EXE Premiere.exe tam yolu,
    * SPREAD_PRJ açılacak proje (boş olabilir), SPREAD_LOG günlük, SPREAD_MAX en çok kaç yoklama (1 sn arayla).
-   * Bekleme: "tasklist /NH | find /I" — 0 = çalışıyor, 1 = kapandı, 2 = HATA (hata ya da süre dolması → HİÇBİR ŞEY açılmaz: ikinci
-   * Premiere yok). Uyku: ping (timeout /t yönlendirilmiş girdide belgesiz). Tasarım Wine'da sınandı (scripts/test-restarter-wine.sh).
+   * Bekleme: "tasklist /NH /FO CSV | find /I" (CSV: uzun süreç adı kesilmez) — 0 = çalışıyor, 1 = yok, 2 = HATA. "Yok" ancak Premiere
+   * ÖNCE çalışırken görüldüyse "kapandı" sayılır (başlatıcı app.quit'ten önce başlar); hiç görülmediyse (liste boş / okunamadı, ad
+   * eşleşmedi), hata ya da süre dolması → HİÇBİR ŞEY açılmaz (ikinci Premiere yok). Uyku: ping (timeout /t yönlendirilmiş girdide
+   * belgesiz). Tasarım Wine'da sınandı (scripts/test-restarter-wine.sh).
    */
   var RESTART_CMD = [
     "@echo off",
@@ -179,15 +208,20 @@
     "rem Spread Helper - Premiere yeniden baslatici (v1.2.0). Premiere kapaninca ayni projeyle yeniden acar.",
     'if not defined SPREAD_MAX set "SPREAD_MAX=300"',
     "set /a N=0",
+    'set "SEEN=0"',
     '>>"%SPREAD_LOG%" echo %date% %time% baslatici: "%SPREAD_IMG%" kapanmasi bekleniyor',
     ":wait",
-    'tasklist /NH 2>nul | find /I "%SPREAD_IMG%" >nul',
+    'tasklist /NH /FO CSV 2>nul | find /I "%SPREAD_IMG%" >nul',
     "if errorlevel 2 goto :err",
-    "if errorlevel 1 goto :gone",
+    "if errorlevel 1 goto :notrunning",
+    'set "SEEN=1"',
     "set /a N+=1",
     "if %N% geq %SPREAD_MAX% goto :late",
     "ping -n 2 127.0.0.1 >nul",
     "goto :wait",
+    ":notrunning",
+    "rem Premiere hic calisirken GORULMEDIYSE (surec listesi bos / okunamadi, ad eslesmedi) kapandi sanilmaz",
+    'if not "%SEEN%"=="1" goto :unseen',
     ":gone",
     "rem Premiere kapandi; dosyalar serbest kalsin",
     "ping -n 4 127.0.0.1 >nul",
@@ -206,6 +240,9 @@
     ":err",
     '>>"%SPREAD_LOG%" echo %date% %time% baslatici: surec listesi okunamadi - hicbir sey acilmadi',
     "exit /b 3",
+    ":unseen",
+    '>>"%SPREAD_LOG%" echo %date% %time% baslatici: "%SPREAD_IMG%" surec listesinde hic gorulmedi - hicbir sey acilmadi',
+    "exit /b 5",
     ":noexe",
     '>>"%SPREAD_LOG%" echo %date% %time% baslatici: Premiere.exe bulunamadi - hicbir sey acilmadi',
     "exit /b 4",
@@ -249,6 +286,14 @@
       log("güncelleme: " + line);
       try {
         deps.fs.mkdirSync(deps.dataDir, { recursive: true });
+        try {
+          if (deps.fs.statSync(logFile).size > 256 * 1024) {
+            var old = deps.fs.readFileSync(logFile, "utf8");
+            deps.fs.writeFileSync(logFile, old.slice(-128 * 1024).replace(/^[^\n]*\n/, ""));
+          }
+        } catch (e) {
+          /* günlük yoksa */
+        }
         deps.fs.appendFileSync(logFile, new Date().toISOString() + " " + line + "\n");
       } catch (e) {
         /* günlük yazılamazsa işlem sürer */
@@ -356,16 +401,19 @@
         return n.indexOf("SpreadHelper/") === 0;
       });
       var written = [];
+      var touched = []; // yazılmaya BAŞLANAN her dosya (yarıda kalan dahil) — geri yüklemede .new'leri de temizlenir
       try {
         names.forEach(function (n) {
           var rel = n.slice("SpreadHelper/".length);
+          touched.push(rel);
           if (deps.faultAfter !== undefined && written.length >= deps.faultAfter) throw new Error("sınama: yazma hatası");
           replaceFile(ext, rel, by[n]);
           written.push(rel);
         });
       } catch (e) {
         ulog("yardımcı yazılamadı (" + e.message + ") — yedek geri yükleniyor");
-        restore(ext, backup, old, written);
+        var bad = restore(ext, backup, old, touched);
+        if (bad.length) throw fail("helper", "yardımcı dosyaları yazılamadı: " + e.message + " — geri yükleme EKSİK (" + bad.join(", ") + "); yedek: " + backup);
         throw fail("helper", "yardımcı dosyaları yazılamadı: " + e.message + " — eski sürüm geri yüklendi");
       }
       ulog("yardımcı " + version + " yazıldı (" + written.length + " dosya)");
@@ -390,9 +438,15 @@
       }
     }
 
+    /** Yedeği geri yazar; her dosya ayrı denenir (biri düşse de diğerleri yazılır). @returns geri yüklenemeyen dosyalar */
     function restore(ext, backup, old, written) {
+      var bad = [];
       old.forEach(function (rel) {
-        writeFile(ext, rel, deps.fs.readFileSync(deps.path.join.apply(null, [backup].concat(rel.split("/")))));
+        try {
+          writeFile(ext, rel, deps.fs.readFileSync(deps.path.join.apply(null, [backup].concat(rel.split("/")))));
+        } catch (e) {
+          bad.push(rel);
+        }
       });
       written
         .filter(function (rel) {
@@ -410,7 +464,8 @@
             /* yoksa geç */
           }
         });
-      ulog("yedek geri yüklendi: " + backup);
+      ulog(bad.length ? "yedek geri yüklenirken " + bad.length + " dosya yazılamadı: " + bad.join(", ") + " (yedek: " + backup + ")" : "yedek geri yüklendi: " + backup);
+      return bad;
     }
 
     /** KUR.cmd'deki sıra: %CommonProgramW6432%, %CommonProgramFiles%, C:\Program Files\Common Files (sınama: deps.upiaCandidates). */
@@ -494,6 +549,10 @@
             windowsVerbatimArguments: true,
             env: Object.assign({}, deps.env || {}, { SPREAD_CCX: file }),
           });
+          if (cp && cp.on)
+            cp.on("error", function (e) {
+              ulog(".ccx açılamadı: " + e.message);
+            });
           if (cp && cp.unref) cp.unref();
         } catch (e) {
           ulog(".ccx açılamadı: " + e.message);
@@ -541,6 +600,7 @@
           if (got !== info.sha256) throw fail("sha256", "sha256 tutmuyor (beklenen " + info.sha256 + ", inen " + got + ") — hiçbir şey değişmedi");
           ulog("sha256 doğru (" + zip.length + " bayt)");
           var by = checkKit(readZip(deps.zlib, zip), info.version);
+          checkCcx(deps.zlib, by["spread.ccx"], info.version);
           ulog("paket denetimi tamam");
           var h = installHelper(by, info.version);
           return installCcx(by["spread.ccx"], info.version).then(function (c) {
@@ -578,6 +638,7 @@
      * Kapatma (app.quit) ayrı: quit().
      */
     function prepareRestart() {
+      if (busy) return Promise.reject(fail("busy", "bir güncelleme sürüyor; bitince yeniden başlat"));
       if (platform !== "win32") return Promise.reject(fail("restart", "yeniden başlatma yalnız Windows'ta"));
       if (!deps.hostApp) return Promise.reject(fail("restart", "Premiere'in yolu okunamadı"));
       var before = {};
@@ -600,15 +661,44 @@
             if (t === null || before[p] === null || !(t > before[p])) throw fail("save", "\"" + p + "\" kaydedildiği doğrulanamadı (dosya değişmedi) — Premiere kapatılmadı");
           });
           ulog("kaydedildi ve doğrulandı: " + paths.join(" · "));
-          var img = deps.path.win32.basename(deps.hostApp);
+          // CEP getSystemPath Windows'ta "C:/…" verir → ters bölüye çevrilir (cmd'nin "start" / "if exist"i için)
+          var exe = deps.path.win32.normalize(deps.hostApp);
+          var img = deps.path.win32.basename(exe);
           var cmd = deps.path.join(deps.dataDir, "restart-spread.cmd");
           deps.fs.writeFileSync(cmd, RESTART_CMD);
           var proj = r.active || paths[0] || "";
-          ulog("yeniden başlatıcı: \"" + deps.hostApp + "\" (" + img + ") → " + (proj || "(proje yok)"));
-          var sp = restarterSpawnArgs((deps.env && deps.env.ComSpec) || "cmd.exe", cmd, { SPREAD_IMG: img, SPREAD_EXE: deps.hostApp, SPREAD_PRJ: proj, SPREAD_LOG: logFile, SPREAD_MAX: "300" }, deps.env);
-          var cp = deps.childProcess.spawn(sp.cmd, sp.args, sp.opts);
-          if (cp && cp.unref) cp.unref();
-          return { ok: true, project: proj, image: img };
+          proj = proj ? deps.path.win32.normalize(proj) : "";
+          ulog("yeniden başlatıcı: \"" + exe + "\" (" + img + ") → " + (proj || "(proje yok)"));
+          var sp = restarterSpawnArgs((deps.env && deps.env.ComSpec) || "cmd.exe", cmd, { SPREAD_IMG: img, SPREAD_EXE: exe, SPREAD_PRJ: proj, SPREAD_LOG: logFile, SPREAD_MAX: "300" }, deps.env);
+          // başlatıcı GERÇEKTEN başlamadan Premiere kapatılmaz: 'spawn' (Node 15.1+) gelmeli; 'error' ya da 5 sn → DUR
+          return new Promise(function (resolve, reject) {
+            var cp;
+            try {
+              cp = deps.childProcess.spawn(sp.cmd, sp.args, sp.opts);
+            } catch (e) {
+              return reject(fail("restart", "yeniden başlatıcı başlatılamadı: " + e.message + " — Premiere kapatılmadı"));
+            }
+            var done = false;
+            var t = setTimeout(function () {
+              if (done) return;
+              done = true;
+              reject(fail("restart", "yeniden başlatıcı 5 sn içinde başlamadı — Premiere kapatılmadı"));
+            }, 5000);
+            cp.on("error", function (e) {
+              ulog("yeniden başlatıcı hatası: " + e.message);
+              if (done) return;
+              done = true;
+              clearTimeout(t);
+              reject(fail("restart", "yeniden başlatıcı başlatılamadı: " + e.message + " — Premiere kapatılmadı"));
+            });
+            cp.on("spawn", function () {
+              if (done) return;
+              done = true;
+              clearTimeout(t);
+              if (cp.unref) cp.unref();
+              resolve({ ok: true, project: proj, image: img });
+            });
+          });
         });
     }
 
@@ -647,6 +737,7 @@
     validateLatest: validateLatest,
     readZip: readZip,
     checkKit: checkKit,
+    checkCcx: checkCcx,
     crc32: crc32,
     LATEST_URL: LATEST_URL,
     ZIP_PREFIX: ZIP_PREFIX,

@@ -183,7 +183,11 @@
   $("srv").addEventListener("click", toggleMore);
   // ↻ Yenile: sunucuyu kapat (port boşalsın), paneli yeniden yükle
   $("btn-reload").addEventListener("click", function () {
-    if (busy) return;
+    if (busy || (app && app.helper && typeof app.helper.isWorking === "function" && app.helper.isWorking())) {
+      bindLine = { text: "Bağlama / güncelleme sürüyor; bitince ↻", cls: "" };
+      renderStatus();
+      return;
+    }
     if (app && app.helper && typeof app.helper.stop === "function")
       app.helper.stop().then(
         function () {

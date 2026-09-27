@@ -11,6 +11,7 @@
 #   1) normal: başlatıcı, üst süreç (sahte Premiere) kapandıktan SONRA da yaşar; kapanmayı bekler, aynı exe'yi aynı projeyle açar
 #   2) süreç listesi okunamıyor (Wine'ın find'ı /I'yı reddeder → errorlevel 2): HİÇBİR ŞEY açılmaz (ikinci Premiere yok)
 #   3) Premiere süre dolana kadar kapanmıyor: HİÇBİR ŞEY açılmaz
+#   4) Premiere süreç listesinde HİÇ görülmedi (liste boş / okunamadı, ad eşleşmedi): "kapandı" SANILMAZ, HİÇBİR ŞEY açılmaz
 # Wine farkı: Wine'ın find'ı /I bayrağını tanımaz (errorlevel 2) → 1 ve 3'te betikten " /I" atılır (gerçek Windows'ta /I var).
 # Sınanamayan (gerçek Windows + Premiere gerekir): CEP motorunun dış bir iş nesnesinde (job) olup olmadığı — handoff.md.
 # Kullanım: bash scripts/test-restarter-wine.sh   (Node 17.7.1 win-x64 ~/.cache/spread-test'e bir kez indirilir, sha256 doğrulanır)
@@ -60,7 +61,7 @@ let text = U.RESTART_CMD;
 if (process.env.T_WINE_FIND === "1") text = text.split(" | find /I ").join(" | find ");
 fs.writeFileSync(cmd, text);
 const log = path.join(dataDir, "update.log");
-const sp = U.restarterSpawnArgs(process.env.ComSpec, cmd, { SPREAD_IMG: path.win32.basename(process.execPath), SPREAD_EXE: process.execPath, SPREAD_PRJ: process.env.T_PRJ, SPREAD_LOG: log, SPREAD_MAX: process.env.T_MAX }, process.env);
+const sp = U.restarterSpawnArgs(process.env.ComSpec, cmd, { SPREAD_IMG: process.env.T_IMG || path.win32.basename(process.execPath), SPREAD_EXE: process.execPath, SPREAD_PRJ: process.env.T_PRJ, SPREAD_LOG: log, SPREAD_MAX: process.env.T_MAX }, process.env);
 const c = cp.spawn(sp.cmd, sp.args, sp.opts);
 c.on("error", (e) => fs.appendFileSync(log, "spawn hatası " + e.message + "\n"));
 c.unref();
@@ -71,10 +72,10 @@ EOF
 fail=0
 check() { if [ "$2" = "$3" ]; then echo "  ✓ $1: $2"; else echo "  ✗ $1: $2 (beklenen $3)"; fail=1; fi; }
 running() { "$W" cmd /c tasklist 2>/dev/null | tr -d '\r' | grep -c "Adobe Premiere Pro.exe" || true; }
-scenario() { # $1 ad, $2 T_WINE_FIND, $3 T_MAX, $4 T_LIVE (ms), $5 bekleme (sn)
+scenario() { # $1 ad, $2 T_WINE_FIND, $3 T_MAX, $4 T_LIVE (ms), $5 bekleme (sn), $6 T_IMG (boş = gerçek ad)
   rm -f "$C/rt/acildi.json" "$DATA/update.log"
   echo "== $1"
-  T_UPDATER="$UPD" T_DATA='C:\Kullanıcı Ali (Kurgu) & ş' T_PRJ="$PRJ" T_WINE_FIND="$2" T_MAX="$3" T_LIVE="$4" \
+  T_UPDATER="$UPD" T_DATA='C:\Kullanıcı Ali (Kurgu) & ş' T_PRJ="$PRJ" T_WINE_FIND="$2" T_MAX="$3" T_LIVE="$4" T_IMG="${6:-}" \
     WINEDEBUG=-all timeout 60 "$W" "$EXE" 'C:\rt\sahte-premiere.js' >/dev/null 2>&1 || true
   for _ in $(seq 1 "$5"); do [ -f "$C/rt/acildi.json" ] && break; sleep 1; done
   sleep 2
@@ -95,6 +96,12 @@ check "günlükte 'surec listesi okunamadi'" "$(grep -c 'surec listesi okunamadi
 scenario "3) Premiere süre dolana kadar kapanmıyor → hiçbir şey açılmaz" 1 3 30000 12
 check "açılmadı" "$([ -f "$C/rt/acildi.json" ] && echo açıldı || echo açılmadı)" açılmadı
 check "günlükte 'kapanmadi'" "$(grep -c 'kapanmadi - hicbir sey acilmadi' "$DATA/update.log" 2>/dev/null || true)" 1
+"$W" cmd /c taskkill /F /IM "Adobe Premiere Pro.exe" >/dev/null 2>&1 || true
+sleep 1
+
+scenario "4) Premiere süreç listesinde hiç görülmedi → kapandı sanılmaz, hiçbir şey açılmaz" 1 60 3000 12 "Adobe Premiere Pro (Beta Uzun Ad).exe"
+check "açılmadı" "$([ -f "$C/rt/acildi.json" ] && echo açıldı || echo açılmadı)" açılmadı
+check "günlükte 'hic gorulmedi'" "$(grep -c 'hic gorulmedi - hicbir sey acilmadi' "$DATA/update.log" 2>/dev/null || true)" 1
 "$W" cmd /c taskkill /F /IM "Adobe Premiere Pro.exe" >/dev/null 2>&1 || true
 wineserver -k 2>/dev/null || true
 

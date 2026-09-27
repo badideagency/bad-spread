@@ -221,7 +221,7 @@ async function runUpdate(l: Latest): Promise<void> {
       "Yeni sürüm Premiere yeniden açılınca çalışır.",
       "Önce açık projeler kaydedilir; kaydedilemezse Premiere kapatılmaz.",
     ],
-    { title: "Premiere yeniden başlasın mı?", yes: "Yeniden başlat", no: "Sonra" }
+    { title: "Projeyi kaydedip Premiere'i yeniden başlatayım mı?", yes: "Yeniden başlat", no: "Sonra" }
   );
   if (ans2 !== "Evet") {
     log("Yeniden başlatma sonraya kaldı.", "dim");
@@ -235,7 +235,13 @@ async function runUpdate(l: Latest): Promise<void> {
     opEnd("ok", "Premiere kapanıyor; birkaç saniye sonra aynı projeyle yeniden açılacak.");
   } catch (e) {
     log(`✗ YENİDEN BAŞLATMA DURDU: ${errText(e)}`, "err");
-    opEnd("err", "Premiere kapatılmadı: proje kaydedilemedi.", "Projeyi Ctrl+S ile kaydet, sonra Premiere'i kendin kapatıp aç.", [errText(e)]);
+    const saveProblem = /kaydedil|kayded|save\(\)|açık proje/i.test(errText(e));
+    opEnd(
+      "err",
+      saveProblem ? "Premiere kapatılmadı: proje kaydedilemedi." : "Premiere kapatılmadı: yeniden başlatma hazırlanamadı.",
+      "Projeyi Ctrl+S ile kaydet, sonra Premiere'i kendin kapatıp aç.",
+      [errText(e)]
+    );
   }
 }
 
@@ -250,25 +256,38 @@ async function reloadPanels(): Promise<void> {
     log("↻ Yenile için bekle: bir işlem sürüyor.", "warn");
     return;
   }
+  // yeniden yükleme bitene kadar panel kilitli: arada bir işlem başlayıp yarıda kesilmesin (inceleme #12)
+  busy = true;
+  for (const id of ACTIONS) setDisabled(id, true);
+  const unlock = () => {
+    busy = false;
+    void refresh();
+  };
   if (activeGuid && stopMapHas(activeGuid)) {
-    busy = true;
-    try {
-      const ans = await askUser(
-        "Bu sequence'ta yarım kalmış bir işlem var. Yenilemek onu düzeltmez; yarım kalan işlem yenilemeden sonra da yarım görünür.",
-        ["Bu sequence'ta yarım kalmış bir işlem var.", "Yenilemek onu düzeltmez: önce Ctrl+Z ile geri al ya da yedek sequence'ı aç."],
-        { title: "Yine de yenilensin mi?", yes: "Yenile", no: "Vazgeç" }
-      );
-      if (ans !== "Evet") return;
-    } finally {
-      busy = false;
-    }
+    const ans = await askUser(
+      "Bu sequence'ta yarım kalmış bir işlem var. Yenilemek onu düzeltmez; yarım kalan işlem yenilemeden sonra da yarım görünür.",
+      ["Bu sequence'ta yarım kalmış bir işlem var.", "Yenilemek onu düzeltmez: önce Ctrl+Z ile geri al ya da yedek sequence'ı aç."],
+      { title: "Yine de yenilensin mi?", yes: "Yenile", no: "Vazgeç" }
+    );
+    if (ans !== "Evet") return unlock();
   }
   log("↻ Yenileniyor: Spread Helper ve Spread paneli yeniden yükleniyor…", "head");
   const h = await getLinker().reloadHelper();
-  if (!h) log("Spread Helper'a ulaşılamadı; yalnız bu panel yenileniyor.", "dim");
+  if (!h) log("Spread Helper yeniden yüklenmedi (kapalı ya da bağlama / güncelleme sürüyor); yalnız bu panel yenileniyor.", "dim");
   setTimeout(() => {
-    // Adobe'nin Premiere örneği de paneli böyle yeniden yükler (AdobeDocs/uxp-premiere-pro-samples sample-panels/premiere-api/index.ts:373)
-    window.location.reload();
+    try {
+      // Adobe'nin Premiere örneği de paneli böyle yeniden yükler (AdobeDocs/uxp-premiere-pro-samples sample-panels/premiere-api/index.ts:373)
+      window.location.reload();
+    } catch (e) {
+      log(`↻ Panel yeniden yüklenemedi: ${errText(e)}. Paneli kapatıp aç.`, "warn");
+      unlock();
+      return;
+    }
+    // yeniden yükleme sessizce olmadıysa panel kilitli kalmasın
+    setTimeout(() => {
+      log("↻ Panel yeniden yüklenmedi; gerekirse paneli kapatıp aç.", "warn");
+      unlock();
+    }, 5000);
   }, h ? 600 : 50);
 }
 
@@ -430,14 +449,7 @@ function init(): void {
   }
   on("btn-settings", () => showSettings(true));
   on("btn-back", () => showSettings(false));
-  try {
-    byId("result-help").addEventListener("click", (e: Event) => {
-      e.preventDefault?.();
-      toggleHint();
-    });
-  } catch {
-    /* yoksa geç */
-  }
+  on("result-help", toggleHint); // tıklama + Enter / Boşluk
   on("btn-channels", () => void exclusive("Kanallar", () => scanChannels(true)));
   on("btn-helper", () => void checkHelper(true));
   on("btn-status", () =>
