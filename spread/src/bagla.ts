@@ -604,7 +604,7 @@ export async function runBind(): Promise<void> {
     const bs = bindState(rec, s0);
     if (bs === "partial")
       throw new SpreadStop(
-        "BAĞLA'dan sonra düzen değişmiş: kesilen parçaların bir kısmı yerinde, bir kısmı değil. BAĞLA BAŞLAMADI, hiçbir şey değişmedi. " +
+        "BAĞLA'dan sonra düzen değişmiş: kesim kısmen ya da Ctrl+Z ile geri alınmış (silinenlerin bir kısmı geri gelmiş ya da kesilen parçalar yok). BAĞLA BAŞLAMADI, hiçbir şey değişmedi. " +
           "BAĞLA öncesi yedek sequence'la çalış ya da BAĞLA'yı Ctrl+Z ile tamamen geri al."
       );
     if (bs === "applied" || bs === "thinned") return await linkOnly(ctx, rec, rec.bind!, s0, ping);

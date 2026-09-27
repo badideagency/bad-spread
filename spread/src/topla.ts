@@ -137,7 +137,7 @@ export async function runCollect(): Promise<void> {
     if (bs === "partial" || ((bs === "applied" || bs === "thinned") && rec!.bind!.created.length))
       throw new SpreadStop(
         bs === "partial"
-          ? "BAĞLA'dan sonra düzen değişmiş (kesilen parçaların bir kısmı yerinde, bir kısmı değil). TOPLA BAŞLAMADI, hiçbir şey değişmedi. " +
+          ? "BAĞLA'dan sonra düzen değişmiş (kesim kısmen ya da Ctrl+Z ile geri alınmış: silinenlerin bir kısmı geri gelmiş ya da kesilen parçalar yok). TOPLA BAŞLAMADI, hiçbir şey değişmedi. " +
               "BAĞLA öncesi yedek sequence'la çalış ya da BAĞLA'yı Ctrl+Z ile tamamen geri al."
           : "Bu sequence BAĞLA'dan geçti: sesler kesildi (harici sesler çapalara, kamera sesleri harici sessiz aralıklara), oturumları bulduran tam kayıtlar artık yok → oturumlar güvenle " +
               "yeniden bulunamaz (tahmin edilmez). TOPLA BAŞLAMADI, hiçbir şey değişmedi. Yeniden toplamak için BAĞLA öncesi yedek sequence'ı kullan " +
@@ -328,7 +328,7 @@ export async function runCollect(): Promise<void> {
           `${nS} oturum çekim sırasıyla sequence başından dizilecek; ${plan.moves.length} klip taşınacak (oturum içi konumlar korunur).`,
           ...(dups.length ? [`ÇİFT KOPYA: ${drop.length} fazla kopya ilk adımda silinecek (hangileri: günlükte).`] : []),
           ...(a.vetoDecisions.length ? [`${a.vetoDecisions[0]}${a.vetoDecisions.length > 1 ? ` (+${a.vetoDecisions.length - 1} VETO daha)` : ""}`] : []),
-          ...(bs === "applied" || bs === "thinned" ? ["DİKKAT: bu sequence BAĞLA'dan geçti — TOPLA'dan sonra BAĞLA'ya tekrar bas."] : []),
+          ...(bs === "applied" || bs === "thinned" ? ["DİKKAT: bu sequence Bağla'dan geçti, Topla'dan sonra Bağla'ya tekrar bas."] : []),
           ...(notes.length ? [`Not: ${notes.join("; ")}.`] : []),
           `Önce yedek sequence alınır ("${ctx.name}" kopyası)${newV + newA ? `; ${newV + newA} track açılır` : ""}. Devam?`,
         ]

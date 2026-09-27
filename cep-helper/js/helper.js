@@ -632,13 +632,13 @@
         return jsx("spreadHelper_persist(" + literal(String(extId)) + ")", 10000).then(
           function (r) {
             state.persistent = !!(r && r.ok === true && r.result !== false);
-            log("arka sekmede kalıcılık (setExtensionPersistent): " + (state.persistent ? "açık" : "açılamadı" + (r && r.error ? " — " + r.error : "")));
+            log("arka sekmede kalıcılık (setExtensionPersistent): " + (state.persistent ? "istendi" : "istenemedi" + (r && r.error ? " — " + r.error : "")));
             emit("status");
             return state.persistent;
           },
           function (e) {
             state.persistent = false;
-            log("arka sekmede kalıcılık açılamadı: " + ((e && e.message) || e));
+            log("arka sekmede kalıcılık istenemedi: " + ((e && e.message) || e));
             emit("status");
             return false;
           }

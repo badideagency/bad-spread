@@ -124,14 +124,23 @@ function dropQuestion(line: string): string {
     .trim();
 }
 
-/** Dikkat satırının kısası (birleştirmek için): ilk ";", " (" ya da " — " öncesi. */
-const shortAttn = (l: string): string => (l.split(/;|\s\(|\s—\s/)[0] ?? l).trim().replace(/\.$/, "");
+/**
+ * Dikkat satırının kısası (birleştirmek için): ilk ";", " (" ya da " — " öncesi. Baştaki "DİKKAT:" atılır (birleşik satır zaten
+ * "DİKKAT —" ile başlar); sondaki "(+N … daha)" sayısı kalır.
+ */
+const shortAttn = (l: string): string => {
+  const s = l.trim().replace(/^DİKKAT:\s*/, "").replace(/\.$/, "");
+  const more = /\s\(\+\d+[^()]*\)$/.exec(s)?.[0] ?? "";
+  const head = (s.slice(0, s.length - more.length).split(/;|\s\(|\s—\s/)[0] ?? s).trim().replace(/\.$/, "");
+  return head.charAt(0).toLocaleUpperCase("tr") + head.slice(1) + more;
+};
 
 /**
  * Onay gövdesi: en çok `max` satır (başlık ayrı).
  *  - Soru cümleleri ve "Evet = / Hayır =" açıklamaları atılır (düğmeler söylüyor).
  *  - Birden çok dikkat satırı TEK satırda birleşir: "DİKKAT — KAMERA SESİ KORUNACAK: 2 aralıkta · KARIŞIK KANAL: 2 grupta …".
- *  - Sıra: ilk olgu satırı → dikkat satırı → silinecekler / yedek satırı → diğerleri. Sığmayan satır SESSİZCE düşmez: son satıra
+ *  - Sıra: ilk olgu satırı → dikkat satırı → silinecekler / yedek satırı → diğerleri. İlk satır zaten dikkat satırıysa (ŞÜPHELİ ÜYE,
+ *    PARK KAYDI, … soruların başlığı) o başta kalır, gerisi özgün sırasıyla. Sığmayan satır SESSİZCE düşmez: son satıra
  *    "(+N satır Sorun bildir raporunda)" eklenir (tam metin günlükte). (inceleme #9, M3)
  */
 function dialogBody(lines: string[], max = 3): string[] {
@@ -140,8 +149,9 @@ function dialogBody(lines: string[], max = 3): string[] {
   const rest = ls.filter((l) => !ATTENTION.test(l));
   const attnLine = attn.length > 1 ? `DİKKAT — ${attn.map(shortAttn).join(" · ")}` : attn[0];
   const prio = (l: string) => (/silinecek|yedek/i.test(l) ? 0 : 1);
-  const tail = rest.slice(1).sort((a, b) => prio(a) - prio(b));
-  const order = [...(rest[0] !== undefined ? [rest[0]] : []), ...(attnLine !== undefined ? [attnLine] : []), ...tail];
+  const lead = ls.length > 0 && ATTENTION.test(ls[0]) ? [] : rest.slice(0, 1);
+  const tail = rest.slice(lead.length).sort((a, b) => prio(a) - prio(b));
+  const order = [...lead, ...(attnLine !== undefined ? [attnLine] : []), ...tail];
   if (order.length <= max) return order;
   const out = order.slice(0, max);
   out[max - 1] += ` (+${order.length - max} satır Sorun bildir raporunda)`;
@@ -395,7 +405,7 @@ const HUMAN: [RegExp, string][] = [
   [/kamera klibi kırpılmış/, "Kırpılmış kamera klibi var; Dağıt başlamadı."],
   [/^Yeni düzende \d+ çakışma var/, "Yeni düzende klipler üst üste binerdi; Topla başlamadı."],
   [/^Plan kurulamadı/, "Plan kurulamadı; hiçbir şey değişmedi."],
-  [/grup bağlanamadı/, "Bazı gruplar bağlanamadı; kesim yerinde, Bağla'ya tekrar bas."],
+  [/grup bağlanamadı/, "Bazı gruplar bağlanamadı; kesim yerinde."], // ne yapılacağı ipucunda (ikinci deneme de düştüyse "tekrar basma")
   [/bağlama isteği başarısız/, "Spread Helper'a ulaşılamadı; kesim yerinde, Bağla'ya tekrar bas."],
   [/^Bu sequence BAĞLA'dan geçti/, "Bu sequence zaten bağlandı; yeniden toplamak için Bağla öncesi yedeği aç."],
   [/^BAĞLA'dan sonra düzen değişmiş/, "Bağla'dan sonra düzen değişmiş; yedek sequence'la çalış."],

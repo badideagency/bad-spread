@@ -204,6 +204,18 @@ silinmiyor — PASS. Bulgular ve düzeltmeler:
 | m9 | Menü yolu "Extensions" / "Extensions (Legacy)" karışık | her yerde "Window › Extensions (Legacy) › Spread Helper" |
 | NIT | yalnız bağlada "bütün öğeler yerinde" günlüğü; istemci zaman aşımı 90 sn (yardımcı 2 × 170 sn); "mono + stereo" her karışıklıkta; beklenmeyen hata başlığı "BAĞLA:"; ⚙ Ayarlar açıkken onay görünmez; `<style>` yeri; `sp-link href` | metin düzeltildi; 360 sn; gerçek tip adları; adım adı; onay ana görünüme döner; düzeltildi |
 
+**Düzeltmelerin doğrulaması (aynı alt ajan, 4d3a6db):** B1, M1–M5, m1–m6, m8, m9 ve NIT'ler doğrulandı (14 hedefli senaryo + 4
+ek senaryo; bağ dışında bırakma yolunda hiçbir klip silinmiyor; mantık dosyalarındaki her davranış farkı listedeki bir düzeltmeye
+karşılık geliyor). Kalanlar düzeltildi:
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| m7 | Başlık ("…Bağla'ya tekrar bas") ikinci deneme de düşünce ipucuyla ("tekrar basmak aynı sonucu verir") çelişiyordu | başlık "Bazı gruplar bağlanamadı; kesim yerinde." — ne yapılacağı yalnız ipucunda |
+| yeni | `dialogBody` başlığı dikkat satırı olan onaylarda (ŞÜPHELİ ÜYE, PARK KAYDI, AYRILAMAYAN, OTURUM SIRASI) başlığı ikinci sıraya itiyordu | ilk satır dikkat satırıysa başta kalır, gerisi özgün sırasıyla |
+| NIT | birleşik dikkat satırı "(+N aralık daha)" sayısını ve TOPLA'nın "Bağla'ya tekrar bas" talimatını düşürüyor, "DİKKAT — … · DİKKAT: …" | `shortAttn` sondaki "(+N … daha)"yı korur, baştaki "DİKKAT:"i atar; TOPLA özet satırı virgüllü |
+| NIT | Ctrl+Z sonrası durdurma metni "kesilen parçaların bir kısmı yerinde" diyordu | "kesim kısmen ya da Ctrl+Z ile geri alınmış (silinenlerin bir kısmı geri gelmiş ya da kesilen parçalar yok)" |
+| NIT | yardımcının günlüğü kalıcılık için "açık" diyordu | "istendi" |
+
 ## v1.0.0 ürünleştirme — mantık değişmedi
 
 > **v1.0.0 ürünleştirme — mantık değişmedi; açık risk: kırpma kalibrasyonu gerçek Premiere'de ilk BAĞLA'da ölçülecek.**
