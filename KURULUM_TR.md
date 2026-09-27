@@ -1,24 +1,25 @@
-# Spread 1.0.0 — Kurulum ve Kullanım (Türkçe)
+# Spread 1.1.0 — Kurulum ve Kullanım (Türkçe)
 
 Spread, çok kameralı çekimleri Premiere Pro'da düzenler. Sıra hep aynı:
 
-1. **SPREAD** — her klibi kendi track'ine dağıtır. Zamanlar değişmez.
+1. **Dağıt** (SPREAD) — her klibi kendi track'ine dağıtır. Zamanlar değişmez.
 2. **Clip → Synchronize** — senkronu Premiere yapar.
-3. **TOPLA** — oturumları (aynı anda kaydedilmiş kameralar ve sesler) bulur. Onları çekim sırasıyla sequence'ın başından dizer;
-   kameraları ve sesleri kendi track'lerine koyar.
+3. **Topla** (TOPLA) — oturumları (aynı anda kaydedilmiş kameralar ve sesler) bulur. Onları çekim sırasıyla sequence'ın başından
+   dizer; kameraları ve sesleri kendi track'lerine koyar.
 4. **Gözle kontrol** — tek elle adım bu.
-5. **BAĞLA** — harici sesleri (Zoom, DJI…) her oturumun kendi kamerasına göre keser ve her grubu tek bağ yapar.
+5. **Bağla** (BAĞLA) — harici sesleri (Zoom, DJI…) her oturumun kendi kamerasına göre keser ve her grubu tek bağ yapar.
 
-Her işlem önce kısa bir özet gösterip onay ister ve **önce yedek sequence** alır. Her adımdan sonra her klibi tick düzeyinde
-denetler. Bir şey tutmazsa **durur** ve ne yapacağını tek cümleyle söyler. Kendi başına düzeltme yapmaz.
+Her işlem önce kısa bir onay ister ve **önce yedek sequence** alır. Her adımdan sonra her klibi tick düzeyinde denetler. Bir şey
+tutmazsa **durur** ve ne yapacağını tek cümleyle söyler. Kendi başına düzeltme yapmaz. (Günlükte ve raporlarda işlemlerin eski
+adları geçer: SPREAD = Dağıt, TOPLA = Topla, BAĞLA = Bağla.)
 
 Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
 
 ---
 
-## 1) Kurulum (bir kez) — `Spread_Kurulum_v1.0.0.zip`
+## 1) Kurulum (bir kez) — `Spread_Kurulum_v1.1.0.zip`
 
-1. İndir: <https://github.com/badideagency/bad-spread/raw/main/release/Spread_Kurulum_v1.0.0.zip>
+1. İndir: <https://github.com/badideagency/bad-spread/raw/main/release/Spread_Kurulum_v1.1.0.zip>
 2. Zip'i bir klasöre **çıkart** (sağ tık → Tümünü ayıkla).
 3. **KUR.cmd**'ye çift tıkla. **Yönetici olarak çalıştırma.** Yönetici izni gerekmez. Betik şunları yapar:
    - CEP geliştirici kipini açar: `HKCU\Software\Adobe\CSXS.12` ve `CSXS.11` altında `PlayerDebugMode = "1"`. Spread Helper
@@ -29,10 +30,12 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
 4. Özette **"[ !! ] … spread.ccx dosyasına çift tıkla"** yazarsa, klasördeki `spread.ccx`'e çift tıkla. Creative Cloud kurar;
    "güvenilir kaynak" uyarısına **Yükle** de.
 5. **Premiere Pro'yu kapatıp aç.**
-6. **Window → Extensions (Legacy) → Spread Helper**: küçük paneli aç ve bir köşede açık bırak. Premiere onu çalışma alanında hatırlar.
-   Yeşil **"● Spread Helper çalışıyor"** yazmalı.
-7. **Window → UXP Plugins → Spread**: ana panel. Başlıkta **"Spread 1.0.0"** yazar. Sağ üstte yeşil **"● yardımcı hazır"**
-   görünmeli.
+6. **Window → UXP Plugins → Spread**: ana panel.
+7. **Window → Extensions (Legacy) → Spread Helper**: tek satırlık küçük panel (**"Spread Helper çalışıyor ●"**).
+   - Onu **Spread panelinin arkasına sekme olarak sürükle**, sonra çalışma alanını kaydet: **Window → Workspaces → Save as New
+     Workspace**. Ekranda tek panel kalır; yardımcı arkada çalışmaya devam eder (panel görünmezken de bellekte kalması için
+     Premiere'e "kalıcı" denir — Adobe'nin `app.setExtensionPersistent` komutu).
+   - Spread'in üstündeki nokta **yeşil** olmalı (üstüne gelince ayrıntı).
 
 **Kaldırmak:** **KALDIR.cmd**'ye çift tıkla. Kurulumun yaptığı her şeyi geri alır:
 - paneli ve yardımcıyı kaldırır;
@@ -42,49 +45,53 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
 
 ## 2) Panel
 
-- **Üst satır:** aktif sequence'ın adı ve yardımcı göstergesi.
-  - Yeşil ● **hazır**.
-  - Kırmızı ● **kapalı: Window → Extensions (Legacy) → Spread Helper'ı aç**.
-- **Üç adım:** her birinde büyük bir düğme var.
-  - Sıradaki adım **mavi çerçeveyle** gösterilir.
-  - Biten adımda **✓** ve kısa sonuç yazar ("4 oturum toplandı").
-  - SPREAD ile TOPLA arasında "Sonra Premiere'de: Clip › Synchronize" hatırlatması durur.
+- **Üstte:** "Spread" ve yardımcı noktası (yeşil = hazır, gri = kapalı; ayrıntı noktanın ipucunda). Altında küçük harfle aktif
+  sequence'ın adı.
+  - Yardımcı kapalıysa tek satır: **"Spread Helper paneli kapalı: Window › Extensions › Spread Helper"**. Dağıt ve Topla
+    yardımcısız da çalışır.
+- **Üç adım:** ① Dağıt, ② Topla, ③ Bağla.
+  - Yalnız **sıradaki** adımın düğmesi görünür (vurgulu). Biten adımda **✓** (uyarılıysa **!**); gelecektekiler soluk.
+  - Biten bir adımı yeniden yapmak için **adının üstüne tıkla → "Yeniden çalıştır"**.
+  - Dağıt'tan sonra "Sonra: Clip › Synchronize" hatırlatması çıkar.
   - ✓ işaretleri bu panelin bu sequence'ta yaptığı işlere göredir. Bir işlemi elle geri aldıysan ✓ kalabilir; işlemler yine kendi
     denetimlerini yapar.
-- **İşlem sırasında:** ilerleme çubuğu ve tek satır ne yapıldığı ("Oturum 2–4/4 yerine taşınıyor…").
-- **Onay penceresi:** en çok 5 satırlık özet. Dikkat gerektiren satırlar **sarı** yazılır: ÇİFT KOPYA, VETO, ŞÜPHELİ, KAMERA SESİ
-  KORUNACAK, SESSİZ KALACAK… Tam metin **"Ayrıntı ▸"** altında.
-- **Sonuç:** tek cümle ve ne yapılacağı ("Beğenmezsen Ctrl+Z × 5 ya da yedek sequence …"). Teknik ayrıntı **"Ayrıntı ▸"** altında.
-- **Sorun bildir:** tek bir rapor hazırlar. İçinde sürümler, Durum raporu, son TOPLA/BAĞLA günlükleri, kalibrasyon sonucu, yardımcı
-  durumu ve son hata vardır.
+- **Altta tek satır:** işlem sırasında ilerleme çubuğu ve ne yapıldığı ("Oturum 2–4/4 yerine taşınıyor…"); bitince sonuç ("4 oturum
+  toplandı."). Hata **kırmızı** tek satırdır; altındaki **"Ne yapmalıyım?"** ne yapılacağını söyler ("Ctrl+Z × 5 ya da yedek
+  sequence …"). Teknik ayrıntı ana ekranda yok — günlükte ve Sorun bildir raporunda.
+- **Onay:** başlık + en çok 3 satır + **[Vazgeç] [Devam]**. Dikkat gerektiren şeyler (ÇİFT KOPYA, VETO, ŞÜPHELİ, KAMERA SESİ
+  KORUNACAK, SESSİZ KALACAK, KARIŞIK KANAL, EKSİK…) kalın ve önce. Tam metin günlükte (→ Sorun bildir).
+  - **"Şüpheli klipler"** sorusunda düğmeler **[Oturumda kalsın] [Park'a al]**: "Oturumda kalsın" işlemi sürdürür.
+- **Sorun bildir** (sağ altta): tek bir rapor hazırlar. İçinde sürümler, Durum raporu, son Topla/Bağla günlükleri, kalibrasyon
+  sonucu, yardımcı durumu ve son hata vardır.
   - Rapor panoya kopyalanır ve masaüstüne `SpreadRapor_<tarih>.txt` olarak kaydedilir. Masaüstüne yazılamazsa
     `%APPDATA%\BadIdeaAgency\Spread\` altına kaydedilir.
   - Bir şey ters gittiğinde bunu bana gönder. Düğme işlem sürerken de (ör. onay beklerken) çalışır.
   - Premiere çöktüyse ya da panel yeniden açıldıysa rapor **önceki oturumların günlüğünü** de içerir: günlük dosyası
     önceki açılışları da tutar (son ~4000 satır).
-- **Gelişmiş ▸** (varsayılan kapalı):
-  - kaynak eşleme (hangi ses hangi A track'e, "Sil");
+- **⚙ Ayarlar** (sol altta; ayrı görünüm, **← Geri** ile dönülür):
+  - ses kaynakları → A track (hangi ses hangi A track'e, "Sil");
   - güçlü bağ eşiği ve oturum arası boşluk;
-  - yardımcı ayrıntısı (gerçek hata metni);
-  - Durum raporu;
+  - Spread Helper ayrıntısı (gerçek hata metni) ve **Yeniden dene**;
+  - Durum raporu (+ **Raporu kopyala**);
   - ayrıntılı günlük.
 - Ayrıntılı günlük her zaman arka planda da tutulur: `%APPDATA%\BadIdeaAgency\Spread\spread-gunluk.txt`.
+- Tema: panel Premiere'in kendi (Spectrum) düğme ve yazılarını kullanır, açık / koyu temaya kendisi uyar.
 
 ## 3) Günlük kullanım
 
 - Gerçek projenin bir kopyasında çalışmak her zaman iyi fikir: **File → Save As…**
 - Timeline'da **Linked Selection** (zincir simgesi) **açık** olsun.
 
-### a) SPREAD → Synchronize (bu kopyada daha önce yapmadıysan)
+### a) Dağıt → Synchronize (bu kopyada daha önce yapmadıysan)
 
-- **SPREAD** → **Evet**. Sonra **Clip → Synchronize**. Menü gri ise: timeline'a tıkla, **Ctrl+A**, sağ tık → **Synchronize → Audio**.
+- **Dağıt** → **Devam**. Sonra **Clip → Synchronize**. Menü gri ise: timeline'a tıkla, **Ctrl+A**, sağ tık → **Synchronize → Audio**.
 - **"N kamera klibi kırpılmış … Spread BAŞLAMADI"** derse, o kamera kliplerinin başı ya da sonu kesilmiş demektir. Hiçbir şey değişmedi.
   - Kırpmayı kaldır: klibi tam boy yap.
   - Ya da o kameraları SPREAD'den ayrı tut.
 
-### b) Ses kaynakları ve ayarlar (TOPLA'dan ÖNCE)
+### b) Ses kaynakları ve ayarlar (Topla'dan ÖNCE)
 
-- **Gelişmiş ▸** altında **"Harici ses kaynakları → A track"** listesinde sequence'taki kaynaklar görünür: "Zoom Tr1", "Zoom Tr2",
+- **⚙ Ayarlar** altında **"Ses kaynakları → A track"** listesinde sequence'taki kaynaklar görünür: "Zoom Tr1", "Zoom Tr2",
   "Zoom TrLR", "DJI"… Görünmezse **Kaynakları tara**'ya bas.
 - Her kaynağa bir **A track** seç ya da **"Sil"** de (ör. TrLR'yi istemiyorsan). Panel seçimini hatırlar.
   Bu seçimi **TOPLA'dan önce** yap. TOPLA kullandığı eşlemeyi ve eşiği **hatırlar**. Sonradan değiştirirsen BAĞLA hiçbir şeye
@@ -93,11 +100,11 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
   12 Eylül verinde doğru eşleşmelerin en düşüğü %97.96, yanlış çakışmaların en yükseği %49 çıktı.
 - **Oturum arası boşluk (sn)**: TOPLA'da oturumların arasına konan boşluk; varsayılan 2.
 
-### c) TOPLA
+### c) Topla
 
-- **TOPLA**'ya bas. Panel önce bulduklarını ayrıntılı günlüğe yazar: güçlü bağlar (yüzdeleriyle), oturumlar, sahipsiz kayıtlar.
+- **Topla**'ya bas. Panel önce bulduklarını ayrıntılı günlüğe yazar: güçlü bağlar (yüzdeleriyle), oturumlar, sahipsiz kayıtlar.
 - Sonra onay ister. Özette oturum ve klip sayısı, silinecek çiftler ve dikkat gerektiren satırlar görünür. Tam metin
-  **"Ayrıntı ▸"** altında; örnek:
+  günlükte (⚙ Ayarlar ▸ Günlük, Sorun bildir raporu); örnek:
   ```
   TOPLA — 4 oturum, sırayla sequence başından (aralarında 2.000 sn):
     O1  Zoom 260912_133224 + A: A038C001_260912BD + Sony: C0142  → 0.000 s'den başlar
@@ -178,9 +185,9 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
 - Oturum içinde Zoom ile kamera, senkronun bıraktığı gibi hizalı kalmalı.
 - Beğenmezsen: panelde yazan sayıda **Ctrl+Z** bas ya da yedek sequence'ı kullan. Genelde 4 kez; çift kopya silindiyse 5 kez.
 
-### e) BAĞLA (KES + bağla)
+### e) Bağla (KES + bağla)
 
-- Spread panelinde **BAĞLA**'ya bas.
+- Spread panelinde **Bağla**'ya bas.
   - Önce yardımcıya (köprü) bakar. Köprü yoksa **durmaz**: günlüğe gerçek hatayı yazar ve yalnız KES yapacağını söyler.
   - Sonra planı yazar: oturumlar, her oturumun grupları, çapalar (grubun en uzun kamera klibi) ve ses parçaları. Ardından sorar.
   - Kesim **yalnız oturum içinde**: bir Zoom/DJI kaydı sadece kendi oturumundaki kameraların çapasına göre kesilir.
@@ -225,8 +232,8 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
   - Aynı değilse **hiçbir şey yapmaz** ve farkı yazar. Örnekler: KES'ten sonra bir parça kaydırılmış ya da silinmiş, başka bir sequence açık, KES geri alınmış.
   - Bir kısım grup bağlanamazsa hangilerinin bağlandığını tek tek yazar. Yeniden basmak güvenlidir.
   - Spread'in **Durum raporu** panelde yapılan bağlamayı da gösterir.
-  - Plan dosyası yazılamadıysa Spread bunu söyler ve planı **Gelişmiş ▸ Durum raporu** kutusuna koyar. **Raporu kopyala** → Spread
-    Helper panelinde **Ayrıntı ▸** → **Planı yapıştır** kutusuna yapıştır → altındaki **BAĞLA**.
+  - Plan dosyası yazılamadıysa Spread bunu söyler ve planı **⚙ Ayarlar ▸ Durum raporu** kutusuna koyar. **Raporu kopyala** →
+    Spread Helper panelinde **durum satırına tıkla** → **Planı yapıştır** kutusuna yapıştır → altındaki **Bağla**.
 - **KALİBRASYON** nedir: panel, Premiere'in dört kırpma komutunun (SetOutPoint, SetEnd, SetInPoint, SetStart) ne yaptığını
   tahmin etmez, **ölçer**.
   - Nasıl:
@@ -238,7 +245,7 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
   - Toplam **7 adım** sürer ve geri alma geçmişine 7 kayıt ekler. Düzeni değiştirmez.
   - Sonuç bu sequence için saklanır. Sonraki BAĞLA'lar yeniden ölçmez; Premiere sürümü değişirse yeniden ölçer.
     Premiere sürümü okunamıyorsa sonuç saklanmaz ve her BAĞLA'da yeniden ölçülür.
-  - Ayrıntılı günlükte (Gelişmiş ▸ Günlük ya da sonucun "Ayrıntı ▸"ı) yeşil **"KALİBRASYON SONUCU (kanıtlanmış — Premiere …)"**
+  - Ayrıntılı günlükte (⚙ Ayarlar ▸ Günlük) **"KALİBRASYON SONUCU (kanıtlanmış — Premiere …)"**
     bloğu çıkar. **Sorun bildir** raporu da bunu içerir. **Bu bloğu bana getir**; handoff'a gerçek ölçüm
     olarak işleyeceğim. Aynı bilgi Durum raporunda da var.
   - Sonra kırpma, ölçülen kurala göre yapılır:
@@ -260,8 +267,19 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
   düzende çalışır. Yedek sequence'ta çalışıyorsan orada da önce TOPLA'ya bas.
 - **"düzen TOPLA düzeninde değil"** ya da **"Ayar TOPLA'dan sonra değişti"** derse: TOPLA'dan sonra bir klip yer değiştirmiş, eşleme
   ya da eşik değişmiş. Hiçbir şey değişmedi. TOPLA'ya bas, sonra BAĞLA'ya.
+- **Mono + stereo (v1.1.0):** Premiere bir bağda farklı kanal tipindeki sesleri kabul etmiyor (Adobe: bağdaki bütün ses klipleri
+  aynı kanal tipinde olmalı). Bu yüzden:
+  - **Zoom TrLR** (stereo karışım) için seçim yapmadıysan varsayılan **"Sil"**dir (⚙ Ayarlar'dan değiştirilebilir).
+  - Onayda bir grupta mono + stereo varsa tek satır: **"KARIŞIK KANAL: N grupta mono + stereo…"** (tipler Spread Helper'dan okunur).
+  - Premiere grubu reddederse yardımcı, grubun asıl tipinden (en çok sesin tipi; eşitse en üstteki A track'inki) farklı sesleri
+    **çıkarıp grubu yeniden bağlar**. Çıkarılanlar **bağ dışında, yerinde** kalır — **hiçbir klip silinmez**; sonuç satırında
+    "N ses bağ dışında kaldı" yazar, hangileri olduğu günlükte / Sorun bildir raporunda.
+  - Stereo kamera sesinin korunan parçası da buna dahil. Onu tek kanala (mono) çevirmenin belgelenmiş bir yolu yok (Premiere'in
+    Modify › Audio Channels'ı timeline'daki kliplere etki etmiyor) → bağ dışında kalır.
+- **Kesimden sonra bir parçayı elle sildiysen** ve Bağla'ya yeniden bastıysan: Spread durmaz, **var olanları bağlar**, eksikleri yazar
+  (onayda "EKSİK: N öğe"). Bir grubun **çapa kamerası** silindiyse gruplar değiştiği için hiçbir şey yapmadan durur.
 - Bağlama adımında yardımcı düşerse (**"… grup bağlanamadı (kesme/silme doğru ve yerinde)"**), yardımcıyı düzelt ve **BAĞLA'ya tekrar bas**,
-  ya da Spread Helper panelinde **Ayrıntı ▸ → BAĞLA**'ya bas. Panel kesimi hatırlar; bu kez **yalnız bağlar**. Yeniden kesmez, yedek almaz.
+  ya da Spread Helper panelinde durum satırına tıkla → **Bağla**. Panel kesimi hatırlar; bu kez **yalnız bağlar**. Yeniden kesmez, yedek almaz.
 - **BAĞLA'dan sonra TOPLA** çalışmaz. Harici sesler kesildiği için oturumları bulduran tam kayıtlar artık yok; panel tahmin etmez.
   Yeniden toplamak istersen BAĞLA öncesi yedek sequence'ı kullan ya da BAĞLA'yı Ctrl+Z ile tamamen geri al.
 - **"… YARIM hâlde"** derse: önceki bir TOPLA ya da BAĞLA durmuş ve geri alınmamış. Önce o mesajdaki kadar Ctrl+Z bas (ya da yedeği kullan).
@@ -274,7 +292,7 @@ Ekran görüntüleri: [docs/ekran](docs/ekran) (mock ortamında üretildi).
   sequence'tır.
 - **Panel durdu ya da tuhaf bir şey oldu:** **Sorun bildir**'e bas ve raporu gönder.
 - **Düğmeler gri:** aktif sequence yok → timeline'a bir kez tıkla, 2 sn bekle.
-- **"yardımcı kapalı":** Window → Extensions (Legacy) → Spread Helper panelini aç. Hâlâ kapalıysa: **Gelişmiş ▸ Yardımcı**'daki
+- **"Spread Helper paneli kapalı":** Window → Extensions (Legacy) → Spread Helper panelini aç. Hâlâ kapalıysa: **⚙ Ayarlar ▸ Spread Helper**'daki
   gerçek hata metnini getir. Bu arada bağlama için Spread Helper panelindeki **BAĞLA**'yı kullanabilirsin; köprü gerekmez.
 - **Spread Helper menüde yok:** KUR.cmd'yi yeniden çalıştır ve Premiere'i yeniden başlat. Hâlâ yoksa: CEP günlüğü ile bakarız
   (Sorun bildir + haber ver).

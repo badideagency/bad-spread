@@ -255,8 +255,8 @@ async function handToPanel(ctx: SeqContext, bind: BindRecord, lf: LayoutFrame, w
     "warn",
     `Kesim tamam; ${bind.groups.length} grup bağlanmayı bekliyor.`,
     w.ok
-      ? "Spread Helper panelinde BAĞLA'ya bas (Window → Extensions (Legacy) → Spread Helper)."
-      : "Plan dosyası yazılamadı: Gelişmiş → 'Raporu kopyala' → Spread Helper'da 'Planı yapıştır' → BAĞLA."
+      ? "Spread Helper panelinde Bağla'ya bas (Window › Extensions › Spread Helper)."
+      : "Plan dosyası yazılamadı: ⚙ Ayarlar → Raporu kopyala → Spread Helper'da durum satırına tıkla → Planı yapıştır → Bağla."
   );
 }
 
@@ -473,10 +473,11 @@ async function linkOnly(ctx: SeqContext, rec: CollectRecord, bind: BindRecord, s
     red.missing.length
       ? [
           `Kesim yerinde; ${linkable.length} grup yalnız bağlanacak.`,
-          `EKSİK: ${red.missing.length} öğe kesimden sonra silinmiş / taşınmış — onlar bağlanmaz (Ayrıntı).`,
+          `EKSİK: ${red.missing.length} öğe kesimden sonra silinmiş / taşınmış — onlar bağlanmaz.`,
           "Kesme / silme yok, yedek alınmaz. Devam?",
         ]
-      : undefined
+      : [`Kesim yerinde; ${linkable.length} grup yalnız bağlanacak.`, "Kesme / silme yok, yedek alınmaz. Devam?"],
+    { title: `${linkable.length} grup bağlansın mı?` }
   );
   if (ans !== "Evet") {
     log("İptal edildi — hiçbir şey değişmedi.", "warn");
@@ -681,19 +682,20 @@ export async function runBind(): Promise<void> {
           ? [`KARIŞIK KANAL: ${chk.mixed.length} grupta mono + stereo; Premiere reddederse farklı olanlar bağ dışında kalır (silinmez).`]
           : []),
         ...(plan.silent.length
-          ? [`SESSİZ KALACAK: ${plan.silent[0]}${plan.silent.length > 1 ? ` (+${plan.silent.length - 1} aralık daha, Ayrıntı)` : ""}`]
+          ? [`SESSİZ KALACAK: ${plan.silent[0]}${plan.silent.length > 1 ? ` (+${plan.silent.length - 1} aralık daha)` : ""}`]
           : []),
         ...((): string[] => {
           const n = [
             plan.cuts.length && !cached ? "ilk kesimde kırpma komutları önce geçici kopyalarda ölçülür (7 adım, düzen değişmez)" : "",
             ping.ok ? "" : "yardımcı kapalı: kesimden sonra Spread Helper panelinde BAĞLA'ya basacaksın",
             plan.camless.length ? `${plan.camless.length} kamerasız oturumun seslerine dokunulmaz` : "",
-            plan.warnings.length ? `${plan.warnings.length} uyarı (Ayrıntı)` : "",
+            plan.warnings.length ? `${plan.warnings.length} uyarı` : "",
           ].filter(Boolean);
           return n.length ? [`Not: ${n.join("; ")}.`] : [];
         })(),
         edits ? `Önce yedek sequence alınır ("${ctx.name}" kopyası). Devam?` : "Kesme/silme yok; yalnız bağlanacak. Devam?",
-      ]
+      ],
+      { title: edits ? `${groups.length} grup kesilip bağlansın mı?` : `${groups.length} grup bağlansın mı?` }
     );
     if (ans !== "Evet") {
       log("İptal edildi — hiçbir şey değişmedi.", "warn");

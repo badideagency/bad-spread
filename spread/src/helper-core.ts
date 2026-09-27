@@ -5,4 +5,4 @@
 export { classify } from "./classify";
 export { compareLinkGroups, groupsFromLayout, layoutGroupItems, linkItemKey, linkItemOf, reduceToPresent } from "./sessions";
 export { channelOutliers, channelTypeName } from "./channels";
-export const CORE_VERSION = "1.0.0";
+export const CORE_VERSION = "1.1.0";

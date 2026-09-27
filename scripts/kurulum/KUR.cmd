@@ -1,8 +1,8 @@
 @echo off
 setlocal EnableExtensions
-title Spread 1.0.0 kurulumu
+title Spread 1.1.0 kurulumu
 rem ---------------------------------------------------------------------------------------------------------------
-rem Spread 1.0.0 - tek tik kurulum (Windows). Yonetici izni ISTEMEZ; yalniz kullanicinin kendi alanina yazar:
+rem Spread 1.1.0 - tek tik kurulum (Windows). Yonetici izni ISTEMEZ; yalniz kullanicinin kendi alanina yazar:
 rem   a) HKCU\Software\Adobe\CSXS.12 ve CSXS.11: PlayerDebugMode = "1" (imzasiz Spread Helper icin; onceki degerler saklanir)
 rem   b) %APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper  (Spread Helper, eskisinin ustune)
 rem   c) spread.ccx -> Adobe UnifiedPluginInstallerAgent /install (Adobe belgesi: developer.adobe.com/premiere-pro/uxp/plugins/
@@ -33,7 +33,7 @@ if not errorlevel 1 (
 if not exist "%SRC%\CSXS\manifest.xml" goto :nozip
 if not exist "%CCX%" goto :nozip
 
-echo Spread 1.0.0 kuruluyor...
+echo Spread 1.1.0 kuruluyor...
 echo.
 
 rem a) onceki PlayerDebugMode degerlerini (yalniz ILK kurulumda) sakla, sonra "1" yap
@@ -70,7 +70,7 @@ if errorlevel 1 (set "R_PANEL=HATA") else (set "R_PANEL=OK")
 :summary
 echo.
 echo ================================================================
-echo   Spread 1.0.0 kurulumu
+echo   Spread 1.1.0 kurulumu
 echo ================================================================
 if "%R_DEBUG%"=="OK" echo   [tamam] Gelistirici kipi PlayerDebugMode = 1 - CSXS.11 ve CSXS.12
 if not "%R_DEBUG%"=="OK" echo   [HATA ] PlayerDebugMode yazilamadi
@@ -82,9 +82,11 @@ if "%R_PANEL%"=="YOK" echo   [ !!  ] Adobe kurucusu bulunamadi - spread.ccx dosy
 echo.
 echo   Simdi:
 echo     1. Premiere Pro'yu KAPATIP yeniden ac.
-echo     2. Window ^> Extensions (Legacy) ^> Spread Helper   - kucuk paneli ac, acik birak.
-echo     3. Window ^> UXP Plugins ^> Spread                  - ana paneli ac.
+echo     2. Window ^> UXP Plugins ^> Spread                  - ana paneli ac.
 echo        Menude Spread yoksa: spread.ccx dosyasina cift tikla.
+echo     3. Window ^> Extensions (Legacy) ^> Spread Helper   - tek satirlik kucuk panel.
+echo        Onu Spread panelinin ARKASINA sekme olarak surukle, calisma alanini kaydet
+echo        (Window ^> Workspaces ^> Save as New Workspace): ekranda tek panel kalir.
 echo.
 echo   Kaldirmak icin: KALDIR.cmd  -  Kullanim: OKU_BENI.txt
 echo ================================================================

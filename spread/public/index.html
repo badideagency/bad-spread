@@ -6,303 +6,136 @@
     <script defer src="./index.js"></script>
   </head>
   <style>
-    /* Spread v1.0.0 — Premiere koyu temasına uyumlu, dar panelde (≥ 300 px) tek sütun. UXP sınırları: flex "gap", "font" kısaltması,
-       animasyon ve <details> yok → boşluklar margin'le, katlı bölümler JS ile. */
-    /* sabit koyu palet: Premiere'in açık temasında da kartlar okunur kalsın (host rengi yalnız arka plan için kullanılmaz) */
-    :root {
-      --bg: #232323;
-      --fg: #dddddd;
-      --muted: #9a9a9a;
-      --line: #3c3c3c;
-      --card: #2b2b2b;
-      --accent: #378ef0;
-      --ok: #4cc27a;
-      --warn: #e8b04a;
-      --err: #ff6b6b;
-    }
+    /* Spread v1.1.0 — sade panel. Premiere'in kendi panelleri gibi: Spectrum UXP bileşenleri (sp-heading, sp-body, sp-detail,
+       sp-button, sp-action-button, sp-link, sp-progressbar, sp-divider) temayı (açık / koyu) kendileri izler. Arka plan ve yazı rengi
+       VERİLMEZ (panel Premiere'in zeminini kullanır); tek özel renk hata satırı (kırmızı). UXP sınırları: flex "gap", "font"
+       kısaltması, animasyon ve <details> yok → boşluklar margin'le, görünümler JS ile. */
     body {
-      color: var(--fg);
-      background-color: var(--bg);
-      font-size: 12px;
-      line-height: 16px;
-      padding: 10px 12px 14px 12px;
       margin: 0;
+      padding: 10px 12px 12px 12px;
     }
-    #topbar {
+    .view {
+      display: flex;
+      flex-direction: column;
+    }
+    .row {
       display: flex;
       flex-direction: row;
-      flex-wrap: wrap;
       align-items: center;
-      justify-content: space-between;
-      padding: 0 0 8px 0;
-      margin: 0 0 10px 0;
-      border-bottom: 1px solid var(--line);
     }
-    #brand {
-      font-size: 13px;
-      font-weight: bold;
-      margin: 0 10px 2px 0;
-    }
-    #ver {
-      color: var(--muted);
-      font-weight: normal;
-      margin-left: 4px;
-    }
-    #status {
+    .grow {
       flex-grow: 1;
-      margin: 0 10px 2px 0;
-    }
-    .seq.ok {
-      color: var(--fg);
-      font-weight: bold;
-    }
-    .seq.warn {
-      color: var(--warn);
-    }
-    #helperline {
-      display: flex;
-      flex-direction: row;
-      align-items: center;
-      margin: 0 0 2px 0;
     }
     .dot {
       width: 8px;
       height: 8px;
       border-radius: 4px;
-      margin-right: 6px;
-      background-color: var(--muted);
+      margin-left: 8px;
+      background-color: #8e8e8e;
     }
     .dot.on {
-      background-color: var(--ok);
+      background-color: #2d9d78;
     }
-    .dot.off {
-      background-color: var(--err);
+    #status {
+      margin: 0 0 2px 0;
     }
-    #helper-short {
-      color: var(--muted);
-      font-size: 11px;
+    #helperline {
+      display: none;
+      margin: 2px 0 0 0;
+    }
+    sp-divider {
+      margin: 8px 0;
     }
 
+    /* adımlar: ① Dağıt ✓ / ② Topla [Topla] / ③ Bağla */
     .step {
-      background-color: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 10px;
-      margin: 0 0 8px 0;
+      min-height: 32px;
+      margin: 2px 0;
     }
-    .step.next {
-      border-color: var(--accent);
+    .step-name {
+      cursor: pointer;
     }
-    .step-head {
-      display: flex;
-      flex-direction: row;
-      align-items: center;
-      margin: 0 0 8px 0;
+    .step.future .step-name {
+      opacity: 0.45;
+      cursor: default;
     }
-    .num {
-      width: 22px;
-      height: 22px;
-      border-radius: 11px;
-      border: 1px solid var(--muted);
-      color: var(--muted);
+    .mark {
+      width: 18px;
       text-align: center;
-      line-height: 20px;
-      font-weight: bold;
-      margin-right: 8px;
-      flex-shrink: 0;
+      margin-right: 6px;
     }
-    .step.next .num {
-      border-color: var(--accent);
-      color: var(--accent);
+    .rerun {
+      display: none;
+      margin: 0 0 4px 26px;
     }
-    .step.done .num {
-      border-color: var(--ok);
-      background-color: var(--ok);
-      color: #1b1b1b;
-    }
-    .step.warn .num {
-      border-color: var(--warn);
-      color: var(--warn);
-    }
-    .step-title {
-      font-size: 14px;
-      font-weight: bold;
-    }
-    .step-desc {
-      display: block;
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: normal;
-    }
-    .step-res {
-      font-size: 11px;
-      color: var(--ok);
-    }
-    .step.warn .step-res {
-      color: var(--warn);
-    }
-    .step sp-button {
-      width: 100%;
-    }
-    .between {
-      color: var(--muted);
-      font-size: 11px;
-      margin: -2px 0 8px 30px;
-    }
-    .between.next {
-      color: var(--accent);
-      font-weight: bold;
+    #sync-hint {
+      display: none;
+      margin: -2px 0 4px 26px;
     }
 
+    /* alt: tek satır sonuç / ilerleme */
     #progress {
       display: none;
-      margin: 4px 0 10px 0;
     }
-    #progress-text {
-      margin: 0 0 4px 0;
+    #progress sp-progressbar {
+      width: 100%;
     }
-    .bar {
-      height: 6px;
-      border-radius: 3px;
-      background-color: var(--line);
+    #result {
+      display: none;
     }
-    #progress-fill {
-      height: 6px;
-      border-radius: 3px;
-      width: 2%;
-      background-color: var(--accent);
+    #result.err #result-head {
+      color: #e34850;
+    }
+    #result-help {
+      display: none;
+      margin: 2px 0 0 0;
+    }
+    #result-hint {
+      display: none;
+      margin: 2px 0 0 0;
     }
 
+    /* onay: başlık + en çok 3 satır + [Vazgeç] [Devam] */
     #ask {
       display: none;
-      border: 2px solid var(--warn);
-      border-radius: 6px;
-      padding: 10px;
-      margin: 0 0 10px 0;
-      background-color: var(--card);
-    }
-    #ask-title {
-      font-weight: bold;
-      color: var(--warn);
       margin: 0 0 6px 0;
     }
-    #ask-summary div {
-      margin: 0 0 4px 0;
+    #ask-summary sp-body {
+      margin: 2px 0;
     }
-    #ask-summary .attn {
-      color: var(--warn);
-      font-weight: bold;
-    }
-    #ask-text {
-      white-space: pre-wrap;
-      color: var(--muted);
-      font-size: 11px;
+    #ask-text,
+    #ask-more,
+    #ask-more-toggle {
+      display: none;
     }
     #ask .buttons {
-      display: flex;
-      flex-direction: row;
+      justify-content: flex-end;
       margin: 8px 0 0 0;
     }
     #ask .buttons sp-button {
-      margin-right: 8px;
+      margin-left: 8px;
     }
 
-    #result {
-      display: none;
-      border-radius: 6px;
-      padding: 8px 10px;
-      margin: 0 0 10px 0;
-      background-color: var(--card);
-      border-left: 3px solid var(--muted);
-    }
-    #result.ok {
-      border-left-color: var(--ok);
-    }
-    #result.warn {
-      border-left-color: var(--warn);
-    }
-    #result.err {
-      border-left-color: var(--err);
-    }
-    #result-head {
-      font-weight: bold;
-    }
-    #result.ok #result-head {
-      color: var(--ok);
-    }
-    #result.warn #result-head {
-      color: var(--warn);
-    }
-    #result.err #result-head {
-      color: var(--err);
-    }
-    #result-hint {
-      margin: 4px 0 0 0;
-    }
-    #result-more {
-      margin: 4px 0 0 0;
-      max-height: 220px;
-      overflow-y: scroll;
-      font-family: monospace;
-      font-size: 10px;
-      line-height: 13px;
-      color: var(--muted);
-      white-space: pre-wrap;
-    }
-
-    .toggle {
-      color: var(--muted);
-      font-size: 11px;
-      margin: 6px 0 0 0;
-      cursor: pointer;
-    }
-    .toggle:hover {
-      color: var(--fg);
-    }
-    .section-toggle {
-      margin: 14px 0 6px 0;
-      padding: 8px 0 0 0;
-      border-top: 1px solid var(--line);
-      font-size: 12px;
-    }
-    #issue {
-      display: flex;
-      flex-direction: row;
-      flex-wrap: wrap;
-      align-items: center;
-      margin: 4px 0 0 0;
+    #footer {
+      margin: 10px 0 0 0;
     }
     #issue-note {
-      color: var(--muted);
-      font-size: 11px;
+      display: none;
       margin: 4px 0 0 0;
     }
     #issue-text {
       display: none;
       width: 100%;
-      height: 100px;
-      font-family: monospace;
-      font-size: 10px;
+      height: 80px;
       margin: 4px 0 0 0;
     }
-    #adv,
-    #ask-more,
-    #result-more {
+
+    /* ⚙ Ayarlar görünümü */
+    #settings {
       display: none;
     }
-
-    .label {
-      margin: 10px 0 4px 0;
-      color: var(--muted);
-    }
-    .row {
-      display: flex;
-      flex-direction: row;
-      flex-wrap: wrap;
-      margin: 0 0 4px 0;
-    }
-    .row sp-button {
-      margin: 0 6px 6px 0;
+    .section {
+      margin: 12px 0 4px 0;
     }
     .map-row {
       margin: 2px 0;
@@ -312,132 +145,137 @@
       margin: 2px 0;
     }
     .settings input {
-      width: 60px;
-    }
-    #helper {
-      color: var(--muted);
-      margin: 0 0 6px 0;
+      width: 64px;
     }
     #log {
-      border: 1px solid var(--line);
-      border-radius: 4px;
-      padding: 6px;
-      height: 240px;
+      height: 220px;
       overflow-y: scroll;
       font-family: monospace;
       font-size: 10px;
       line-height: 13px;
     }
-    #log div {
-      margin-bottom: 1px;
-    }
     #report {
       width: 100%;
-      height: 120px;
+      height: 110px;
       font-family: monospace;
       font-size: 10px;
+    }
+    .buttons-row sp-button,
+    .buttons-row sp-action-button {
+      margin: 0 6px 6px 0;
     }
   </style>
 
   <body>
-    <div id="topbar">
-      <div id="brand">Spread<span id="ver">1.0.0</span></div>
-      <div id="status" class="seq warn">Durum okunuyor…</div>
-      <div id="helperline"><div id="helper-dot" class="dot"></div><span id="helper-short">yardımcı kontrol ediliyor…</span></div>
-    </div>
-
-    <div id="step-spread" class="step next">
-      <div class="step-head">
-        <div id="num-spread" class="num">1</div>
-        <div>
-          <div class="step-title">SPREAD <span class="step-desc">her klip kendi track'ine</span></div>
-          <div id="res-spread" class="step-res"></div>
-        </div>
-      </div>
-      <sp-button id="btn-spread" size="l" variant="cta" disabled="true">SPREAD</sp-button>
-    </div>
-    <div id="sync-hint" class="between">↓ Sonra Premiere'de: Clip › Synchronize (Audio)</div>
-
-    <div id="step-topla" class="step">
-      <div class="step-head">
-        <div id="num-topla" class="num">2</div>
-        <div>
-          <div class="step-title">TOPLA <span class="step-desc">oturumları sırala, track'lere koy</span></div>
-          <div id="res-topla" class="step-res"></div>
-        </div>
-      </div>
-      <sp-button id="btn-collect" size="l" variant="secondary" disabled="true">TOPLA</sp-button>
-    </div>
-
-    <div id="step-bagla" class="step">
-      <div class="step-head">
-        <div id="num-bagla" class="num">3</div>
-        <div>
-          <div class="step-title">BAĞLA <span class="step-desc">sesleri kes ve kameralara bağla</span></div>
-          <div id="res-bagla" class="step-res"></div>
-        </div>
-      </div>
-      <sp-button id="btn-bind" size="l" variant="secondary" disabled="true">BAĞLA</sp-button>
-    </div>
-
-    <div id="progress">
-      <div id="progress-text"></div>
-      <div class="bar"><div id="progress-fill"></div></div>
-    </div>
-
-    <div id="ask">
-      <div id="ask-title">Onay</div>
-      <div id="ask-summary"></div>
-      <div id="ask-more-toggle" class="toggle">Ayrıntı ▸</div>
-      <div id="ask-more"><div id="ask-text"></div></div>
-      <div class="buttons">
-        <sp-button id="ask-yes" variant="cta">Evet</sp-button>
-        <sp-button id="ask-no" variant="secondary">Hayır</sp-button>
-      </div>
-    </div>
-
-    <div id="result">
-      <div id="result-head"></div>
-      <div id="result-hint"></div>
-      <div id="result-more-toggle" class="toggle">Ayrıntı ▸</div>
-      <div id="result-more"></div>
-    </div>
-
-    <div id="issue">
-      <sp-button id="btn-issue" variant="secondary" quiet="true">Sorun bildir</sp-button>
-    </div>
-    <div id="issue-note"></div>
-    <textarea id="issue-text" readonly></textarea>
-
-    <div id="adv-toggle" class="toggle section-toggle">Gelişmiş ▸</div>
-    <div id="adv">
-      <div class="label">Harici ses kaynakları → A track ("Sil" = BAĞLA'da silinir). TOPLA'dan önce seç.</div>
-      <div id="mapping">(sequence okunuyor…)</div>
+    <!-- ANA GÖRÜNÜM -->
+    <div id="main" class="view">
       <div class="row">
-        <sp-button id="btn-channels" variant="secondary" disabled="true">Kaynakları tara</sp-button>
+        <sp-heading size="XS" class="grow" id="brand">Spread</sp-heading>
+        <sp-detail id="ver">1.1.0</sp-detail>
+        <div id="helper-dot" class="dot" title="Spread Helper kontrol ediliyor…"></div>
       </div>
+      <sp-detail id="status">Durum okunuyor…</sp-detail>
+      <sp-detail id="helperline"><span id="helper-short">Spread Helper paneli kapalı: Window › Extensions › Spread Helper</span></sp-detail>
+      <sp-divider size="small"></sp-divider>
+
+      <div id="step-spread" class="step">
+        <div class="row">
+          <sp-body id="num-spread" class="mark">①</sp-body>
+          <sp-body id="name-spread" class="step-name grow">Dağıt</sp-body>
+          <sp-body id="res-spread" class="mark"></sp-body>
+          <sp-button id="btn-spread" size="s" variant="cta" disabled="true">Dağıt</sp-button>
+        </div>
+        <sp-action-button id="rerun-spread" class="rerun" size="s" quiet="true">Yeniden çalıştır</sp-action-button>
+      </div>
+      <sp-detail id="sync-hint">Sonra: Clip › Synchronize</sp-detail>
+
+      <div id="step-topla" class="step">
+        <div class="row">
+          <sp-body id="num-topla" class="mark">②</sp-body>
+          <sp-body id="name-topla" class="step-name grow">Topla</sp-body>
+          <sp-body id="res-topla" class="mark"></sp-body>
+          <sp-button id="btn-collect" size="s" variant="cta" disabled="true">Topla</sp-button>
+        </div>
+        <sp-action-button id="rerun-topla" class="rerun" size="s" quiet="true">Yeniden çalıştır</sp-action-button>
+      </div>
+
+      <div id="step-bagla" class="step">
+        <div class="row">
+          <sp-body id="num-bagla" class="mark">③</sp-body>
+          <sp-body id="name-bagla" class="step-name grow">Bağla</sp-body>
+          <sp-body id="res-bagla" class="mark"></sp-body>
+          <sp-button id="btn-bind" size="s" variant="cta" disabled="true">Bağla</sp-button>
+        </div>
+        <sp-action-button id="rerun-bagla" class="rerun" size="s" quiet="true">Yeniden çalıştır</sp-action-button>
+      </div>
+      <sp-divider size="small"></sp-divider>
+
+      <div id="ask">
+        <sp-heading size="XXS" id="ask-title">Onay</sp-heading>
+        <div id="ask-summary"></div>
+        <div id="ask-text"></div>
+        <div class="row buttons">
+          <sp-button id="ask-no" size="s" variant="secondary">Vazgeç</sp-button>
+          <sp-button id="ask-yes" size="s" variant="cta">Devam</sp-button>
+        </div>
+      </div>
+
+      <div id="progress">
+        <sp-progressbar id="progress-bar" max="100" value="2" size="small"></sp-progressbar>
+        <sp-detail id="progress-text"></sp-detail>
+      </div>
+
+      <div id="result">
+        <sp-body id="result-head"></sp-body>
+        <sp-link id="result-help" href="#">Ne yapmalıyım?</sp-link>
+        <sp-body id="result-hint" size="S"></sp-body>
+      </div>
+
+      <div id="footer" class="row">
+        <sp-action-button id="btn-settings" size="s" quiet="true" class="grow">⚙ Ayarlar</sp-action-button>
+        <sp-action-button id="btn-issue" size="s" quiet="true">Sorun bildir</sp-action-button>
+      </div>
+      <sp-detail id="issue-note"></sp-detail>
+      <textarea id="issue-text" readonly></textarea>
+    </div>
+
+    <!-- ⚙ AYARLAR GÖRÜNÜMÜ (günlük, durum raporu, eşik, boşluk, kaynak eşleme) -->
+    <div id="settings" class="view">
+      <div class="row">
+        <sp-action-button id="btn-back" size="s" quiet="true">← Geri</sp-action-button>
+        <sp-heading size="XS" class="grow">Ayarlar</sp-heading>
+      </div>
+      <sp-divider size="small"></sp-divider>
+
+      <sp-detail class="section">SES KAYNAKLARI → A TRACK ("Sil" = Bağla'da silinir; Topla'dan önce seç)</sp-detail>
+      <div id="mapping"><sp-body size="S">(sequence okunuyor…)</sp-body></div>
+      <div class="row buttons-row">
+        <sp-button id="btn-channels" size="s" variant="secondary" disabled="true">Kaynakları tara</sp-button>
+      </div>
+
+      <sp-detail class="section">OTURUMLAR</sp-detail>
       <div class="settings">
-        <label>Güçlü bağ eşiği (%) <input id="set-threshold" type="number" min="50" max="100" step="1" value="90" /></label>
-        <label>Oturum arası boşluk (sn) <input id="set-gap" type="number" min="0" max="600" step="0.5" value="2" /></label>
+        <label><sp-body size="S">Güçlü bağ eşiği (%) <input id="set-threshold" type="number" min="50" max="100" step="1" value="90" /></sp-body></label>
+        <label><sp-body size="S">Oturum arası boşluk (sn) <input id="set-gap" type="number" min="0" max="600" step="0.5" value="2" /></sp-body></label>
       </div>
 
-      <div class="label">Yardımcı</div>
-      <div id="helper">Yardımcı: kontrol ediliyor…</div>
-      <div class="row">
-        <sp-button id="btn-helper" variant="secondary">Yardımcıyı kontrol et</sp-button>
+      <sp-detail class="section">SPREAD HELPER</sp-detail>
+      <sp-body size="S" id="helper">Kontrol ediliyor…</sp-body>
+      <div class="row buttons-row">
+        <sp-button id="btn-helper" size="s" variant="secondary">Yeniden dene</sp-button>
       </div>
 
-      <div class="label">Durum raporu (kopyalama çalışmazsa kutudan Ctrl+A / Ctrl+C)</div>
-      <div class="row">
-        <sp-button id="btn-status" variant="secondary" disabled="true">Durum raporu</sp-button>
-        <sp-button id="btn-copy" variant="secondary">Raporu kopyala</sp-button>
+      <sp-detail class="section">DURUM RAPORU</sp-detail>
+      <div class="row buttons-row">
+        <sp-button id="btn-status" size="s" variant="secondary" disabled="true">Durum raporu</sp-button>
+        <sp-button id="btn-copy" size="s" variant="secondary">Raporu kopyala</sp-button>
       </div>
       <textarea id="report" readonly></textarea>
 
-      <div class="label">Günlük</div>
+      <sp-detail class="section">GÜNLÜK</sp-detail>
       <div id="log"></div>
-      <div class="row" style="margin-top: 6px">
-        <sp-button id="btn-clear" variant="secondary">Günlüğü temizle</sp-button>
+      <div class="row buttons-row" style="margin-top: 6px">
+        <sp-button id="btn-clear" size="s" variant="secondary">Günlüğü temizle</sp-button>
       </div>
     </div>
   </body>

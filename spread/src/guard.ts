@@ -23,7 +23,7 @@ import {
   type Snapshot,
 } from "./model";
 import { getActive, sequenceGuid, sequenceName, SessionError, type SeqContext } from "./session";
-import { ask, humanize, log, opEnd, type Answer } from "./ui";
+import { ask, humanize, log, opEnd, type Answer, type AskOptions } from "./ui";
 import { verifyTracks } from "./verify";
 import type { Sequence } from "./ppro";
 
@@ -44,11 +44,12 @@ export class SpreadStop extends Error {
 }
 
 /**
- * @param q tam soru (onay penceresinde "Ayrıntı ▸" altında; günlüğe de yazılır)
- * @param summary v1.0.0: 3–5 satırlık özet (dikkat gerektiren satırlar dahil) — yalnız görünüm
+ * @param q tam soru (gizli; günlüğe yazılır → Sorun bildir raporu)
+ * @param summary özet satırları (dikkat gerektiren satırlar dahil; onayda en çok 3 satır) — yalnız görünüm
+ * @param opts v1.1.0: onay başlığı ve düğme adları — yalnız görünüm ("Evet" / "Hayır" cevapları aynı)
  */
-export async function askUser(q: string, summary?: string[]): Promise<Answer> {
-  const a = await ask(q, summary);
+export async function askUser(q: string, summary?: string[], opts?: AskOptions): Promise<Answer> {
+  const a = await ask(q, summary, opts);
   invalidateRefs(); // kullanıcı timeline'da bir şey yapmış olabilir
   return a;
 }
@@ -219,6 +220,9 @@ export async function prepareTracks(
 
 // ------------------------------------------------------------------ DUR raporu
 /** @param op "SPREAD" / "TOPLA" / "BAĞLA" */
+/** v1.1.0 ana ekrandaki adım adları (günlükte işlem adları aynı: SPREAD / TOPLA / BAĞLA). */
+const STEP_NAME: Record<string, string> = { SPREAD: "Dağıt", Spread: "Dağıt", TOPLA: "Topla", BAĞLA: "Bağla" };
+
 export function reportStop(op: string, e: unknown, executed: string[], backupName: string | null, extra: string[] = []): void {
   const stop = e instanceof SpreadStop ? e : null;
   const msg = stop ? stop.message : e instanceof SessionError ? e.message : `Beklenmeyen hata: ${errText(e)}`;
@@ -253,7 +257,7 @@ export function reportStop(op: string, e: unknown, executed: string[], backupNam
   for (const x of extra) log(x, "warn");
   // v1.0.0 arayüz: tek cümle + ne yapılacağı (+ tam mesaj ve günlük "Ayrıntı ▸" altında) — yalnız görünüm
   const hint = stop?.retryLink
-    ? "Düzen yerinde ve doğrulandı; yalnız bağlama olmadı. Yardımcıyı düzeltip BAĞLA'ya tekrar bas (yalnız bağlar) ya da Spread Helper panelinde Ayrıntı ▸ → BAĞLA."
+    ? "Kesim yerinde ve doğru; yalnız bağlama olmadı. Spread Helper panelinin açık olduğunu kontrol et ve Bağla'ya tekrar bas (yalnız bağlar)."
     : executed.length && stop?.restored
       ? "Düzen değişmedi; geri alman gerekmez."
       : executed.length && stop?.unreliableCount
@@ -261,7 +265,7 @@ export function reportStop(op: string, e: unknown, executed: string[], backupNam
         : executed.length
           ? `Geri almak için Ctrl+Z × ${executed.length} ya da yedek sequence "${backupName ?? "?"}". Sonra "Sorun bildir".`
           : "Timeline'da değişiklik yapılmadı.";
-  opEnd("err", `${op} durdu: ${humanize(msg)}`, hint, [msg, ...(stop?.details ?? []).map((d) => `• ${d}`), ...extra]);
+  opEnd("err", `${STEP_NAME[op] ?? op} durdu: ${humanize(msg)}`, hint, [msg, ...(stop?.details ?? []).map((d) => `• ${d}`), ...extra]);
 }
 
 // ------------------------------------------------------------------ yarım kalmış iş koruması

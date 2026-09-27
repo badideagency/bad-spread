@@ -1,6 +1,7 @@
-// Spread v1.0.0 — giriş noktası (yalnız arayüz bağlantıları). Üstte sequence + yardımcı göstergesi; numaralı üç adım (SPREAD → Clip ›
-// Synchronize → TOPLA → BAĞLA); işlem sırasında ilerleme; sonuçta tek cümle + "Ayrıntı ▸"; "Sorun bildir"; "Gelişmiş ▸" altında
-// kaynak eşleme, eşik, boşluk, Durum raporu, yardımcı ayrıntısı ve günlük. İşlemlerin mantığı src/ altındaki modüllerde (değişmedi).
+// Spread v1.1.0 — giriş noktası (yalnız arayüz bağlantıları). Üstte "Spread ●" + sequence adı; üç adım (① Dağıt → Clip › Synchronize →
+// ② Topla → ③ Bağla; yalnız sıradakinin düğmesi, biten adımın adına tıklayınca "Yeniden çalıştır"); altta tek satır sonuç / ilerleme
+// + "Ne yapmalıyım?"; "⚙ Ayarlar" görünümünde kaynak eşleme, eşik, boşluk, yardımcı ayrıntısı, Durum raporu ve günlük; "Sorun bildir".
+// İşlemlerin mantığı src/ altındaki modüllerde.
 
 import { getActive, requireActive, sequenceGuid, sequenceName } from "./src/session";
 import { runSpread } from "./src/spread";
@@ -16,7 +17,6 @@ import { rememberStep, stepViews } from "./src/steps";
 import { SPREAD_VERSION } from "./src/version";
 import {
   answer,
-  bindToggle,
   byId,
   clearLog,
   isAsking,
@@ -29,10 +29,14 @@ import {
   setHelperStatus,
   setReportText,
   setSequenceLine,
+  showSettings,
+  toggleHint,
+  toggleRerun,
+  type StepId,
 } from "./src/ui";
 
 let busy = false;
-const ACTIONS = ["btn-spread", "btn-collect", "btn-bind", "btn-status", "btn-channels"];
+const ACTIONS = ["btn-spread", "btn-collect", "btn-bind", "btn-status", "btn-channels", "rerun-spread", "rerun-topla", "rerun-bagla"];
 let lastSeqGuid: string | null = null; // kaynak eşlemesi en son bu sequence için tarandı
 let activeGuid: string | null = null; // adım göstergesi (şu an aktif sequence; yoksa null)
 let opGuid: string | null = null; // işlemin başladığı sequence (adım sonucu ona yazılır)
@@ -177,7 +181,9 @@ async function reportIssue(): Promise<void> {
   reporting = true;
   const note = (t: string) => {
     try {
-      byId("issue-note").textContent = t;
+      const n = byId("issue-note");
+      n.textContent = t;
+      n.style.display = "block";
     } catch {
       /* yoksa geç */
     }
@@ -224,21 +230,37 @@ function init(): void {
   } catch {
     /* başlık yoksa geç */
   }
-  bindToggle("adv-toggle", "adv", "Gelişmiş");
-  bindToggle("ask-more-toggle", "ask-more", "Ayrıntı");
-  bindToggle("result-more-toggle", "result-more", "Ayrıntı");
   setDoneHandler((step, kind, text, noop) => {
     rememberStep(opGuid, step, kind, text, noop);
     paintSteps();
   });
-  on("btn-spread", () => void exclusive("SPREAD", runSpread));
-  on("btn-collect", () =>
-    void exclusive("TOPLA", async () => {
-      await runCollect();
-      await scanChannels(false);
-    })
-  );
-  on("btn-bind", () => void exclusive("BAĞLA", runBind));
+  const actions: Record<StepId, () => void> = {
+    spread: () => void exclusive("SPREAD", runSpread),
+    topla: () =>
+      void exclusive("TOPLA", async () => {
+        await runCollect();
+        await scanChannels(false);
+      }),
+    bagla: () => void exclusive("BAĞLA", runBind),
+  };
+  on("btn-spread", actions.spread);
+  on("btn-collect", actions.topla);
+  on("btn-bind", actions.bagla);
+  // biten adımın adı → "Yeniden çalıştır" (yalnız görünüm; işlem aynı düğmeyle aynı)
+  for (const id of ["spread", "topla", "bagla"] as StepId[]) {
+    on(`name-${id}`, () => toggleRerun(id));
+    on(`rerun-${id}`, actions[id]);
+  }
+  on("btn-settings", () => showSettings(true));
+  on("btn-back", () => showSettings(false));
+  try {
+    byId("result-help").addEventListener("click", (e: Event) => {
+      e.preventDefault?.();
+      toggleHint();
+    });
+  } catch {
+    /* yoksa geç */
+  }
   on("btn-channels", () => void exclusive("Kanallar", () => scanChannels(true)));
   on("btn-helper", () => void checkHelper(true));
   on("btn-status", () =>
@@ -247,7 +269,7 @@ function init(): void {
       const text = await buildStatusReport();
       setReportText(text);
       log(`✓ Durum raporu hazır (${text.split("\n").length} satır). 'Raporu kopyala' ile al.`, "ok");
-      opEnd("info", "Durum raporu hazır (Gelişmiş ▸ Durum raporu).");
+      opEnd("info", "Durum raporu hazır (⚙ Ayarlar ▸ Durum raporu).");
     })
   );
   on("btn-issue", () => void reportIssue());
@@ -258,7 +280,7 @@ function init(): void {
     if (!isAsking()) clearLog();
   });
   bindSettingInputs();
-  log(`Spread ${SPREAD_VERSION} hazır. Sıra: SPREAD → Clip > Synchronize → TOPLA → kontrol → BAĞLA. Her işlem önce onay ister ve yedek sequence alır.`, "head");
+  log(`Spread ${SPREAD_VERSION} hazır. Sıra: Dağıt (SPREAD) → Clip > Synchronize → Topla (TOPLA) → kontrol → Bağla (BAĞLA). Her işlem önce onay ister ve yedek sequence alır.`, "head");
   void refresh();
   void checkHelper(false);
   setInterval(() => {

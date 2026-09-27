@@ -3301,7 +3301,7 @@ if (SCREENS)
       ok(`ekran: ${name}`);
     };
     const visible = (id) => els[id] && els[id].style.display === "block";
-    /** tıkla; ilk soru görünce shot(askName) + Evet; sonuç satırı gelince döner */
+    /** tıkla; ilk soru görünce shot(askName) + Devam; sonuç satırı gelince döner */
     const run = async (btn, askName, done) => {
       markLog();
       els[btn].click();
@@ -3319,42 +3319,57 @@ if (SCREENS)
       }
       fail(`${btn}: zaman aşımı`);
     };
-    // 12 Eylül gerçek verisi (A27 / A30 çift kopyaları dahil), TrLR "Sil"; SPREAD + Synchronize bu panelde yapılmış sayılır
+    const steps = (o) => lsStore.set("spread.steps.v1", JSON.stringify({ "guid-main-edit": o }));
+    const SPREAD_OK = { kind: "ok", text: "58 klip kendi track'ine dağıtıldı.", at: "2026-09-26T10:00:00Z" };
+    // 12 Eylül gerçek verisi (A27 / A30 çift kopyaları dahil); TrLR için seçim yok → v1.1.0 varsayılanı "Sil"; kamera sesi stereo,
+    // Zoom Tr1/Tr2 mono, Premiere karışık grubu reddeder (gerçek 26.5.1 gibi)
     setupFromReport(R0912);
-    lsStore.set("spread.sourceMap.v1", JSON.stringify({ "Zoom TrLR": "sil" }));
-    lsStore.set("spread.steps.v1", JSON.stringify({ "guid-main-edit": { spread: { kind: "ok", text: "58 klip kendi track'ine dağıtıldı.", at: "2026-09-26T10:00:00Z" } } }));
+    M.chType = REAL_CH;
+    M.linkRejectMixed = true;
     mockGen++;
     await startHelper();
     els["btn-helper"].click();
     await sleep(1800);
-    shot("01-hazir");
-    hooks.beforeTx = (name) => name === "TOPLA: park" && shot("03-topla-ilerleme");
-    await run("btn-collect", "02-topla-onay", /✓ TOPLA tamam|✗ TOPLA DURDU/);
-    shot("04-topla-tamam");
-    hooks.beforeTx = (name) => name === "BAĞLA: kalibrasyon SetInPoint" && shot("06-bagla-olcum");
-    await run("btn-bind", "05-bagla-onay", /✓ BAĞLA tamam|⚠ BAĞLA bitti|✗ BAĞLA DURDU|✓ KES tamam/);
+    shot("01-baslangic");
+    // Dağıt + Synchronize bu panelde yapılmış sayılır
+    steps({ spread: SPREAD_OK });
+    await sleep(1700);
+    shot("02-dagitildi");
+    hooks.beforeTx = (name) => name === "TOPLA: park" && shot("04-topla-ilerleme");
+    await run("btn-collect", "03-topla-onay", /✓ TOPLA tamam|✗ TOPLA DURDU/);
+    await sleep(1600);
+    shot("05-toplandi");
+    hooks.beforeTx = (name) => name === "BAĞLA: kalibrasyon SetInPoint" && shot("07-bagla-olcum");
+    await run("btn-bind", "06-bagla-onay", /✓ BAĞLA tamam|⚠ BAĞLA bitti|✗ BAĞLA DURDU|✓ KES tamam/);
     hooks.beforeTx = null;
     await sleep(1600);
-    shot("07-bagla-tamam");
-    // hata örneği: set action'lar hiçbir şey yapmıyor → kalibrasyon kural vermez → DUR (tek cümle + Ayrıntı)
+    shot("08-bitti");
+    // biten bir adımın adına tıkla → "Yeniden çalıştır"
+    els["name-topla"].click();
+    shot("12-yeniden-calistir");
+    els["name-topla"].click();
+    // hata örneği: set action'lar hiçbir şey yapmıyor → kalibrasyon kural vermez → DUR (kırmızı tek satır + "Ne yapmalıyım?")
     await collectThen(smallSpec());
-    lsStore.set("spread.steps.v1", JSON.stringify({ "guid-main-edit": { spread: { kind: "ok", text: "6 klip kendi track'ine dağıtıldı.", at: "2026-09-26T10:00:00Z" }, topla: { kind: "ok", text: "1 oturum toplandı.", at: "2026-09-26T10:05:00Z" } } }));
+    M.chType = null;
+    M.linkRejectMixed = false;
+    steps({ spread: { ...SPREAD_OK, text: "6 klip kendi track'ine dağıtıldı." }, topla: { kind: "ok", text: "1 oturum toplandı.", at: "2026-09-26T10:05:00Z" } });
     M.setSem = "noop";
     await run("btn-bind", null, /✗ BAĞLA DURDU/);
     await sleep(1600);
-    shot("08-hata");
-    els["result-more-toggle"].click();
-    shot("09-hata-ayrinti");
-    els["result-more-toggle"].click();
+    shot("09-hata");
+    els["result-help"].click();
+    shot("10-hata-ne-yapmali");
+    els["result-help"].click();
+    // ⚙ Ayarlar: kaynak eşleme, eşik, boşluk, yardımcı, Durum raporu, günlük
     els["btn-issue"].click();
     await sleep(1500);
-    els["adv-toggle"].click();
-    shot("10-gelismis-sorun-bildir");
-    els["adv-toggle"].click();
+    els["btn-settings"].click();
+    shot("11-ayarlar");
+    els["btn-back"].click();
     await stopHelper();
     els["btn-helper"].click();
     await sleep(400);
-    shot("11-yardimci-kapali");
+    shot("13-yardimci-kapali");
   };
 
 // ------------------------------------------------------------ çalıştır

@@ -96,6 +96,58 @@ kendi ölçtü).
 - TrLR'nin eski varsayılanına (A3'e eşlenir) dayanan 3 senaryo (`sync`, `sep23`, `regress_trim`) bu seçimi AÇIKÇA yapar (kullanıcı
   TrLR'yi eşlemiş gibi); `panel_guard` (c0) artık A6'yı bekler (silinen parça → bağla + eksik yaz).
 
+### BÖLÜM B — sade arayüz (mantık değişmedi)
+
+- **Spread paneli** (`spread/public/index.html`, `spread/src/ui.ts`, `spread/index.ts`):
+  - Üstte "Spread ●" (yardımcı yalnız nokta, ayrıntı `title` ipucunda) + küçük/soluk sequence adı. Yardımcı kapalıysa nokta gri ve
+    tek satır "Spread Helper paneli kapalı: Window › Extensions › Spread Helper".
+  - ① Dağıt / ② Topla / ③ Bağla: **yalnız sıradaki adımın düğmesi görünür** (vurgulu); biten adımda ✓ (uyarılıysa !); gelecektekiler
+    soluk. Biten adımın adına tıklayınca "Yeniden çalıştır" (aynı işlem). Bu yalnız GÖRÜNÜM: tıklama işleyicileri eskisi gibi,
+    işlemler kendi denetimlerini yapar (ör. BAĞLA "Önce TOPLA'ya bas" der) — mock senaryoları düğmelere doğrudan basar, aynen geçer.
+  - "Sonra: Clip › Synchronize" yalnız Dağıt bitip Topla yapılmamışken.
+  - Altta tek satır sonuç / ilerleme (`sp-progressbar`). Hata kırmızı tek satır + "Ne yapmalıyım?" (`sp-link`) → ne yapılacağı.
+    Ana ekranda teknik terim yok: `ui.ts` `plain()` / `humanize()` tick, transaction, action, A3/V1, API adları geçen metni sade bir
+    cümleye düşürür; tam metin günlükte (⚙ Ayarlar) ve Sorun bildir raporunda.
+  - Onay: başlık + en çok 3 satır + [Vazgeç] [Devam] (`dialogBody`: soru cümleleri ve "Evet = / Hayır =" açıklamaları atılır,
+    dikkat satırları önce, sığmayan dikkat satırları "(+N dikkat daha — Sorun bildir raporunda)"). Başlık ve düğme adları runner'lardan
+    (`askUser(q, özet, { title, yes, no })`, yalnız görünüm; cevaplar yine "Evet" / "Hayır"). ŞÜPHELİ ÜYE'de düğmeler [Oturumda kalsın]
+    [Park'a al] (orada "Hayır" işlemi SÜRDÜRÜR — "Vazgeç" yanıltırdı).
+  - Günlük, Durum raporu, eşik, boşluk, kaynak eşleme, yardımcı ayrıntısı: **⚙ Ayarlar** görünümü (← Geri). Sorun bildir sağ altta.
+  - **Spectrum UXP bileşenleri** (sp-heading, sp-body, sp-detail, sp-button, sp-action-button, sp-link, sp-progressbar, sp-divider):
+    Adobe'nin Premiere UXP belgesinde yerleşik (uxp-premiere-pro reference-spectrum/spectrum-uxp-widgets). Arka plan ve yazı rengi
+    VERİLMEZ (panel Premiere zeminini, bileşenler temayı kendileri izler). Tek özel renk hata satırı (#e34850) ve yardımcı noktası.
+  - **Kaynaklı sınır:** UXP'nin `--uxp-host-*` tema CSS değişkenleri Premiere'de "henüz desteklenmiyor" (uxp-premiere-pro
+    resources/recipes/css-styling/index.md:212) → kullanılmadı. `prefers-color-scheme` Premiere için belgelenmemiş.
+  - Ekran görüntüleri Chromium'da; Spectrum bileşenleri orada yok → `spread/dev/screens.mjs` Premiere'in koyu temasına benzer bir
+    TAKLİTLE çizer. Gerçek görünüm Premiere'de Spectrum'un kendisi (açık temada da).
+  - Asgari boyut 300 × 260 (yerleşik 320 × 360).
+- **Spread Helper paneli** (`cep-helper/index.html`, `js/panel.js`, `CSXS/manifest.xml`):
+  - Tek satır "Spread Helper çalışıyor ●" (hata: kırmızı tek satır). Köprüsüz Bağla yalnız plan `handoff:"panel"` ve bağlanmamışken
+    tek düğme; sonucu yeni plan gelene kadar. Başka hiçbir şey görünmez; ayrıntı (sürüm, dinleme, kalıcılık, son istek, plan,
+    "Planı yapıştır", günlük) durum satırına TIKLAYINCA.
+  - Tema: `window.__adobe_cep__.getHostEnvironment()` → `appSkinInfo.panelBackgroundColor.color` (0–255), `baseFontFamily`,
+    `baseFontSize`; yazı rengi zeminin parlaklığından (CEP yazı rengi vermiyor). Değişince `com.adobe.csxs.events.ThemeColorChanged`.
+    Kaynak: Adobe-CEP/CEP-Resources CEP_12.x CSInterface.js (getHostEnvironment :480–491, THEME_COLOR_CHANGED_EVENT :477,
+    addEventListener :674). Premiere'in bu olayı gönderdiği ayrıca belgelenmemiş → açılışta da okunur.
+  - Boyut: yerleşik 260 × 30, **en küçük 60 × 20**.
+  - **Arka sekmede çalışmaya devam:** CEP belgelerinde görünmez sekmedeki panelin JS / Node sunucusunun çalışıp çalışmadığı
+    YAZMIYOR (CEP 12 Cookbook; kalıcılık olayı yalnız Photoshop / InDesign / InCopy için). Premiere'e özgü belgelenmiş araç:
+    ExtendScript `app.setExtensionPersistent(extensionID, 1)` — belgedeki örnek yorumu '1 - for "Never unload me, even when not
+    visible."' (premiere-scripting-guide docs/application/application.md; PProPanel Premiere.jsx:103). Yardımcı açılışta bunu kendi
+    Extension Id'siyle çağırır (`spreadHelper_persist`), sonucu ayrıntıda "arka sekmede kalıcılık: açık". **Bu ortamda gerçek
+    Premiere yok → doğrulanamadı.** Kullanıcı doğrulaması (30 sn): Spread Helper'ı Spread'in arkasına sekme yap, Spread'de ⚙ Ayarlar
+    → Spread Helper → **Yeniden dene**: "Bağlı — …" ve üstteki nokta yeşilse arka sekmedeki sunucu istek karşılıyor demektir.
+- **UXP'den ExtendScript / bağlama (araştırma):** YOK — yardımcı kaldırılamaz.
+  - premierepro.d.ts 26.5.0 ve upstream 27.0.0-beta.57'de link / unlink API'si yok (tek "link" geçişleri AAF, Team Projects alternatif
+    bağlantısı ve WebLink işaretçisi); seçim yalnız `TrackItemSelection` / `Sequence.getSelection/setSelection`.
+  - Çevrimiçi Premiere UXP başvurusu ve 25.2–26.5 değişiklik günlüğü: bağlama yok. CEP / ExtendScript geçiş kılavuzu sayfaları boş
+    ("Stuff goes here…"); resmi eklentiler arası yol yalnız UXP ↔ UXP (`pluginManager`, `enablePluginCommunication`).
+  - Adobe blog (Eyl 2026, arama özeti): Premiere Ara 2027'de yeni CEP başvurularını kabul etmeyi bırakıyor, Ara 2028'de CEP'i
+    varsayılan kapatıyor → o zamana kadar UXP'ye bağlama API'si gelmezse yardımcı yolu kapanır (izlenmeli).
+- **Doğrulama:** BÖLÜM A dahil bütün mock senaryoları aynen geçer; ekran görüntüleri `docs/ekran` (dar 300 px + geniş 560 px;
+  başlangıç, dağıtıldı, onaylar, ilerleme, toplandı, bitti, hata + "Ne yapmalıyım?", ⚙ Ayarlar, yeniden çalıştır, yardımcı kapalı;
+  Spread Helper: çalışıyor, bağla bekliyor, hata, açık tema).
+
 ## v1.0.0 ürünleştirme — mantık değişmedi
 
 > **v1.0.0 ürünleştirme — mantık değişmedi; açık risk: kırpma kalibrasyonu gerçek Premiere'de ilk BAĞLA'da ölçülecek.**

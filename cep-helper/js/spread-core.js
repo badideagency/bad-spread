@@ -344,7 +344,7 @@ var SpreadCore = (function(exports) {
 		return audio.filter((x) => x.type !== top.type).map((x) => x.i);
 	}
 	//#endregion
-	exports.CORE_VERSION = "1.0.0";
+	exports.CORE_VERSION = "1.1.0";
 	exports.channelOutliers = channelOutliers;
 	exports.channelTypeName = channelTypeName;
 	exports.classify = classify;
