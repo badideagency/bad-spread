@@ -125,7 +125,7 @@ export type Answer = "Evet" | "Hayır" | "Atla";
 let pendingResolve: ((a: Answer) => void) | null = null;
 
 /** Dikkat gerektiren satırlar (özette her zaman görünür). */
-const ATTENTION = /VETO|SESSİZ KALACAK|ŞÜPHELİ|DİKKAT|ÇİFT KOPYA|AYRILAMAYAN|ÇELİŞKİLİ|BELİRLENEMEDİ|KAMERA SESİ KORUNACAK|BÖLÜNMÜŞ|PARK KAYDI/;
+const ATTENTION = /VETO|SESSİZ KALACAK|ŞÜPHELİ|DİKKAT|ÇİFT KOPYA|AYRILAMAYAN|ÇELİŞKİLİ|BELİRLENEMEDİ|KAMERA SESİ KORUNACAK|BÖLÜNMÜŞ|PARK KAYDI|KARIŞIK KANAL|EKSİK/;
 
 /** Özeti verilmemiş soru: başlık satırı + dikkat / madde satırları (en çok 3) + soru cümlesi. */
 function autoSummary(question: string): string[] {

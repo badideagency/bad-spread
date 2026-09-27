@@ -164,9 +164,11 @@ export const itemOf = (c: ClipInfo): LinkItemRec => linkItemOf(c);
  * Kayıttaki BAĞLA aşaması okunan düzende geçerli mi:
  *  - "applied": kayıtlı bağlama gruplarının BÜTÜN öğeleri yerinde VE BAĞLA'nın sildiklerinin HİÇBİRİ yok (kesme/silme duruyor)
  *  - "none"   : BAĞLA'dan geçmedi ya da tamamen geri alındı (kesimin yarattığı hiçbir parça yok, sildiklerinin HEPSİ geri gelmiş)
- *  - "partial": ikisi de değil (BAĞLA'dan sonra düzen değişmiş / kısmen geri alınmış) → TOPLA da BAĞLA da başlamaz
+ *  - "thinned": v1.1.0 — BAĞLA'nın sildiklerinin HİÇBİRİ geri gelmemiş (kesme/silme duruyor) ama kayıtlı öğelerin bir kısmı yok
+ *                (kullanıcı kesimden sonra elle silmiş ya da taşımış) → BAĞLA var olanları bağlar, eksikleri raporlar
+ *  - "partial": hiçbiri değil (BAĞLA'dan sonra düzen değişmiş / kısmen geri alınmış) → TOPLA da BAĞLA da başlamaz
  */
-export function bindState(rec: CollectRecord | null, s: Snapshot): "none" | "applied" | "partial" {
+export function bindState(rec: CollectRecord | null, s: Snapshot): "none" | "applied" | "thinned" | "partial" {
   const b = rec?.bind;
   if (!b) return "none";
   const have = new Set(s.clips.map((c) => itemKey(itemOf(c))));
@@ -174,6 +176,7 @@ export function bindState(rec: CollectRecord | null, s: Snapshot): "none" | "app
   const removedBack = b.removed.filter((i) => have.has(itemKey(i))).length;
   if (all.length && all.every((i) => have.has(itemKey(i))) && removedBack === 0) return "applied";
   if (!b.created.some((i) => have.has(itemKey(i))) && removedBack === b.removed.length) return "none";
+  if (removedBack === 0 && all.some((i) => have.has(itemKey(i)))) return "thinned";
   return "partial";
 }
 

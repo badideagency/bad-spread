@@ -1,4 +1,100 @@
-# handoff — Spread v1.0.0 (ürünleştirme) + geçmiş (ADIM 3.4, 3.3, 3.2, 3.1, 3, 2, 1)
+# handoff — Spread v1.1.0 (bağlama düzeltmesi + sade arayüz) + geçmiş (v1.0.0, ADIM 3.4 … 1)
+
+## v1.1.0 — BÖLÜM A: bağlama (karışık kanal tipi) + BÖLÜM B: sade arayüz
+
+### Gerçek bulgular (kullanıcı, Premiere 26.5.1, v1.0.0)
+
+- **BAĞLA'nın kesme/silmesi tick düzeyinde DOĞRU.** **Kalibrasyon KANITLANDI:** kuyruk = SetOutPoint, baş = SetInPoint; ikisi aynı
+  transaction'da birlikte de hedefle birebir (ADIM 3.4 tablosu güncellendi). Tek tek vektörler raporda gelmedi, yalnız kural ve
+  birlikte-denemenin sonucu bildirildi.
+- `linkSelection()` 11/11 grupta **false** döndü. Kullanıcı elle denedi: gruptan **TrLR (stereo)** çıkarılınca bağlama çalışıyor;
+  Tr1 / Tr2 mono.
+- TrLR'leri silinmiş bir sequence'ta: korunan kamera sesi parçası İÇERMEYEN gruplar bağlandı; korunan parça içeren ilk grup (O1-G1,
+  A038C001, baştaki 2.32 sn) bağlanmadı. Kamera sesi büyük olasılıkla stereo.
+- Aynı denemede 4 oturumdan 2'si (O2 141513, O4 151555) TOPLA'da toplanmadı; test sequence'ı eklentinin kendi yedeği
+  ("PROBE_test Copy"), TrLR'ler elle silinmiş. **Nedeni bilinmiyor** — kullanıcının "Sorun bildir" raporu gelene kadar tahminle kod
+  değiştirilmedi (A7 aşağıda: kayıtların karışmadığı doğrulandı).
+
+### A1 — Premiere'in bağlama kuralı (kaynaklı)
+
+| iddia | kaynak | tür |
+|---|---|---|
+| Çok klipli bağda bütün ses klipleri **aynı kanal tipinde** (mono / stereo / 5.1) olmalı; her klip ayrı track'te; zaten bağlı klipler önce çözülmeli | helpx "Link audio and video clips in Premiere" (helpx.adobe.com/premiere/desktop/add-audio-effects/basic-audio-editing/link-audio-and-video-clips.html) — bu ortamın ağ politikası sayfayı engelledi, metin arama sonucu özetinden | belge |
+| Video + stereo kamera sesi + mono yaka mikrofonu seçilip Ctrl+L → hiçbir şey olmuyor; çözüm Modify › Audio Channels ile stereo'yu çift mono yapmak | community.adobe.com bug-reports "Can't link stereo/mono audio tracks" (Şub 2026; arama özeti) | topluluk |
+| `Sequence.linkSelection()`: "Links the selected video and audio clips…", dönüş boolean; **false'un nedenleri belgelenmemiş** | docsforadobe premiere-scripting-guide docs/sequence/sequence.md (@4253cea); Adobe-CEP/Samples PProPanel PremierePro.23.0.d.ts:331 | belge |
+| Gözlem (bizim): mono + stereo karışık grupta linkSelection() **false**; stereo çıkarılınca **true** | kullanıcının 26.5.1 denemesi | kanıt |
+
+Sonuç: reddin nedeni kanal tipi uyumsuzluğu — Adobe'nin belgelediği kural ve gözlem örtüşüyor.
+
+### A2–A6 — ne değişti
+
+- **A2 varsayılan eşleme** (`spread/src/settings.ts` `DEFAULT_SIL`): kullanıcı seçmediyse **Zoom TrLR → "Sil"** (track almaz).
+  Kaynak eşlemeden değiştirilebilir; kayıtlı seçim her zaman önce gelir.
+- **A3 kanal tipi okuma + onay uyarısı:**
+  - UXP'de klip düzeyinde kanal tipi API'si YOK (premierepro.d.ts 26.5: yalnız `SequenceSettings.getAudioChannelType`, d.ts:3551;
+    upstream 27.0.0-beta.57'de de yok). Okuma yardımcıda, ExtendScript ile: `TrackItem.projectItem` →
+    `ProjectItem.getAudioChannelMapping` (belgede **özellik**, parantezsiz; PProPanel örneği Premiere.jsx:2340 da öyle) →
+    `AudioChannelMapping.audioChannelsType` (belge: 0 mono, 1 stereo, 2 5.1; PProPanel sabitleri: 3 multichannel, 4 4-channel,
+    5 8-channel). Kaynak: docsforadobe docs/item/projectitem.md, docs/other/audiochannelmapping.md.
+  - Sınır: proje öğesinin (ana klibin) eşlemesi okunur; timeline'daki örnek farklı eşlemeyle eklenmişse bilinemez (belgede örnek
+    düzeyinde API yok).
+  - Yeni salt-okuma komutu `POST /v1/channels` → `spreadHelper_channels(req)`; Spread BAĞLA onayından önce her grubun seslerinin
+    tipini sorar (`bagla.ts` `channelCheck`). Karışıksa özette tek satır: "KARIŞIK KANAL: N grupta mono + stereo; Premiere
+    reddederse farklı olanlar bağ dışında kalır (silinmez)." Köprü yoksa / tip okunamazsa uyarı yok, günlükte not.
+- **A4 otomatik ikinci deneme** (`cep-helper/js/helper.js` `linkWithRetry`, köprü ve yardımcı panel yolu ORTAK):
+  - İlk `linkSelection()` false ise `spreadHelper_link` o grubun ses tiplerini de döndürür; karar Spread'in ortak modülünde
+    (`spread/src/channels.ts` `channelOutliers`): grubun ana tipi = en çok sesin tipi, eşitlikte en üstteki A track'tekinin (Spread
+    çerçevesinde eşlenen harici kaynaklar en üstte). Ana tipe uymayan sesler ÇIKARILIP grup bir kez daha bağlanır.
+  - Tipi okunamayan ses varsa ikinci deneme YOK (tahmin yok). Ana tipe uyan en az 2 öğe kalmıyorsa da yok.
+  - **Hiçbir klip silinmez.** Çıkarılanlar yerinde, bağ dışında kalır; Spread günlüğünde ve sonuçta satır satır ("A3 \"…MP4\"
+    [0.000s–2.320s] stereo"), yardımcı panelde "kısmen" satırı. İkinci deneme de reddedilirse eskisi gibi hangi grup / neden → DUR
+    (kesim yerinde; tekrar basmak yalnız bağlar).
+- **A5 korunan kamera sesi:** A3–A4 korunan parçaları da kapsar (grubun öğesi). Tek kanal kullanmak araştırıldı: timeline'daki bir
+  klibi mono'ya çevirmenin belgelenmiş yolu YOK. Modify › Audio Channels ana klibe uygulanır ve Premiere'in kendi uyarısına göre
+  timeline'daki kliplere etki etmez (topluluk: Larry Jordan; Adobe thread 11899299 — arama özetleri). `setAudioChannelMapping`
+  ExtendScript'te var (PProPanel d.ts:1588) ama timeline örneklerine etkisi belgesiz ve proje genelinde ana klibi değiştirir →
+  **yapılmadı**. Parça bağ dışında kalır ve raporlanır.
+- **A6 "yalnız bağla" hoşgörüsü:**
+  - `collect.ts` `bindState` yeni durum **"thinned"**: BAĞLA'nın sildiklerinden HİÇBİRİ geri gelmemiş ama kayıtlı öğelerin bir
+    kısmı yok (elle silinmiş / taşınmış). Kısmen geri alma ("partial") eskisi gibi durur.
+  - `sessions.ts` `reduceToPresent`: plan grupları o an var olan öğelere indirilir (anahtar birebir: tür, track, start, end, ad);
+    indirilmiş gruplar yine ortak kuralla (`groupsFromLayout` + `compareLinkGroups`) birebir karşılaştırılır. Aynıysa var olanlar
+    bağlanır, eksikler raporlanır ("EKSİK" onay satırı). Aynı değilse (ör. bir grubun çapa kamerası silinmiş → parça yeni çapaya
+    sığmıyor) hiçbir şey yapılmadan DUR.
+  - Aynı kural yardımcı paneldeki BAĞLA'da da (`bindFromPlan`). TOPLA "thinned"i "applied" gibi görür (kesilmiş düzende TOPLA yok).
+
+### A7 — yedek sequence üzerinde çalışmak: kayıtlar karışabilir mi?
+
+**Karışmaz.** Bütün kayıtlar sequence **GUID**'ine bağlı, adına değil:
+- TOPLA kaydı (çerçeve, eşleme, eşik, **park listesi**, **parmak izi**, BAĞLA aşaması): `settings.ts` `spread.collectRecord.v1[guid]`
+  (`loadRecord` ayrıca `r.guid === guid` denetler);
+- kalibrasyon: `spread.trimCal.v1[guid]` (+ Premiere sürümü);
+- adım işaretleri `spread.steps.v1[guid]`; yarım iş kaydı `spread.stoppedState.v1` (guid ile).
+
+Yedeğin GUID'i asılınkinden FARKLI olmak zorunda: `guard.ts` `makeBackup` yedeği "önceki listede OLMAYAN GUID" diye bulur; aynı GUID
+olsaydı yedek bulunamaz ve işlem "Yedek sequence oluşmadı" diye başlamazdı. Kullanıcının gerçek koşularında yedekler oluştu →
+gerçek Premiere'de de yedek yeni GUID alıyor.
+
+Ada bağlı olanlar yalnız yardımcıyla konuşma: KES planı / sonuç dosyası ve `spreadHelper_link` aktif sequence'ı ADIYLA doğrular
+(yedeğin adı "… Copy" → karışmaz; kullanıcı yeniden adlandırırsa bile plan `createdAt` + öğe anahtarları birebir eşleşmeli). Kaynak
+eşleme, eşik ve boşluk bilerek sequence'tan bağımsız (kullanıcı ayarı).
+
+Mock senaryosu `backup_copy`: aslında TOPLA → yedeği aç → BAĞLA "Önce TOPLA'ya bas" (aslın kaydı kullanılmadı) → yedekte TOPLA (park
+sorusu yok, aslın kaydı değişmedi) → yedekte BAĞLA (kalibrasyon yalnız yedeğin GUID'ine) → asılda BAĞLA (yedeğinkini kullanmadı,
+kendi ölçtü).
+
+**O2 / O4'ün toplanmaması** bununla açıklanmıyor; rapor gelmeden kod değiştirilmedi.
+
+### A8 — mock
+
+- `M.chType` (ad → kanal tipi), `M.linkRejectMixed` (karışık seçimde `linkSelection()` false, gerçek 26.5.1 gibi), `M.channelApi`;
+  `getAudioChannelMapping` mock'ta belgedeki gibi özellik. Eski senaryolarda hepsi mono → aynen.
+- Yeni: `mixed_channels` (TrLR eşlenmiş: 11 grup reddedilir → ikinci deneme, 13 ses bağ dışında, düzen normal BAĞLA'yla birebir),
+  `kept_stereo` (varsayılan TrLR "Sil" + korunan stereo kamera sesi: 2 grup), `panel_mixed` (aynısı yardımcı panel yolunda),
+  `retry_fails`, `mixed_unknown` (tip okunamaz → ikinci deneme yok), `linkonly_thinned` (parça silinmiş → bağla; çapa kamerası
+  silinmiş → DUR), `backup_copy` (A7), `helper_persist`; `mapping` varsayılanı da denetler.
+- TrLR'nin eski varsayılanına (A3'e eşlenir) dayanan 3 senaryo (`sync`, `sep23`, `regress_trim`) bu seçimi AÇIKÇA yapar (kullanıcı
+  TrLR'yi eşlemiş gibi); `panel_guard` (c0) artık A6'yı bekler (silinen parça → bağla + eksik yaz).
 
 ## v1.0.0 ürünleştirme — mantık değişmedi
 
@@ -175,15 +271,17 @@ Wine sınaması 24/24, zip ve ccx bayt bayt yeniden üretildi. Kalan (bilerek b�
   - Baş farkı 0'dı (Start/In no-op).
   - Probe T8 bunu görmedi: değerleri eşitti, fark 0.
 - In ve Start'ın gerçek etkisi bu rapordan çıkmıyor. Bu yüzden kalibrasyonla ölçülüyor.
-- **Kalibrasyon sonucu (gerçek Premiere) — HENÜZ YOK.** İlk v0.3.4 BAĞLA'sında günlüğe **"KALİBRASYON SONUCU (kanıtlanmış —
-  Premiere …)"** bloğu yazılır; aynı blok Durum raporunda da var. Kullanıcı getirince buraya işlenecek:
+- **Kalibrasyon sonucu (gerçek Premiere 26.5.1, kullanıcı, v1.0.0 BAĞLA) — KANITLANDI:** seçilen kural **kuyruk = SetOutPoint,
+  baş = SetInPoint**; ikisi aynı transaction'da BİRLİKTE de hedefle birebir; bütün kesimler tick düzeyinde doğru. Tek tek vektörler
+  raporda bildirilmedi (tahmin edilip yazılmadı):
 
   | action (tek başına, ayrı transaction) | (Δstart, Δend, Δin, Δout) / hedef farkı | kaynak |
   |---|---|---|
-  | SetOutPoint | ? | ilk v0.3.4 BAĞLA günlüğü |
-  | SetEnd | ? (out'u değiştirdiği kanıtlı: yukarıdaki rapor) | 〃 |
-  | SetInPoint | ? | 〃 |
-  | SetStart | ? | 〃 |
+  | SetOutPoint | kuyruk (kural olarak seçildi) | kullanıcının v1.0.0 BAĞLA'sı (26.5.1) |
+  | SetEnd | bildirilmedi (out'u değiştirdiği kanıtlı: yukarıdaki rapor) | 〃 |
+  | SetInPoint | baş (kural olarak seçildi) | 〃 |
+  | SetStart | bildirilmedi | 〃 |
+  | SetInPoint + SetOutPoint birlikte | hedefle birebir | 〃 |
 
 ### Tasarım (v0.3.4)
 

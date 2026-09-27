@@ -62,6 +62,11 @@ const DOCS = {
   getSelection: [`${G}/sequence/sequence/#sequencegetselection`], // "### Sequence.getSelection()"
   linkSelection: [`${G}/sequence/sequence/#sequencelinkselection`], // "### Sequence.linkSelection()"
   length: [`${G}/collection/collection/`], // docs/collection/collection.md Attributes: length
+  // v1.1.0 — docs/item/projectitem.md "### ProjectItem.getAudioChannelMapping", docs/other/audiochannelmapping.md
+  // "### AudioChannelMapping.audioChannelsType", docs/application/application.md "### app.setExtensionPersistent()"
+  getAudioChannelMapping: [`${G}/item/projectitem/#projectitemgetaudiochannelmapping`],
+  audioChannelsType: [`${G}/other/audiochannelmapping/#audiochannelmappingaudiochannelstype`],
+  setExtensionPersistent: [`${G}/application/application/#appsetextensionpersistent`],
   // Scripting Guide'da YOK; Adobe'nin PProPanel örneğindeki tip tanımı: "getLinkedItems(): TrackItemCollection"
   getLinkedItems: ["https://github.com/Adobe-CEP/Samples/blob/master/PProPanel/jsx/PremierePro.23.0.d.ts#L1253"],
 };
@@ -88,7 +93,7 @@ const JS_AND_OURS = new Set([
   // ES3 yerleşikleri
   "push", "join", "charAt", "charCodeAt", "toString", "slice", "hasOwnProperty", "length",
   // host.jsx'in kendi veri alanları (istek / sonuç nesneleri)
-  "kind", "track", "items", "groups", "id", "sequence", "item", "count", "verified", "detail", "linked", "found", "total", "missing", "st", "en", "nm", "pid",
+  "kind", "track", "items", "groups", "id", "sequence", "item", "count", "verified", "detail", "types", "linked", "found", "total", "missing", "st", "en", "nm", "pid",
 ]);
 for (let i = 0; i < tokens.length - 1; i++) {
   const [dot, m] = [tokens[i], tokens[i + 1]];

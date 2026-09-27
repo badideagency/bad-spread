@@ -657,3 +657,20 @@ export function compareLinkGroups(planned: { label: string; items: LinkItemKey[]
   for (const [k, label] of got) if (!want.has(k)) out.push(`düzende var, planda YOK: ${label}`);
   return out;
 }
+
+/**
+ * v1.1.0 "yalnız bağla" (kesme bitmiş, bağlama kalmış): kullanıcı bu arada bazı öğeleri elle sildiyse planın grupları o an
+ * düzende VAR olan öğelere indirilir; eksikler satır satır döner. Öğe anahtarı (tür, track, start, end, ad) birebir eşleşmeli —
+ * yeri değişmiş öğe de "eksik" sayılır ve bağlanmaz. İndirilmiş gruplar yine compareLinkGroups ile düzenden bulunanlarla
+ * karşılaştırılır (iki yol birbirinden sapamaz).
+ */
+export function reduceToPresent<G extends { label: string; items: LinkItemKey[] }>(planned: G[], present: Set<string>): { groups: G[]; missing: string[] } {
+  const missing: string[] = [];
+  const groups = planned.map((g) => {
+    const items = g.items.filter((i) => present.has(linkItemKey(i)));
+    for (const i of g.items)
+      if (!present.has(linkItemKey(i))) missing.push(`${g.label}: ${trackLabel(i.kind, i.track)} "${i.name}" [${secOf(i.start)}s–${secOf(i.end)}s] yok`);
+    return { ...g, items };
+  });
+  return { groups, missing };
+}

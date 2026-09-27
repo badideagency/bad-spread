@@ -134,7 +134,7 @@ export async function runCollect(): Promise<void> {
     // BAĞLA kesimi yapılmışsa harici sesler çapalara bölünmüştür → senkron kanıtı (tam kayıtlar) yok, oturumlar güvenle yeniden
     // bulunamaz → TAHMİN YOK, başlamaz. Kesimsiz BAĞLA (yalnız silme/bağlama) sonrası TOPLA çalışır ama taşınanların bağı çözülür.
     const bs = bindState(rec, s0);
-    if (bs === "partial" || (bs === "applied" && rec!.bind!.created.length))
+    if (bs === "partial" || ((bs === "applied" || bs === "thinned") && rec!.bind!.created.length))
       throw new SpreadStop(
         bs === "partial"
           ? "BAĞLA'dan sonra düzen değişmiş (kesilen parçaların bir kısmı yerinde, bir kısmı değil). TOPLA BAŞLAMADI, hiçbir şey değişmedi. " +

@@ -17,8 +17,12 @@
  *     macOS: ~/Library/Application Support/BadIdeaAgency/SpreadHelper/helper.json). Panel oradan okur, her istekte
  *    "X-Spread-Token" başlığıyla gönderir; sabit zamanlı karşılaştırma. Tarayıcı sayfaları dosyayı okuyamaz; özel başlık
  *    CORS ön-isteği gerektirir ve bu sunucu HİÇBİR CORS izni vermez.
- *  - Yalnız iki komut: POST /v1/ping, POST /v1/link. Rastgele betik çalıştırma YOK: ExtendScript'e yalnız host.jsx'teki
- *    sabit iki fonksiyon, doğrulanmış (tip / uzunluk / biçim) ve JSON.stringify ile üretilmiş sabit değerlerle çağrılır.
+ *  - Yalnız üç komut: POST /v1/ping, POST /v1/link, POST /v1/channels (v1.1.0, salt okuma: seslerin kanal tipi). Rastgele betik
+ *    çalıştırma YOK: ExtendScript'e yalnız host.jsx'teki sabit fonksiyonlar, doğrulanmış (tip / uzunluk / biçim) ve
+ *    JSON.stringify ile üretilmiş sabit değerlerle çağrılır.
+ *  - v1.1.0 bağlama: Premiere bir grubu reddederse (linkSelection false) ve grupta kanal tipi farklı sesler varsa (mono + stereo),
+ *    o sesler ÇIKARILIP grup bir kez daha bağlanır (karar Spread'in AYNI modülünde: SpreadCore.channelOutliers). Hiçbir klip
+ *    silinmez; bağ dışında kalanlar sonuçta satır satır yazılır.
  *  - Gövde ≤ 1 MB. ExtendScript çağrıları sırayla (kuyruk), zaman aşımlı.
  *
  * Bu dosya hem CEP'te (index.html) hem Node'da (spread/dev/smoke.cjs testleri) çalışır: createHelper() bağımlılıkları
@@ -78,6 +82,29 @@
       return { kind: it.kind, track: it.track, start: it.start, end: it.end, name: it.name };
     });
     return { id: g.id, items: items };
+  }
+
+  function cleanItem(it, where) {
+    if (!it || typeof it !== "object") throw bad(where + ": nesne değil");
+    if (it.kind !== "V" && it.kind !== "A") throw bad(where + ": kind V/A olmalı");
+    if (typeof it.track !== "number" || !Number.isInteger(it.track) || it.track < 0 || it.track > 999) throw bad(where + ": track geçersiz");
+    if (typeof it.start !== "string" || !TICKS_RE.test(it.start)) throw bad(where + ": start geçersiz");
+    if (typeof it.end !== "string" || !TICKS_RE.test(it.end)) throw bad(where + ": end geçersiz");
+    if (typeof it.name !== "string" || !it.name || it.name.length > LIMITS.name) throw bad(where + ": name geçersiz");
+    return { kind: it.kind, track: it.track, start: it.start, end: it.end, name: it.name };
+  }
+
+  /** v1.1.0 /v1/channels: { sequence, items: [ses öğesi anahtarı] } (salt okuma). */
+  function cleanChannelsRequest(body) {
+    if (!body || typeof body !== "object") throw bad("gövde nesne değil");
+    if (typeof body.sequence !== "string" || !body.sequence || body.sequence.length > LIMITS.sequenceName) throw bad("sequence adı geçersiz");
+    if (!Array.isArray(body.items) || body.items.length < 1 || body.items.length > LIMITS.groupItems) throw bad("items 1.." + LIMITS.groupItems + " olmalı");
+    return {
+      sequence: body.sequence,
+      items: body.items.map(function (it, i) {
+        return cleanItem(it, "öğe " + i);
+      }),
+    };
   }
 
   function cleanLinkRequest(body) {
@@ -160,6 +187,7 @@
       requests: 0,
       lastRequest: null,
       lastBind: null,
+      persistent: null,
     };
     function emit(type) {
       for (var i = 0; i < listeners.length; i++) {
@@ -207,6 +235,82 @@
         function () {}
       );
       return p;
+    }
+
+    var TPS = 254016000000;
+    function itemLabel(it) {
+      var sec = function (t) {
+        return (Number(t) / TPS).toFixed(3);
+      };
+      return it.kind + (it.track + 1) + " \"" + it.name + "\" [" + sec(it.start) + "s–" + sec(it.end) + "s]";
+    }
+
+    /**
+     * v1.1.0 — bağla; Premiere bir grubu reddederse (linkSelection false) ve grupta kanal tipi farklı sesler varsa onları
+     * ÇIKARIP o grubu BİR KEZ daha bağla. Hangi seslerin çıkacağına Spread'in AYNI modülü karar verir (core.channelOutliers:
+     * grubun ana tipi = en çok sesin tipi, eşitlikte en üstteki A track'inkinin). Tipi okunamayan ses varsa ikinci deneme yok.
+     * Hiçbir klip silinmez: çıkarılanlar yerinde, bağ dışında kalır ve sonuçta "excluded" olarak yazılır.
+     */
+    function linkWithRetry(req) {
+      return jsx("spreadHelper_link(" + literal(req) + ")", 170000).then(function (r) {
+        if (!r || r.ok !== true) throw new Error((r && r.error) || "link başarısız");
+        var byId = {};
+        r.results.forEach(function (x) {
+          byId[x.id] = x;
+        });
+        var retry = [];
+        req.groups.forEach(function (g) {
+          var x = byId[g.id];
+          if (!x || x.linked || x.found !== x.total || !Array.isArray(x.types) || x.types.length !== g.items.length) return;
+          if (!core || typeof core.channelOutliers !== "function") return;
+          var items = g.items.map(function (it, i) {
+            var t = x.types[i];
+            return { kind: it.kind, track: it.track, type: typeof t === "number" ? t : null };
+          });
+          var out = core.channelOutliers(items);
+          if (!out.length) return;
+          var keep = g.items.filter(function (it, i) {
+            return out.indexOf(i) < 0;
+          });
+          if (keep.length < 2) return;
+          retry.push({
+            id: g.id,
+            items: keep,
+            excluded: out.map(function (i) {
+              return itemLabel(g.items[i]) + " " + core.channelTypeName(items[i].type);
+            }),
+          });
+        });
+        if (!retry.length) return r;
+        log("link: " + retry.length + " grup reddedildi (linkSelection false) — kanal tipi farklı sesler çıkarılarak yeniden deneniyor");
+        var req2 = {
+          sequence: req.sequence,
+          groups: retry.map(function (g) {
+            return { id: g.id, items: g.items };
+          }),
+        };
+        var merge = function (r2) {
+          var by2 = {};
+          ((r2 && r2.results) || []).forEach(function (y) {
+            by2[y.id] = y;
+          });
+          retry.forEach(function (g) {
+            var x = byId[g.id];
+            var y = by2[g.id];
+            x.retried = true;
+            x.firstDetail = x.detail;
+            x.excluded = g.excluded;
+            x.linked = !!(y && y.linked);
+            x.verified = y ? y.verified : null;
+            x.detail = y ? y.detail : "ikinci deneme yanıtsız" + (r2 && r2.error ? " (" + r2.error + ")" : "");
+            delete x.types;
+          });
+          return r;
+        };
+        return jsx("spreadHelper_link(" + literal(req2) + ")", 170000).then(merge, function (e) {
+          return merge({ ok: false, error: String((e && e.message) || e), results: [] });
+        });
+      });
     }
 
     function send(res, status, obj) {
@@ -263,7 +367,7 @@
         log("403 " + req.url + " — " + why);
         return reply(why === "token geçersiz" ? 401 : 403, { ok: false, error: why });
       }
-      if (req.url !== "/v1/ping" && req.url !== "/v1/link") return reply(404, { ok: false, error: "bilinmeyen komut" });
+      if (req.url !== "/v1/ping" && req.url !== "/v1/link" && req.url !== "/v1/channels") return reply(404, { ok: false, error: "bilinmeyen komut" });
       readBody(req)
         .then(function (body) {
           if (req.url === "/v1/ping")
@@ -271,10 +375,19 @@
               if (!r || r.ok !== true) throw new Error((r && r.error) || "ping başarısız");
               return { ok: true, helper: VERSION, premiere: r.premiere, sequence: r.sequence };
             });
+          if (req.url === "/v1/channels") {
+            var cc = cleanChannelsRequest(body);
+            return jsx("spreadHelper_channels(" + literal(cc) + ")", 60000).then(function (r) {
+              if (!r || r.ok !== true || !Array.isArray(r.types)) throw new Error((r && r.error) || "kanal tipi okunamadı");
+              return { ok: true, sequence: r.sequence, types: r.types };
+            });
+          }
           var clean = cleanLinkRequest(body);
           log("link: " + clean.groups.length + " grup, sequence \"" + clean.sequence + "\"");
-          return jsx("spreadHelper_link(" + literal(clean) + ")", 170000).then(function (r) {
-            if (!r || r.ok !== true) throw new Error((r && r.error) || "link başarısız");
+          return linkWithRetry(clean).then(function (r) {
+            r.results.forEach(function (x) {
+              delete x.types;
+            });
             return { ok: true, sequence: r.sequence, results: r.results, detail: r.detail || "" };
           });
         })
@@ -375,11 +488,28 @@
             var items = core.classify({ vCount: 0, aCount: 0, clips: clips, warnings: [], gen: 0 });
             var lay = core.groupsFromLayout(items, plan.frame);
             if (lay.errors.length) throw stopWith("Düzen KES sonrası hâlinde değil — hiçbir şey yapılmadı.", lay.errors);
-            var diff = core.compareLinkGroups(plan.groups, lay.groups);
-            if (diff.length) throw stopWith("Düzen KES planıyla uyuşmuyor (KES'ten sonra değişmiş olabilir) — hiçbir şey yapılmadı.", diff);
-            var groups = plan.groups.filter(function (g) {
+            // v1.1.0: kesimden sonra elle silinen / taşınan öğeler → plan grupları VAR olanlara indirilir (eksikler yazılır); indirilmiş
+            // gruplar düzenden bulunanlarla yine BİREBİR aynı olmalı (Spread'in "yalnız bağla" yoluyla aynı kural)
+            var red = core.reduceToPresent(
+              plan.groups,
+              new Set(
+                clips.map(function (c) {
+                  return core.linkItemKey(core.linkItemOf(c));
+                })
+              )
+            );
+            var diff = core.compareLinkGroups(red.groups, lay.groups);
+            if (diff.length)
+              throw stopWith(
+                red.missing.length
+                  ? "Planın " + red.missing.length + " öğesi timeline'da yok ve kalanlar planın gruplarını vermiyor (ör. bir kamera klibi silinmiş / taşınmış) — hiçbir şey yapılmadı."
+                  : "Düzen KES planıyla uyuşmuyor (KES'ten sonra değişmiş olabilir) — hiçbir şey yapılmadı.",
+                red.missing.concat(diff)
+              );
+            var groups = red.groups.filter(function (g) {
               return g.items.length >= 2;
             });
+            if (!groups.length) throw stopWith("Bağlanacak grup kalmadı: planın öğeleri timeline'da yok (parçalar silinmiş). Hiçbir şey yapılmadı.", red.missing);
             var results = [];
             var batchError = null;
             var i = 0;
@@ -395,9 +525,8 @@
                   results.push({ id: g.id, total: g.items.length, found: g.items.length, missing: [], linked: false, verified: null, detail: "bağlanmadı — " + why });
                 });
               };
-              return jsx("spreadHelper_link(" + literal(req) + ")", 170000).then(
+              return linkWithRetry(req).then(
                 function (lr) {
-                  if (!lr || lr.ok !== true) return fail("bağlama isteği başarısız: " + ((lr && lr.error) || "?"));
                   for (var k = 0; k < lr.results.length; k++) results.push(lr.results[k]);
                   return next();
                 },
@@ -411,13 +540,18 @@
               groups.forEach(function (g) {
                 labelOf[g.id] = g.label;
               });
+              var nEx = 0;
               var rows = results.map(function (x) {
-                return {
-                  id: x.id,
-                  label: labelOf[x.id] || x.id,
-                  status: x.found !== x.total || !x.linked || x.verified === false ? "hata" : x.verified === null ? "doğrulanamadı" : "tamam",
-                  detail: x.found !== x.total ? x.found + "/" + x.total + " öğe bulundu (" + x.missing.join(", ") + ")" : x.detail || "",
-                };
+                var ex = x.linked && x.excluded && x.excluded.length ? x.excluded : [];
+                nEx += ex.length;
+                var status = x.found !== x.total || !x.linked || x.verified === false ? "hata" : x.verified === null ? "doğrulanamadı" : ex.length ? "kısmen" : "tamam";
+                var detail =
+                  x.found !== x.total
+                    ? x.found + "/" + x.total + " öğe bulundu (" + x.missing.join(", ") + ")"
+                    : (ex.length ? "bağ dışında kaldı (kanal tipi farklı, SİLİNMEDİ): " + ex.join(", ") + (x.detail ? " — " : "") : "") +
+                      (x.detail || "") +
+                      (x.retried && !x.linked ? " (kanal tipi farklı sesler çıkarılarak ikinci deneme de başarısız)" : "");
+                return { id: x.id, label: labelOf[x.id] || x.id, status: status, detail: detail, excluded: ex };
               });
               var bad = rows.filter(function (x) {
                 return x.status === "hata";
@@ -426,18 +560,26 @@
                 return x.status === "doğrulanamadı";
               }).length;
               var summary =
-                (bad ? "✗ " + bad + "/" + rows.length + " grup bağlanamadı" : unv ? "⚠ " + rows.length + " grup bağlandı, " + unv + " doğrulanamadı" : "✓ " + rows.length + " grup bağlandı ve doğrulandı") +
+                (bad
+                  ? "✗ " + bad + "/" + rows.length + " grup bağlanamadı"
+                  : unv
+                    ? "⚠ " + rows.length + " grup bağlandı, " + unv + " doğrulanamadı"
+                    : nEx || red.missing.length
+                      ? "⚠ " + rows.length + " grup bağlandı ve doğrulandı"
+                      : "✓ " + rows.length + " grup bağlandı ve doğrulandı") +
+                (nEx ? "; " + nEx + " ses bağ dışında kaldı (kanal tipi farklı, silinmedi)" : "") +
+                (red.missing.length ? "; " + red.missing.length + " öğe timeline'da yok (elle silinmiş) — bağlanmadı" : "") +
                 (lay.ignored.length ? " (" + lay.ignored.length + " öğeye dokunulmadı)" : "");
               if (batchError) summary += " — " + batchError + " (yeniden basmak güvenli: bağlananlar yeniden bağlanır)";
               log("BAĞLA (panel): " + summary);
-              return finish({ ok: !bad, summary: summary, sequence: plan.sequence, rows: rows, ignored: lay.ignored, lines: [] });
+              return finish({ ok: !bad, summary: summary, sequence: plan.sequence, rows: rows, ignored: lay.ignored, lines: [], notes: red.missing });
             });
           });
         })
         .catch(function (e) {
           var summary = "✗ " + String((e && e.message) || e);
           log("BAĞLA (panel) durdu: " + summary);
-          return finish({ ok: false, summary: summary, sequence: null, rows: [], ignored: [], lines: (e && e.lines) || [] });
+          return finish({ ok: false, summary: summary, sequence: null, rows: [], ignored: [], lines: (e && e.lines) || [], notes: [] });
         });
     }
 
@@ -457,6 +599,26 @@
     }
 
     var api0 = {
+      /**
+       * v1.1.0 — Premiere'e "görünmezken de bellekte tut" de (ExtendScript app.setExtensionPersistent(id, 1)); panel başka bir panelin
+       * arkasında sekme olarak durunca sunucu kapanmasın. Sonuç state.persistent'e yazılır (true / false / null = bilinmiyor).
+       */
+      persist: function (extId) {
+        return jsx("spreadHelper_persist(" + literal(String(extId)) + ")", 10000).then(
+          function (r) {
+            state.persistent = !!(r && r.ok === true && r.result === true);
+            log("arka sekmede kalıcılık (setExtensionPersistent): " + (state.persistent ? "açık" : "açılamadı" + (r && r.error ? " — " + r.error : "")));
+            emit("status");
+            return state.persistent;
+          },
+          function (e) {
+            state.persistent = false;
+            log("arka sekmede kalıcılık açılamadı: " + ((e && e.message) || e));
+            emit("status");
+            return false;
+          }
+        );
+      },
       version: VERSION,
       port: port,
       infoFile: file,
@@ -653,6 +815,8 @@
         app.helper.start().catch(function (e) {
           logLine("SUNUCU BAŞLAMADI: " + ((e && e.message) || e));
         });
+        // manifest.xml'deki Extension Id — arka sekmedeyken de Premiere paneli (ve sunucuyu) bellekte tutsun
+        app.helper.persist("com.badideagency.spread.helper.panel");
         window.addEventListener("unload", function () {
           app.helper.stop();
         });

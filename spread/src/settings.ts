@@ -48,7 +48,14 @@ function savedMap(): Record<string, Target> {
 }
 
 /**
- * Kaynak → hedef. Kayıtlı olmayan kaynak: kayıtlıların kullanmadığı en küçük A track'i (kaynak sırasıyla).
+ * v1.1.0: kullanıcı seçmediyse "Sil" olan kaynaklar. Zoom TrLR (stereo karışım): kullanıcı kullanmıyor ve mono Tr1/Tr2 ile aynı bağ
+ * grubunda Premiere'in bağlamayı reddetmesine yol açtı (handoff.md, v1.1.0). Kaynak eşlemeden değiştirilebilir.
+ */
+export const DEFAULT_SIL: readonly string[] = ["Zoom TrLR"];
+
+/**
+ * Kaynak → hedef. Kayıtlı olmayan kaynak: DEFAULT_SIL'deyse "sil", değilse kayıtlıların kullanmadığı en küçük A track'i (kaynak
+ * sırasıyla).
  * @param sources sıralı kaynak listesi (sourcesOf)
  */
 export function mappingFor(sources: string[]): Map<string, Target> {
@@ -59,7 +66,7 @@ export function mappingFor(sources: string[]): Map<string, Target> {
     if (s in saved) {
       out.set(s, saved[s]);
       if (typeof saved[s] === "number") used.add(saved[s]);
-    }
+    } else if (DEFAULT_SIL.includes(s)) out.set(s, "sil");
   let next = 0;
   for (const s of sources) {
     if (out.has(s)) continue;

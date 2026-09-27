@@ -109,9 +109,9 @@ export async function buildStatusReport(): Promise<string> {
     if (rec.bind)
       L.push(
         `  BAĞLA kaydı: ${rec.bind.stage === "linked" ? "kesme/silme + bağlama" : byPanel ? `kesme/silme; bağlama Spread Helper panelinden (${byPanel.at}): ${byPanel.summary}` : "kesme/silme (bağlama bitmedi — Spread'de BAĞLA ya da Spread Helper panelinde BAĞLA)"} ` +
-          `${rec.bind.at}; timeline'da ${bs === "applied" ? "yerinde" : bs === "partial" ? "KISMEN yerinde (düzen değişmiş)" : "yok (geri alınmış)"}`
+          `${rec.bind.at}; timeline'da ${bs === "applied" ? "yerinde" : bs === "thinned" ? "yerinde ama bazı öğeler yok (elle silinmiş / taşınmış — BAĞLA var olanları bağlar, eksikleri yazar)" : bs === "partial" ? "KISMEN yerinde (düzen değişmiş)" : "yok (geri alınmış)"}`
       );
-    if (bs === "applied" && rec.bind!.created.length) L.push("  not: harici sesler çapalara kesildi — aşağıdaki oturum analizi kesilmiş düzene göredir (TOPLA/BAĞLA bunu kullanmaz)");
+    if ((bs === "applied" || bs === "thinned") && rec.bind!.created.length) L.push("  not: harici sesler çapalara kesildi — aşağıdaki oturum analizi kesilmiş düzene göredir (TOPLA/BAĞLA bunu kullanmaz)");
   }
   const cal = loadTrimCal(ctx.guid, hostVersion());
   if (cal) {
