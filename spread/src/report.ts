@@ -4,7 +4,7 @@
 
 import { hostVersion } from "./calibrate";
 import { flushNow, snapshotJournal, spreadDataPath } from "./journal";
-import { getLinker } from "./linker";
+import { getLinker, readUpdateLog } from "./linker";
 import { errText } from "./model";
 import { requireActive } from "./session";
 import { loadTrimCal } from "./settings";
@@ -83,6 +83,11 @@ export async function buildIssueReport(allowRead: boolean): Promise<string> {
     if (o) for (const l of tail(o.lines, 400)) L.push(l);
     else L.push("(bu oturumda çalışmadı)");
   }
+  L.push("");
+  L.push("---- GÜNCELLEME GÜNLÜĞÜ (Spread Helper, update.log; son satırlar) ----");
+  const ul = readUpdateLog(120);
+  if (ul.length) for (const l of ul) L.push(l);
+  else L.push("(yok — bu bilgisayarda panelden güncelleme yapılmadı)");
   L.push("");
   L.push("---- DURUM RAPORU (aktif sequence) ----");
   if (!allowRead) L.push("(bir işlem sürüyordu — sequence okunmadı)");

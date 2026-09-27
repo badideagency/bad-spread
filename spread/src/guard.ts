@@ -340,6 +340,15 @@ export function forgetStopped(guid: string): void {
   }
 }
 
+/** v1.2.0 ↻ Yenile için (yalnız okuma): bu sequence'ın "yarım iş" kaydı var mı. */
+export function stopMapHas(guid: string): boolean {
+  try {
+    return guid in stopMap();
+  } catch {
+    return false;
+  }
+}
+
 /** Timeline, önceki bir DURDU'nun bıraktığı hâlde mi → öyleyse SpreadStop. */
 export function assertNotStopped(ctx: SeqContext, s: Snapshot, op: string): void {
   const rec: StopRec | undefined = stopMap()[ctx.guid];

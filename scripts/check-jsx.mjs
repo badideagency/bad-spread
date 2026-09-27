@@ -47,7 +47,7 @@ const DOCS = {
   project: [`${G}/application/application/#appproject`], // docs/application/application.md "### app.project"
   activeSequence: [`${G}/general/project/#projectactivesequence`], // docs/general/project.md "### Project.activeSequence"
   version: [`${G}/application/application/#appversion`], // docs/application/application.md "### app.version"
-  name: [`${G}/sequence/sequence/#sequencename`, `${G}/item/projectitem/#projectitemname`], // "### Sequence.name", "### ProjectItem.name"
+  name: [`${G}/sequence/sequence/#sequencename`, `${G}/item/projectitem/#projectitemname`, `${G}/general/project/#projectname`], // "### Sequence.name", "### ProjectItem.name", "### Project.name"
   videoTracks: [`${G}/sequence/sequence/#sequencevideotracks`], // "### Sequence.videoTracks"
   audioTracks: [`${G}/sequence/sequence/#sequenceaudiotracks`], // "### Sequence.audioTracks"
   numTracks: [`${G}/collection/trackcollection/#trackcollectionnumtracks`], // "### TrackCollection.numTracks"
@@ -67,6 +67,16 @@ const DOCS = {
   getAudioChannelMapping: [`${G}/item/projectitem/#projectitemgetaudiochannelmapping`],
   audioChannelsType: [`${G}/other/audiochannelmapping/#audiochannelmappingaudiochannelstype`],
   setExtensionPersistent: [`${G}/application/application/#appsetextensionpersistent`],
+  // v1.2.0 — güncelleme sonrası yeniden başlatma (premiere-scripting-guide @4253cea): docs/application/application.md "### app.projects",
+  // "### app.quit()" ("user will be prompted to save any changes"); docs/collection/projectcollection.md
+  // "### ProjectCollection.numProjects"; docs/general/project.md "### Project.documentID", "### Project.path", "### Project.save()"
+  // ("Returns 0 if successful")
+  projects: [`${G}/application/application/#appprojects`],
+  numProjects: [`${G}/collection/projectcollection/#projectcollectionnumprojects`],
+  documentID: [`${G}/general/project/#projectdocumentid`],
+  path: [`${G}/general/project/#projectpath`],
+  save: [`${G}/general/project/#projectsave`],
+  quit: [`${G}/application/application/#appquit`],
   // Scripting Guide'da YOK; Adobe'nin PProPanel örneğindeki tip tanımı: "getLinkedItems(): TrackItemCollection"
   getLinkedItems: ["https://github.com/Adobe-CEP/Samples/blob/master/PProPanel/jsx/PremierePro.23.0.d.ts#L1253"],
 };

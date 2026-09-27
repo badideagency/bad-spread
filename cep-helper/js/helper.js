@@ -17,7 +17,9 @@
  *     macOS: ~/Library/Application Support/BadIdeaAgency/SpreadHelper/helper.json). Panel oradan okur, her istekte
  *    "X-Spread-Token" başlığıyla gönderir; sabit zamanlı karşılaştırma. Tarayıcı sayfaları dosyayı okuyamaz; özel başlık
  *    CORS ön-isteği gerektirir ve bu sunucu HİÇBİR CORS izni vermez.
- *  - Yalnız üç komut: POST /v1/ping, POST /v1/link, POST /v1/channels (v1.1.0, salt okuma: seslerin kanal tipi). Rastgele betik
+ *  - Komutlar: POST /v1/ping, /v1/link, /v1/channels (v1.1.0, salt okuma: seslerin kanal tipi); v1.2.0: /v1/update (gövdede
+ *    yalnız beklenen sürüm; indirilecek adres sabit, js/updater.js), /v1/restart (projeler kaydedilip doğrulanmadan Premiere
+ *    kapatılmaz), /v1/reload (↻: sunucu kapanır, panel yeniden yüklenir). Rastgele betik
  *    çalıştırma YOK: ExtendScript'e yalnız host.jsx'teki sabit fonksiyonlar, doğrulanmış (tip / uzunluk / biçim) ve
  *    JSON.stringify ile üretilmiş sabit değerlerle çağrılır.
  *  - v1.1.0 bağlama: Premiere bir grubu reddederse (linkSelection false) ve grupta kanal tipi farklı sesler varsa (mono + stereo),
@@ -31,9 +33,11 @@
 (function () {
   "use strict";
 
-  var VERSION = "1.1.0";
+  var VERSION = "1.2.0";
   var PORT = 47731;
   var MAX_BODY = 1024 * 1024;
+  /** Köprü komutları (v1.2.0: + güncelleme, yeniden başlatma, ↻ yeniden yükleme). */
+  var ROUTES = ["/v1/ping", "/v1/link", "/v1/channels", "/v1/update", "/v1/restart", "/v1/reload"];
   // Panelle AYNI sınırlar (spread/src/linker.ts LINK_LIMITS) — panel BAĞLA planında kesmeden ÖNCE denetler
   var LIMITS = { groupItems: 256, groupsPerRequest: 64, name: 1024, sequenceName: 512 };
   /** Plan dosyasındaki grup sayısı üst sınırı (paneldeki BAĞLA grupları LINK_BATCH'lik partilerle gönderir). */
@@ -197,6 +201,51 @@
       lastBind: null,
       persistent: null,
     };
+    // v1.2.0 güncelleme (js/updater.js): aynı ExtendScript kuyruğunu kullanır; veri klasörü bilgi dosyasınınki
+    var updater = null;
+    function getUpdater() {
+      if (!updater && deps.createUpdater)
+        updater = deps.createUpdater({
+          https: deps.https,
+          crypto: deps.crypto,
+          zlib: deps.zlib,
+          fs: deps.fs,
+          path: deps.path,
+          os: deps.os,
+          childProcess: deps.childProcess,
+          env: deps.env || {},
+          jsx: jsx,
+          log: log,
+          dataDir: deps.path.dirname(file),
+          extDir: deps.extDir || null,
+          hostApp: deps.hostApp || null,
+          platform: deps.updaterPlatform || platform,
+          upiaCandidates: deps.upiaCandidates,
+          faultAfter: deps.faultAfter,
+        });
+      return updater;
+    }
+    // v1.2.0 ↻: bağlama (köprü ya da bu paneldeki BAĞLA) sürerken yeniden yükleme reddedilir (yarım bağ kalmasın)
+    var working = 0;
+    function during(p) {
+      working++;
+      var end = function () {
+        working--;
+      };
+      p.then(end, end);
+      return p;
+    }
+    // açık bağlantılar (yeniden yüklemede port hemen boşalsın: keep-alive soketleri de kapatılır)
+    var sockets = [];
+    function track(srv) {
+      srv.on("connection", function (sock) {
+        sockets.push(sock);
+        sock.on("close", function () {
+          var i = sockets.indexOf(sock);
+          if (i >= 0) sockets.splice(i, 1);
+        });
+      });
+    }
     function emit(type) {
       for (var i = 0; i < listeners.length; i++) {
         try {
@@ -375,7 +424,7 @@
         log("403 " + req.url + " — " + why);
         return reply(why === "token geçersiz" ? 401 : 403, { ok: false, error: why });
       }
-      if (req.url !== "/v1/ping" && req.url !== "/v1/link" && req.url !== "/v1/channels") return reply(404, { ok: false, error: "bilinmeyen komut" });
+      if (ROUTES.indexOf(String(req.url)) < 0) return reply(404, { ok: false, error: "bilinmeyen komut" });
       readBody(req)
         .then(function (body) {
           if (req.url === "/v1/ping")
@@ -383,6 +432,35 @@
               if (!r || r.ok !== true) throw new Error((r && r.error) || "ping başarısız");
               return { ok: true, helper: VERSION, premiere: r.premiere, sequence: r.sequence };
             });
+          if (req.url === "/v1/update") {
+            // v1.2.0: yalnız beklenen sürüm gelir; adres / dosya yolu köprüden GELMEZ (updater latest.json'u kendisi okur)
+            var u = getUpdater();
+            if (!u) throw new Error("güncelleme bu ortamda yok");
+            if (!body || typeof body.version !== "string" || !/^\d+\.\d+\.\d+$/.test(body.version)) throw bad("version geçersiz");
+            var panelVer = typeof body.panel === "string" && /^\d+\.\d+\.\d+$/.test(body.panel) ? body.panel : VERSION;
+            return u.update(body.version, VERSION, panelVer);
+          }
+          if (req.url === "/v1/restart") {
+            // v1.2.0: projeler kaydedilip DOĞRULANMADAN kapatma yok (updater.prepareRestart); yanıt gittikten sonra app.quit
+            var ur = getUpdater();
+            if (!ur) throw new Error("yeniden başlatma bu ortamda yok");
+            return ur.prepareRestart().then(function (r) {
+              setTimeout(function () {
+                ur.quit();
+              }, 800);
+              return r;
+            });
+          }
+          if (req.url === "/v1/reload") {
+            // v1.2.0 ↻: yanıt gittikten sonra sunucu kapanır (port boşalır) ve panel kendini yeniden yükler
+            if (typeof deps.reload !== "function") throw new Error("yeniden yükleme bu ortamda yok");
+            var ub = getUpdater();
+            if (working > 0 || (ub && ub.isBusy())) throw new Error("Spread Helper meşgul (bağlama ya da güncelleme sürüyor); bitince yeniden dene");
+            setTimeout(function () {
+              deps.reload();
+            }, 300);
+            return Promise.resolve({ ok: true, helper: VERSION });
+          }
           if (req.url === "/v1/channels") {
             var cc = cleanChannelsRequest(body);
             return jsx("spreadHelper_channels(" + literal(cc) + ")", 60000).then(function (r) {
@@ -392,7 +470,7 @@
           }
           var clean = cleanLinkRequest(body);
           log("link: " + clean.groups.length + " grup, sequence \"" + clean.sequence + "\"");
-          return linkWithRetry(clean).then(function (r) {
+          return during(linkWithRetry(clean)).then(function (r) {
             r.results.forEach(function (x) {
               delete x.types;
             });
@@ -405,7 +483,9 @@
           },
           function (e) {
             log("hata " + req.url + ": " + (e && e.message));
-            reply(e && e.status === 400 ? 400 : 500, { ok: false, error: String((e && e.message) || e) });
+            var out = { ok: false, error: String((e && e.message) || e) };
+            if (e && e.stage) out.stage = e.stage;
+            reply(e && e.status === 400 ? 400 : 500, out);
           }
         );
     }
@@ -657,6 +737,7 @@
         if (server) return Promise.resolve();
         return new Promise(function (resolve, reject) {
           server = deps.http.createServer(handle);
+          track(server);
           server.on("error", function (e) {
             var code = e && e.code ? e.code + ": " : "";
             state.listening = false;
@@ -683,6 +764,7 @@
             // IPv6 geri döngü: "localhost" ::1'e çözülürse de bağlanılsın. Açılamazsa (IPv6 yok) sorun değil, bildirilir.
             try {
               server6 = deps.http.createServer(handle);
+              track(server6);
               server6.on("error", function (e6) {
                 server6 = null;
                 if (e6 && e6.code === "EADDRINUSE") {
@@ -757,7 +839,15 @@
           createdAt: at,
         };
       },
-      bindFromPlan: bindFromPlan,
+      bindFromPlan: function (opts) {
+        return during(bindFromPlan(opts));
+      },
+      updater: getUpdater,
+      /** v1.2.0 ↻ (bu paneldeki): bağlama / güncelleme sürüyor mu */
+      isWorking: function () {
+        var u = getUpdater();
+        return working > 0 || !!(u && u.isBusy());
+      },
       stop: function () {
         state.listening = false;
         removeInfo();
@@ -777,6 +867,13 @@
         var s6 = server6;
         server = null;
         server6 = null;
+        sockets.slice().forEach(function (sock) {
+          try {
+            sock.destroy();
+          } catch (e) {
+            /* geç */
+          }
+        });
         return Promise.all([close(s4), close(s6)]).then(function () {
           emit("status");
         });
@@ -825,6 +922,18 @@
       var evalScript = function (script, cb) {
         window.__adobe_cep__.evalScript(script, cb);
       };
+      // v1.2.0: CSInterface.getSystemPath ile aynı alt çağrı (Adobe-CEP/CEP-Resources CEP_12.x/CSInterface.js:589-601 —
+      // decodeURI + "file:///" öneki Windows'ta atılır). "extension" = bu eklentinin klasörü, "hostApplication" = Premiere.exe
+      // (CSInterface.js:200-203 SystemPath.EXTENSION / HOST_APPLICATION).
+      var systemPath = function (kind) {
+        try {
+          var p0 = decodeURI(window.__adobe_cep__.getSystemPath(kind));
+          // Windows: "file:///C:/…" → "C:\…" (cmd'nin start / if exist'i ve basename için ters bölü)
+          return process.platform === "win32" ? path.win32.normalize(p0.replace("file:///", "")) : p0.replace("file://", "");
+        } catch (e) {
+          return null;
+        }
+      };
       try {
         app.helper = createHelper({
           http: nodeRequire("http"),
@@ -835,6 +944,20 @@
           evalScript: evalScript,
           core: window.SpreadCore || null,
           log: logLine,
+          // v1.2.0 güncelleme (js/updater.js) ve ↻ yeniden yükleme
+          createUpdater: window.SpreadUpdater ? window.SpreadUpdater.createUpdater : null,
+          https: nodeRequire("https"),
+          zlib: nodeRequire("zlib"),
+          childProcess: nodeRequire("child_process"),
+          env: process.env,
+          extDir: systemPath("extension"),
+          hostApp: systemPath("hostApplication"),
+          reload: function () {
+            logLine("↻ yeniden yükleniyor (Spread'den istendi)");
+            app.helper.stop().then(function () {
+              window.location.reload();
+            });
+          },
         });
         logLine("Spread Helper " + VERSION + " açıldı (Node " + (typeof process !== "undefined" && process.version ? process.version : "?") + ", günlük: " + logFile + ")");
         app.helper.start().catch(function (e) {

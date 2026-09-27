@@ -386,7 +386,17 @@ globalThis.localStorage = {
 };
 // panelin fetch'i (Node'unki); M.fetchError → UXP'nin reddi gibi fırlatır (ör. manifest ağ izni)
 const realFetch = globalThis.fetch;
-globalThis.fetch = (...args) => (M.fetchError ? Promise.reject(new TypeError(M.fetchError)) : realFetch(...args));
+// v1.2.0: latest.json (güncelleme denetimi) ağa HİÇ çıkmaz — upd.latest (nesne) / upd.latestOffline (bağlantı hatası) / yoksa 404
+const LATEST_PREFIX = "https://raw.githubusercontent.com/badideagency/bad-spread-updates/";
+const upd = { latest: null, latestOffline: false, latestFetches: 0 };
+globalThis.fetch = (...args) => {
+  if (String(args[0]).startsWith(LATEST_PREFIX)) {
+    upd.latestFetches++;
+    if (upd.latestOffline) return Promise.reject(new TypeError("Network request failed"));
+    return Promise.resolve(upd.latest ? new Response(JSON.stringify(upd.latest), { status: 200 }) : new Response("404: Not Found", { status: 404 }));
+  }
+  return M.fetchError ? Promise.reject(new TypeError(M.fetchError)) : realFetch(...args);
+};
 let copied = null;
 Object.defineProperty(globalThis, "navigator", { value: { clipboard: { setContent: async (d) => (copied = d["text/plain"]) } }, configurable: true });
 const fsReal = require("fs");
@@ -860,6 +870,24 @@ function esSeq(seq) {
     },
   };
 }
+// v1.2.0 yeniden başlatma: açık projeler (docs: app.projects / Project.path / Project.save / app.quit). save() dosyayı gerçekten
+// yazar (değişme zamanı ileri gider) — upd.saveWrites=false → yazmaz (doğrulama düşmeli); upd.saveReturns → dönüş değeri.
+const mockProjects = [];
+function esProject(p) {
+  return {
+    get name() { return p.name; },
+    get path() { return p.path; },
+    get documentID() { return p.id; },
+    save() {
+      counters.saves = (counters.saves ?? 0) + 1;
+      if (upd.saveWrites !== false && p.path) {
+        const t = new Date(Date.now() + 5000);
+        fsReal.utimesSync(p.path, t, t);
+      }
+      return upd.saveReturns !== undefined ? upd.saveReturns : 0;
+    },
+  };
+}
 const fakeApp = {
   version: "26.5.1",
   project: {
@@ -867,6 +895,14 @@ const fakeApp = {
       const s = seqByGuid(state.activeGuid);
       return s ? esSeq(s) : 0;
     },
+    get path() {
+      return mockProjects[0] ? mockProjects[0].path : "";
+    },
+  },
+  get projects() {
+    const c = { numProjects: mockProjects.length };
+    mockProjects.forEach((p, i) => (c[i] = esProject(p)));
+    return c;
   },
   quit() {
     hostile.quit = true;
@@ -3389,6 +3425,538 @@ scenarios.plan = async () => {
   else ok("plan: zaten dağıtılmış düzen → hiçbir taşıma planlanmadı");
 };
 
+// ------------------------------------------------------------ v1.2.0 güncelleme (sahte latest.json + sahte https + sahte süreçler)
+// Gerçek yardımcı (helper.js + updater.js) ve gerçek panel akışı; ağ, Adobe kurucusu ve cmd.exe sahte. Yardımcı klasörü, veri klasörü
+// ve proje dosyası geçici klasörde GERÇEK dosyalar (yedek / geri yükleme / değişme zamanı gerçekten sınanır).
+const UPD = require(path.join(__dirname, "..", "..", "cep-helper", "js", "updater.js"));
+const { EventEmitter } = require("events");
+/** Sıkıştırmasız (stored) zip — updater.readZip'in sınanması için bağımsız yazıcı. */
+function makeZip(files) {
+  const locals = [];
+  const cds = [];
+  let off = 0;
+  for (const [name, content] of Object.entries(files)) {
+    const data = Buffer.isBuffer(content) ? content : Buffer.from(content, "utf8");
+    const nm = Buffer.from(name, "utf8");
+    const crc = UPD.crc32(data);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(data.length, 22); lh.writeUInt16LE(nm.length, 26);
+    const cd = Buffer.alloc(46);
+    cd.writeUInt32LE(0x02014b50, 0); cd.writeUInt16LE(20, 4); cd.writeUInt16LE(20, 6); cd.writeUInt32LE(crc, 16); cd.writeUInt32LE(data.length, 20); cd.writeUInt32LE(data.length, 24); cd.writeUInt16LE(nm.length, 28); cd.writeUInt32LE(off, 42);
+    locals.push(lh, nm, data);
+    cds.push(cd, nm);
+    off += 30 + nm.length + data.length;
+  }
+  const cdBuf = Buffer.concat(cds);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(Object.keys(files).length, 8); end.writeUInt16LE(Object.keys(files).length, 10); end.writeUInt32LE(cdBuf.length, 12); end.writeUInt32LE(off, 16);
+  return Buffer.concat([...locals, cdBuf, end]);
+}
+function kitZip(ver) {
+  return makeZip({
+    "spread.ccx": makeZip({ "manifest.json": `{"id":"com.badideagency.spread","version":"${ver}"}`, "index.js": "// panel" }),
+    "KUR.cmd": "rem kur",
+    "KALDIR.cmd": "rem kaldir",
+    "OKU_BENI.txt": "oku",
+    "SpreadHelper/CSXS/manifest.xml": `<ExtensionManifest Version="12.0" ExtensionBundleId="com.badideagency.spread.helper" ExtensionBundleVersion="${ver}"/>`,
+    "SpreadHelper/.debug": "<ExtensionList/>",
+    "SpreadHelper/index.html": `<html>yardımcı ${ver}</html>`,
+    "SpreadHelper/js/spread-core.js": "// çekirdek",
+    "SpreadHelper/js/helper.js": `var VERSION = "${ver}";`,
+    "SpreadHelper/js/updater.js": "// güncelleyici",
+    "SpreadHelper/js/panel.js": "// panel",
+    "SpreadHelper/jsx/host.jsx": "// host",
+    "SpreadHelper/js/yeni-dosya.js": "// yalnız yeni sürümde",
+  });
+}
+const U_EXT = path.join(TMPHOME, "extensions", "com.badideagency.spread.helper");
+const U_UPIA = path.join(TMPHOME, "UnifiedPluginInstallerAgent.exe");
+const U_HOST = "C:\\Program Files\\Adobe\\Adobe Premiere Pro 2026\\Adobe Premiere Pro.exe";
+const OLD_FILES = { "CSXS/manifest.xml": '<ExtensionManifest ExtensionBundleVersion="1.2.0"/>', ".debug": "<x/>", "index.html": "<html>eski</html>", "js/helper.js": 'var VERSION = "1.2.0";', "js/updater.js": "// eski", "js/panel.js": "// eski panel", "js/spread-core.js": "// eski çekirdek", "jsx/host.jsx": "// eski host" };
+/** Klasördeki dosyalar → { göreli yol: içerik } */
+function readTree(dir) {
+  const out = {};
+  if (!fsReal.existsSync(dir)) return out;
+  const walk = (d, base) => {
+    for (const n of fsReal.readdirSync(d)) {
+      const p = path.join(d, n);
+      const rel = base ? `${base}/${n}` : n;
+      if (fsReal.statSync(p).isDirectory()) walk(p, rel);
+      else out[rel] = fsReal.readFileSync(p, "utf8");
+    }
+  };
+  walk(dir, "");
+  return out;
+}
+function updReset(over = {}) {
+  fsReal.rmSync(path.join(TMPHOME, "extensions"), { recursive: true, force: true });
+  for (const n of ["yedek", "indirilen", "update.log", "restart-spread.cmd"]) fsReal.rmSync(path.join(updDataDir(), n), { recursive: true, force: true });
+  for (const [rel, c] of Object.entries(OLD_FILES)) {
+    const p = path.join(U_EXT, ...rel.split("/"));
+    fsReal.mkdirSync(path.dirname(p), { recursive: true });
+    fsReal.writeFileSync(p, c);
+  }
+  fsReal.writeFileSync(U_UPIA, "exe");
+  Object.assign(upd, { latest: null, latestOffline: false, files: new Map(), spawns: [], upiaCode: 0, listShows: true, installed: null, saveWrites: true, saveReturns: undefined, httpsOffline: false, reloads: 0, uxpReloads: 0, restarterFail: false, renameFaultAt: 0, renames: 0, forceBusy: false }, over);
+  mockProjects.length = 0;
+  hostile.quit = false;
+  counters.saves = 0;
+}
+function updDataDir() {
+  return path.dirname(HELPER.infoPath(path, "darwin", TMPHOME));
+}
+function fakeHttps() {
+  return {
+    get(url, opts, cb) {
+      const req = new EventEmitter();
+      req.setTimeout = () => req;
+      req.destroy = (e) => e && req.emit("error", e);
+      setTimeout(() => {
+        if (upd.httpsOffline) return req.emit("error", Object.assign(new Error("getaddrinfo ENOTFOUND raw.githubusercontent.com"), { code: "ENOTFOUND" }));
+        const key = String(url).split("?")[0];
+        const body = key.endsWith("/latest.json") ? (upd.latest ? Buffer.from(JSON.stringify(upd.latest)) : null) : upd.files.get(key);
+        const res = new EventEmitter();
+        res.headers = {};
+        res.resume = () => {};
+        res.statusCode = body ? 200 : 404;
+        cb(res);
+        if (body) res.emit("data", body);
+        res.emit("end");
+      }, 2);
+      return req;
+    },
+  };
+}
+function fakeChild() {
+  return {
+    spawn(cmd, args, opts) {
+      upd.spawns.push({ cmd, args, opts });
+      const cp = new EventEmitter();
+      cp.stdout = new EventEmitter();
+      cp.stderr = new EventEmitter();
+      cp.unref = () => {};
+      cp.kill = () => {};
+      // Node 15.1+: başarılı başlatmada 'spawn'; upd.restarterFail → yeniden başlatıcı için 'error' (Windows'ta ENOENT gibi)
+      const isRestarter = !!(opts && opts.env && opts.env.SPREAD_RESTARTER);
+      setTimeout(() => (isRestarter && upd.restarterFail ? cp.emit("error", Object.assign(new Error("spawn cmd.exe ENOENT"), { code: "ENOENT" })) : cp.emit("spawn")), 1);
+      // sahte Adobe kurucusu: /install → çıkış kodu upd.upiaCode; /list all → kurulduysa (ve upd.listShows !== false) "Spread <sürüm>"
+      if (cmd === U_UPIA && args[0] === "/install")
+        setTimeout(() => {
+          if (!upd.upiaCode) upd.installed = /spread-(\d+\.\d+\.\d+)\.ccx$/.exec(args[1])?.[1] ?? null;
+          cp.stdout.emit("data", upd.upiaCode ? "Failed to install, status = -160!" : `Installation Successful for extension with file path = ${args[1]}`);
+          cp.emit("close", upd.upiaCode);
+        }, 5);
+      if (cmd === U_UPIA && args[0] === "/list")
+        setTimeout(() => {
+          const v = upd.listShows === false ? "1.2.0" : upd.installed ?? "1.2.0";
+          cp.stdout.emit("data", `2 extension installed for Premiere Pro (ver 26.5.1)\r\n  Status   Extension Name   Version\r\n  Enabled  Spread           ${v}\r\n  Enabled  Başka Eklenti    3.1.0\r\n`);
+          cp.emit("close", 0);
+        }, 5);
+      return cp;
+    },
+  };
+}
+/** Güncelleyicili yardımcı (paneldeki gibi: https, zlib, child_process, uzantı klasörü, Premiere yolu, ↻). */
+async function startUpdHelper(extra = {}) {
+  await stopHelper();
+  const ctx = vm.createContext({ app: fakeApp });
+  vm.runInContext(HOST_SRC, ctx);
+  helperEval.fn = (script, cb) =>
+    setTimeout(() => {
+      let r;
+      try {
+        r = vm.runInContext(script, ctx, { timeout: 5000 });
+      } catch (e) {
+        r = "EvalScript error.";
+      }
+      cb(String(r));
+    }, 1);
+  // fs: upd.renameFaultAt = n → n. yeniden adlandırma EBUSY ile düşer (CEP dosyayı kilitlemiş gibi; .new yazılmış, taşınamadı)
+  const fsU = Object.assign({}, fsReal, {
+    renameSync: (a, b) => {
+      upd.renames++;
+      if (upd.renameFaultAt && upd.renames === upd.renameFaultAt) throw Object.assign(new Error(`EBUSY: resource busy or locked, rename '${a}'`), { code: "EBUSY" });
+      return fsReal.renameSync(a, b);
+    },
+  });
+  helper = HELPER.createHelper({
+    http, crypto: cryptoReal, fs: fsU, path, os: osReal, core: CORE, home: TMPHOME, platform: "darwin", log: (l) => helperLog.push(l),
+    evalScript: (script, cb) => helperEval.fn(script, cb),
+    createUpdater: (d) => {
+      const u = UPD.createUpdater(d);
+      return Object.assign({}, u, { isBusy: () => upd.forceBusy || u.isBusy() });
+    },
+    https: fakeHttps(), zlib: require("zlib"), childProcess: fakeChild(), env: { ComSpec: "C:\\Windows\\system32\\cmd.exe" },
+    extDir: U_EXT, hostApp: U_HOST, updaterPlatform: "win32", upiaCandidates: [U_UPIA],
+    reload: () => upd.reloads++,
+    ...extra,
+  });
+  await helper.start();
+  // yeni sunucu: Node fetch'in havuzundaki eski (kapatılmış) bağlantı ilk isteği düşürebilir → nokta yeşillenene kadar yeniden dene
+  for (let i = 0; i < 6; i++) {
+    els["btn-helper"].click();
+    await sleep(300);
+    if (/\bon\b/.test(document.getElementById("helper-dot").className)) break;
+  }
+  return helper;
+}
+/** latest.json'u yayımla (zip + sha256); sha256 bilerek bozulabilir. */
+function publish(ver, { badSha = false, notes = ["Daha hızlı bağlama.", "Yeni görünüm."] } = {}) {
+  const zip = kitZip(ver);
+  const url = `${UPD.ZIP_PREFIX}main/releases/Spread_Kurulum_v${ver}.zip`;
+  upd.files.set(url, zip);
+  upd.latest = { version: ver, date: "2026-09-27", notes, zip_url: url, sha256: badSha ? "0".repeat(64) : cryptoReal.createHash("sha256").update(zip).digest("hex"), min_premiere: "25.6.0" };
+  return { zip, url };
+}
+async function checkNow() {
+  els["btn-check-update"].click();
+  await sleep(150);
+}
+const stripText = () => (els["update-strip"].style.display === "block" ? els["update-strip"].textContent : "(gizli)");
+const resultHead = () => els["result-head"].textContent;
+/** Şeride bas; sorulara sırayla cevap ver (answers: "Evet" / "Hayır"); sonuç satırı gelince döner. */
+async function runStrip(answers) {
+  const asked = [];
+  const out = await clickAndWait(
+    "update-strip",
+    async (q) => {
+      asked.push({ q, title: els["ask-title"].textContent, summary: Array.from(els["ask-summary"].children).map((c) => c.textContent), yes: els["ask-yes"].textContent, no: els["ask-no"].textContent });
+      const a = answers.shift();
+      await (a === "Evet" ? yes() : no());
+    },
+    /Yeniden başlatma sonraya kaldı|GÜNCELLEME DURDU|YENİDEN BAŞLATMA DURDU|Projeler kaydedildi ve doğrulandı|İptal edildi — güncelleme/
+  );
+  await sleep(120);
+  return { out, asked };
+}
+
+scenarios.update_same = async () => {
+  setupSync(smallSpec());
+  updReset();
+  await startUpdHelper();
+  publish("1.2.0");
+  await checkNow();
+  if (stripText() !== "(gizli)") fail(`aynı sürümde şerit göründü: ${stripText()}`);
+  else ok("latest.json = yüklü sürüm (1.2.0) → şerit YOK");
+  publish("1.1.9");
+  await checkNow();
+  if (stripText() !== "(gizli)") fail("eski sürümde şerit göründü");
+  else ok("latest.json eski sürüm → şerit YOK");
+  await stopHelper();
+};
+
+scenarios.update_offline = async () => {
+  setupSync(smallSpec());
+  updReset({ latestOffline: true });
+  await startUpdHelper();
+  markLog();
+  const resBefore = document.getElementById("result").style.display;
+  await checkNow();
+  const l = newLog();
+  if (stripText() !== "(gizli)" || !/Güncelleme denetlenemedi \(Network request failed\)/.test(l) || document.getElementById("result").style.display !== resBefore || /✗/.test(l))
+    fail(`internet yokken: şerit ${stripText()}, günlük ${l}`);
+  else ok("internet yok → sessizce geçer (şerit yok, hata yok; günlükte soluk tek satır)");
+  await stopHelper();
+};
+
+scenarios.update_new = async () => {
+  setupSync(smallSpec());
+  updReset();
+  await startUpdHelper();
+  const { zip } = publish("1.2.1");
+  const before = readTree(U_EXT);
+  await checkNow();
+  if (stripText() !== "Yeni sürüm 1.2.1 · Güncelle") return fail(`şerit: ${stripText()}`);
+  ok("yeni sürüm → üstte şerit 'Yeni sürüm 1.2.1 · Güncelle'");
+  const { asked } = await runStrip(["Evet", "Hayır"]);
+  const a1 = asked[0], a2 = asked[1];
+  if (!a1 || a1.title !== "Yeni sürüm 1.2.1" || a1.yes !== "Güncelle" || a1.no !== "Şimdi değil" || a1.summary.join("|") !== "Daha hızlı bağlama.|Yeni görünüm.")
+    fail(`güncelleme sorusu: ${JSON.stringify(a1)}`);
+  else ok("şeride bas → notlar (1–3 madde) + [Şimdi değil] [Güncelle]");
+  if (!a2 || a2.title !== "Projeyi kaydedip Premiere'i yeniden başlatayım mı?" || a2.yes !== "Yeniden başlat" || a2.no !== "Sonra") fail(`yeniden başlatma sorusu: ${JSON.stringify(a2)}`);
+  else ok("kurulunca → 'Projeyi kaydedip Premiere'i yeniden başlatayım mı?' [Sonra] [Yeniden başlat]");
+  const after = readTree(U_EXT);
+  const kitHelper = Object.fromEntries(UPD.readZip(require("zlib"), zip).filter((e) => e.name.startsWith("SpreadHelper/")).map((e) => [e.name.slice(13), e.data.toString("utf8")]));
+  const wrote = Object.entries(kitHelper).every(([k, v]) => after[k] === v);
+  const yedek = path.join(updDataDir(), "yedek");
+  const bdirs = fsReal.existsSync(yedek) ? fsReal.readdirSync(yedek) : [];
+  const backup = bdirs.length === 1 ? readTree(path.join(yedek, bdirs[0])) : {};
+  if (!wrote || JSON.stringify(backup) !== JSON.stringify(before)) fail(`yardımcı dosyaları / yedek: yazıldı=${wrote}, yedek=${bdirs.length}`);
+  else ok(`yardımcı: önce klasörün TAMAMI yedeklendi (${Object.keys(before).length} dosya), sonra 1.2.1 dosyaları yazıldı`);
+  const upia = upd.spawns.filter((x) => x.cmd === U_UPIA);
+  const ccx = upia[0] && fsReal.readFileSync(upia[0].args[1]);
+  const kitCcx = UPD.readZip(require("zlib"), zip).find((e) => e.name === "spread.ccx").data;
+  if (upia.length !== 2 || upia[0].args[0] !== "/install" || upia[1].args.join(" ") !== "/list all" || !ccx || !ccx.equals(kitCcx) || upd.spawns.length !== 2)
+    fail(`UPIA çağrısı: ${JSON.stringify(upd.spawns.map((x) => [x.cmd, x.args]))}`);
+  else ok("panel: UnifiedPluginInstallerAgent /install <indirilen spread.ccx> (KUR.cmd ile aynı), sonra /list all'da 'Spread 1.2.1' doğrulandı");
+  if (!/1\.2\.1 kuruldu; Premiere'i yeniden başlatınca açılır/.test(resultHead()) || hostile.quit || counters.saves) fail(`sonuç: ${resultHead()} quit=${hostile.quit}`);
+  else ok("'Sonra' → Premiere'e dokunulmadı; tek satır '1.2.1 kuruldu; Premiere'i yeniden başlatınca açılır.'");
+  const ulog = fsReal.readFileSync(path.join(updDataDir(), "update.log"), "utf8");
+  if (!/sha256 doğru/.test(ulog) || !/paket denetimi tamam/.test(ulog) || !/UPIA \/list all: doğrulandı — Enabled Spread 1\.2\.1/.test(ulog) || !/bitti: yardımcı kuruldu, panel kuruldu/.test(ulog)) fail(`update.log: ${ulog}`);
+  else ok("güncelleme günlüğü (update.log): sha256 → paket denetimi → yedek → yazma → UPIA → bitti");
+  copied = null;
+  els["btn-issue"].click();
+  for (let i = 0; i < 40 && !copied; i++) await sleep(100);
+  if (!/---- GÜNCELLEME GÜNLÜĞÜ \(Spread Helper, update\.log/.test(copied ?? "") || !/sha256 doğru/.test(copied ?? "")) fail("Sorun bildir raporunda güncelleme günlüğü yok");
+  else ok("Sorun bildir raporu güncelleme günlüğünü (update.log) içerir");
+  await stopHelper();
+};
+
+scenarios.update_badsha = async () => {
+  setupSync(smallSpec());
+  updReset();
+  await startUpdHelper();
+  publish("1.2.1", { badSha: true });
+  const before = readTree(U_EXT);
+  await checkNow();
+  await runStrip(["Evet"]);
+  const yedek = path.join(updDataDir(), "yedek");
+  if (!/Güncelleme yapılamadı; eski sürüm yerinde/.test(resultHead()) || JSON.stringify(readTree(U_EXT)) !== JSON.stringify(before) || fsReal.existsSync(yedek) || upd.spawns.length || hostile.quit)
+    fail(`bozuk sha256: ${resultHead()} spawns=${upd.spawns.length} yedek=${fsReal.existsSync(yedek)}`);
+  else ok("sha256 tutmuyor → DUR: yardımcı klasörü birebir aynı, yedek bile alınmadı, kurucu çalışmadı ('eski sürüm yerinde')");
+  const ulog = fsReal.readFileSync(path.join(updDataDir(), "update.log"), "utf8");
+  if (!/DURDU \(sha256\): sha256 tutmuyor/.test(ulog)) fail(`update.log: ${ulog}`);
+  else ok("update.log: 'DURDU (sha256): sha256 tutmuyor … hiçbir şey değişmedi'");
+  await stopHelper();
+};
+
+scenarios.update_helper_closed = async () => {
+  setupSync(smallSpec());
+  updReset();
+  await stopHelper();
+  els["btn-helper"].click();
+  await sleep(300);
+  publish("1.2.1");
+  await checkNow();
+  if (stripText() !== "Yeni sürüm 1.2.1 · Güncellemek için Spread Helper açık olmalı" || els["update-strip"].className !== "wait") return fail(`yardımcı kapalı şerit: ${stripText()}`);
+  ok("yardımcı kapalı → şerit 'Yeni sürüm 1.2.1 · Güncellemek için Spread Helper açık olmalı' (vurgusuz)");
+  els["update-strip"].click();
+  await sleep(200);
+  if (els.ask.style.display === "block" || upd.spawns.length) fail("yardımcı kapalıyken güncelleme başladı");
+  else ok("şeride basınca güncelleme BAŞLAMAZ (yardımcı yeniden denenir)");
+};
+
+scenarios.update_install_fail = async () => {
+  for (const [label, over] of [
+    ["UPIA çıkış kodu 1", { upiaCode: 1 }],
+    ["UPIA 0 döndü ama /list all'da yeni sürüm yok", { listShows: false }],
+  ]) {
+    setupSync(smallSpec());
+    updReset(over);
+    await startUpdHelper();
+    publish("1.2.1");
+    await checkNow();
+    const { asked } = await runStrip(["Evet", "Hayır"]);
+    const ex = upd.spawns.find((x) => x.args[2] === 'start "" "%SPREAD_CCX%"');
+    if (!ex || !/spread-1\.2\.1\.ccx$/.test(ex.opts.env.SPREAD_CCX) || !ex.opts.windowsVerbatimArguments || !asked[1] || !/Install'a bas/.test(asked[1].summary[0]))
+      fail(`${label}: ${JSON.stringify(upd.spawns.map((x) => [x.cmd, x.args]))} ${JSON.stringify(asked[1])}`);
+    else ok(`${label} → spread.ccx Creative Cloud'la açıldı (start ""); soru 'açılan Creative Cloud penceresinde Install'a bas'`);
+    if (!/Önce Creative Cloud penceresinde Install'a bas/.test(els["result-hint"].textContent)) fail(`ipucu: ${els["result-hint"].textContent}`);
+    else ok("'Sonra' → ipucu 'Önce Creative Cloud penceresinde Install'a bas.'");
+    await stopHelper();
+  }
+};
+
+scenarios.update_write_fail = async () => {
+  for (const [label, over, extra] of [
+    ["yazma hatası (3 dosyadan sonra)", {}, { faultAfter: 3 }],
+    ["2. dosya kilitli (.new yazıldı, üstüne taşınamadı: EBUSY)", { renameFaultAt: 2 }, {}],
+  ]) {
+    setupSync(smallSpec());
+    updReset(over);
+    await startUpdHelper(extra);
+    publish("1.2.1");
+    const before = readTree(U_EXT);
+    await checkNow();
+    await runStrip(["Evet"]);
+    const after = readTree(U_EXT);
+    if (!/Güncelleme yapılamadı; eski sürüm yerinde/.test(resultHead()) || JSON.stringify(after) !== JSON.stringify(before) || upd.spawns.length)
+      fail(`${label}: ${resultHead()} aynı=${JSON.stringify(after) === JSON.stringify(before)} (${Object.keys(after).filter((k) => !(k in before)).join(", ")}) spawns=${upd.spawns.length}`);
+    else ok(`${label} → yedek geri yüklendi: klasör birebir eski hâli (yeni ya da .new dosya kalmadı), kurucu çalışmadı`);
+    await stopHelper();
+  }
+};
+
+scenarios.update_restart = async () => {
+  setupSync(smallSpec());
+  updReset();
+  const proj = path.join(TMPHOME, "Çekim 12 Eylül.prproj");
+  fsReal.writeFileSync(proj, "proje");
+  const t0 = new Date(Date.now() - 60000);
+  fsReal.utimesSync(proj, t0, t0);
+  mockProjects.push({ name: "Çekim 12 Eylül", path: proj, id: "doc-1" });
+  await startUpdHelper();
+  publish("1.2.1");
+  await checkNow();
+  await runStrip(["Evet", "Evet"]);
+  await sleep(1100); // yardımcı yanıttan 800 ms sonra app.quit
+  const cmdFile = path.join(updDataDir(), "restart-spread.cmd");
+  const rs = upd.spawns.find((x) => x.opts && x.opts.env && x.opts.env.SPREAD_RESTARTER);
+  const e = rs ? rs.opts.env : {};
+  if (
+    counters.saves !== 1 || !rs || rs.cmd !== "C:\\Windows\\system32\\cmd.exe" || JSON.stringify(rs.args) !== JSON.stringify(["/d", "/c", 'start "" /b cmd /d /c call "%SPREAD_RESTARTER%"']) ||
+    !rs.opts.windowsVerbatimArguments || rs.opts.detached || e.SPREAD_RESTARTER !== cmdFile || e.SPREAD_EXE !== U_HOST || e.SPREAD_IMG !== "Adobe Premiere Pro.exe" || e.SPREAD_PRJ !== path.win32.normalize(proj)
+  )
+    fail(`yeniden başlatıcı: saves=${counters.saves} ${JSON.stringify(rs)}`);
+  else ok("'Yeniden başlat' → proje kaydedildi (dosya gerçekten yazıldı) → yeniden başlatıcı: cmd /c start \"\" /b cmd /c call restart-spread.cmd (Premiere.exe, süreç adı, proje ortam değişkeniyle)");
+  if (fsReal.readFileSync(cmdFile, "utf8") !== UPD.RESTART_CMD || /[^\x00-\x7e]/.test(UPD.RESTART_CMD) || !/\r\n/.test(UPD.RESTART_CMD)) fail("restart-spread.cmd içeriği / ASCII / CRLF");
+  else ok("restart-spread.cmd: yalnız ASCII, CRLF");
+  if (!hostile.quit || !/Premiere kapanıyor/.test(resultHead())) fail(`quit=${hostile.quit} sonuç=${resultHead()}`);
+  else ok("ancak ondan SONRA app.quit(); sonuç 'Premiere kapanıyor; birkaç saniye sonra aynı projeyle yeniden açılacak.'");
+  await stopHelper();
+};
+
+scenarios.update_restart_unsaved = async () => {
+  for (const [label, setup] of [
+    ["hiç kaydedilmemiş proje (yol yok)", () => mockProjects.push({ name: "Adsız", path: "", id: "doc-1" })],
+    ["save() dosyayı yazmadı", () => {
+      const p = path.join(TMPHOME, "yazilmayan.prproj");
+      fsReal.writeFileSync(p, "x");
+      mockProjects.push({ name: "Yazılmayan", path: p, id: "doc-1" });
+      upd.saveWrites = false;
+    }],
+    ["yeniden başlatıcı başlatılamadı (spawn hatası)", () => {
+      const p = path.join(TMPHOME, "baslatici.prproj");
+      fsReal.writeFileSync(p, "x");
+      const t0 = new Date(Date.now() - 60000);
+      fsReal.utimesSync(p, t0, t0);
+      mockProjects.push({ name: "Başlatıcı", path: p, id: "doc-1" });
+      upd.restarterFail = true;
+    }],
+    ["save() 1 döndü", () => {
+      const p = path.join(TMPHOME, "hata.prproj");
+      fsReal.writeFileSync(p, "x");
+      mockProjects.push({ name: "Hata", path: p, id: "doc-1" });
+      upd.saveReturns = 1;
+    }],
+  ]) {
+    setupSync(smallSpec());
+    updReset();
+    setup();
+    await startUpdHelper();
+    publish("1.2.1");
+    await checkNow();
+    await runStrip(["Evet", "Evet"]);
+    await sleep(1100);
+    if (hostile.quit || (!upd.restarterFail && upd.spawns.some((x) => x.opts && x.opts.env && x.opts.env.SPREAD_RESTARTER)) || !/Premiere kapatılmadı/.test(resultHead()))
+      fail(`${label}: quit=${hostile.quit} sonuç=${resultHead()}`);
+    else if (upd.restarterFail && !/yeniden başlatma hazırlanamadı/.test(resultHead())) fail(`${label}: sonuç ${resultHead()}`);
+    else ok(`${label} → Premiere KAPATILMADI (app.quit yok); '${resultHead().replace(/^✗ /, "")}'`);
+    await stopHelper();
+  }
+};
+
+scenarios.reload = async () => {
+  setupSync(smallSpec());
+  updReset();
+  await startUpdHelper();
+  globalThis.location = { reload: () => upd.uxpReloads++ };
+  els["btn-reload"].click();
+  await sleep(1000);
+  if (upd.reloads !== 1 || upd.uxpReloads !== 1) fail(`↻: yardımcı ${upd.reloads}, panel ${upd.uxpReloads}`);
+  else ok("↻ → yardımcı paneli yeniden yüklendi (sunucu önce kapanır), sonra Spread paneli (location.reload)");
+  // sahte location.reload sayfayı yenilemez → panel 5 sn sonra kendiliğinden açılır (gerçekte yeniden yüklenmediyse de kilitli kalmaz)
+  await sleep(5300);
+  if (!/↻ Panel yeniden yüklenmedi/.test(newLog())) fail("yeniden yüklenmeyen panel 5 sn sonra açılmadı");
+  else ok("yeniden yükleme olmazsa panel 5 sn sonra kilidi açar (kilitli kalmaz)");
+  // yarım kalmış işlem varsa önce uyarır
+  lsStore.set("spread.stoppedState.v2", JSON.stringify({ "guid-main-edit": { op: "BAĞLA", digest: "x" } }));
+  upd.reloads = upd.uxpReloads = 0;
+  els["btn-reload"].click();
+  await sleep(200);
+  const title = els["ask-title"].textContent;
+  await no();
+  await sleep(800);
+  if (title !== "Yine de yenilensin mi?" || upd.reloads || upd.uxpReloads) fail(`yarım işte ↻: ${title} ${upd.reloads}/${upd.uxpReloads}`);
+  else ok("yarım kalmış işlem varken ↻ → önce 'Yine de yenilensin mi?'; Vazgeç → hiçbir şey yeniden yüklenmedi");
+  lsStore.delete("spread.stoppedState.v2");
+  // yardımcı meşgulken (güncelleme / bağlama) yardımcı yeniden YÜKLENMEZ; Spread yalnız kendini yeniler
+  upd.forceBusy = true;
+  upd.reloads = upd.uxpReloads = 0;
+  markLog();
+  els["btn-reload"].click();
+  await sleep(900);
+  if (upd.reloads || upd.uxpReloads !== 1 || !/Spread Helper yeniden yüklenmedi/.test(newLog())) fail(`meşgul yardımcıda ↻: yardımcı ${upd.reloads}, panel ${upd.uxpReloads}`);
+  else ok("yardımcı meşgulken ↻ → yardımcı yeniden YÜKLENMEDİ (reddetti), yalnız Spread yenilendi");
+  upd.forceBusy = false;
+  await sleep(5300);
+  delete globalThis.location;
+  await stopHelper();
+};
+
+scenarios.update_unit = async () => {
+  // latest.json doğrulayıcı ve zip okuyucu (yardımcı + yayın betiği aynı kodu kullanır)
+  const good = { version: "1.2.1", date: "2026-09-27", notes: ["a"], zip_url: `${UPD.ZIP_PREFIX}main/releases/Spread_Kurulum_v1.2.1.zip`, sha256: "a".repeat(64), min_premiere: "25.6.0" };
+  const bads = [
+    ["zip başka alan adında", { zip_url: "https://evil.example/x.zip" }],
+    ["zip başka depoda", { zip_url: "https://raw.githubusercontent.com/someone/else/main/x.zip" }],
+    ["zip adresinde ..", { zip_url: `${UPD.ZIP_PREFIX}main/../x.zip` }],
+    ["zip adresinde %2e%2e (normalleşince başka depo)", { zip_url: `${UPD.ZIP_PREFIX}%2e%2e/%2e%2e/evil/repo/main/x.zip` }],
+    ["notlar 4 madde", { notes: ["a", "b", "c", "d"] }],
+    ["notlar boş", { notes: [] }],
+    ["sha256 kısa", { sha256: "abc" }],
+    ["sürüm biçimi", { version: "1.2" }],
+  ];
+  let okAll = true;
+  try {
+    UPD.validateLatest(good);
+  } catch (e) {
+    okAll = false;
+    fail(`geçerli latest.json reddedildi: ${e.message}`);
+  }
+  for (const [label, over] of bads) {
+    try {
+      UPD.validateLatest({ ...good, ...over });
+      okAll = false;
+      fail(`kabul edildi: ${label}`);
+    } catch {
+      /* beklenen */
+    }
+  }
+  if (okAll) ok(`latest.json doğrulayıcı: geçerli kabul, ${bads.length} bozuk biçim reddedildi (başka alan adı / depo, '..', notlar, sha256, sürüm)`);
+  const z = require("zlib");
+  const evil = makeZip({ "../../evil.txt": "x" });
+  let rej = false;
+  try {
+    UPD.readZip(z, evil);
+  } catch (e) {
+    rej = /güvensiz dosya adı/.test(e.message);
+  }
+  const corrupt = Buffer.from(kitZip("1.2.1"));
+  corrupt[40] ^= 0xff; // ilk dosyanın verisi
+  let crc = false;
+  try {
+    UPD.readZip(z, corrupt);
+  } catch (e) {
+    crc = /CRC tutmuyor/.test(e.message);
+  }
+  // depodaki GERÇEK kurulum zip'i (package-kurulum.sh, deflate) — yardımcının kuracağı paketle aynı denetimden geçmeli
+  const relDir = path.join(__dirname, "..", "..", "release");
+  const relZip = fsReal.readdirSync(relDir).find((n) => /^Spread_Kurulum_v\d+\.\d+\.\d+\.zip$/.test(n));
+  const relVer = relZip && /v(\d+\.\d+\.\d+)\.zip$/.exec(relZip)[1];
+  let real = [];
+  let kitOk = false;
+  try {
+    real = UPD.readZip(z, fsReal.readFileSync(path.join(relDir, relZip)));
+    UPD.checkKit(real, relVer);
+    kitOk = true;
+  } catch (e) {
+    fail(`gerçek kurulum zip'i: ${e.message}`);
+  }
+  if (!rej || !crc || !kitOk) fail(`zip okuyucu: ../ reddi=${rej} CRC=${crc} paket=${kitOk}`);
+  else ok(`zip okuyucu: '../' adı reddedildi, bozuk veri CRC'de yakalandı, gerçek ${relZip} (deflate, ${real.length} dosya) okundu ve paket denetiminden geçti`);
+  let stale = false;
+  try {
+    UPD.checkCcx(z, makeZip({ "manifest.json": '{"id":"com.badideagency.spread","version":"1.1.0"}' }), "1.2.1");
+  } catch (e) {
+    stale = /sürümü 1\.1\.0, paket 1\.2\.1/.test(e.message);
+  }
+  if (!stale) fail("eski spread.ccx paket denetiminden geçti");
+  else ok("paket denetimi: spread.ccx'in kendi manifest sürümü paketinkiyle aynı olmalı (eski .ccx reddedildi)");
+  if (UPD.cmpVersion("1.10.0", "1.9.9") !== 1 || UPD.cmpVersion("1.2.0", "1.2.0") !== 0 || UPD.cmpVersion("1.2.0", "1.2.1") !== -1) fail("cmpVersion");
+  else ok("sürüm karşılaştırma sayısal (1.10.0 > 1.9.9)");
+};
+
 // ------------------------------------------------------------ ekran görüntüleri (yalnız SPREAD_SCREENS ile; "all"a girmez)
 if (SCREENS)
   scenarios.screens = async () => {
@@ -3466,6 +4034,32 @@ if (SCREENS)
     els["btn-helper"].click();
     await sleep(400);
     shot("13-yardimci-kapali");
+    // v1.2.0: güncelleme şeridi → notlar [Şimdi değil] [Güncelle] → kurulunca [Sonra] [Yeniden başlat]
+    updReset();
+    await startUpdHelper();
+    publish("1.2.1", { notes: ["Güncellemeler artık panelden gelir.", "↻ Yenile: iki panel tek tıkla yeniden yüklenir.", "Bağla onayında daha kısa özet."] });
+    els["btn-settings"].click();
+    els["btn-check-update"].click();
+    await sleep(200);
+    els["btn-back"].click();
+    global.document.getElementById("result").style.display = "none";
+    global.document.getElementById("issue-note").style.display = "none";
+    shot("14-guncelleme-seridi");
+    els["update-strip"].click();
+    let n = 0;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 30000 && n < 2) {
+      await sleep(30);
+      if (visible("ask")) {
+        shot(n === 0 ? "15-guncelleme-onay" : "16-yeniden-baslat-onay");
+        (n === 0 ? els["ask-yes"] : els["ask-no"]).click();
+        n++;
+        await sleep(60);
+      }
+    }
+    await sleep(300);
+    shot("17-guncellendi");
+    await stopHelper();
   };
 
 // ------------------------------------------------------------ çalıştır
