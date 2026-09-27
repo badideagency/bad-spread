@@ -164,8 +164,8 @@ yok; şeridi başlığın altına taşımak — istek "panelin üstünde ince bi
 
 - `latest.json` sınamada ağa hiç çıkmaz (sahte `fetch`); yardımcıya sahte https / Adobe kurucusu / cmd.exe verilir, yardımcı klasörü,
   veri klasörü ve proje dosyası GERÇEK dosyalar.
-- Yeni senaryolar: `update_unit` (doğrulayıcı: başka alan adı / depo / `..` / notlar / sha256 / sürüm; zip: `..` adı, CRC, gerçek
-  v1.1.0 zip), `update_same`, `update_offline`, `update_new` (şerit → notlar → yedek → yazma → UPIA /install + /list → "Sonra";
+- Yeni senaryolar: `update_unit` (doğrulayıcı: başka alan adı / depo / `..` / notlar / sha256 / sürüm; zip: `..` adı, CRC, depodaki gerçek
+  kurulum zip'i + paket denetimi), `update_same`, `update_offline`, `update_new` (şerit → notlar → yedek → yazma → UPIA /install + /list → "Sonra";
   Sorun bildir raporunda update.log), `update_badsha` (hiçbir şey değişmez, yedek bile yok), `update_helper_closed`,
   `update_install_fail` (kod 1; kod 0 ama /list'te yok → .ccx elle), `update_write_fail` (3 dosyadan sonra hata → klasör birebir
   eski), `update_restart` (kaydet + doğrula → yeniden başlatıcı → ancak sonra app.quit), `update_restart_unsaved` (yol yok / dosya

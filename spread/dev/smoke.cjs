@@ -3886,9 +3886,21 @@ scenarios.update_unit = async () => {
   } catch (e) {
     crc = /CRC tutmuyor/.test(e.message);
   }
-  const real = UPD.readZip(z, fsReal.readFileSync(path.join(__dirname, "..", "..", "release", "Spread_Kurulum_v1.1.0.zip")));
-  if (!rej || !crc || real.length !== 11) fail(`zip okuyucu: ../ reddi=${rej} CRC=${crc} gerçek zip=${real.length}`);
-  else ok("zip okuyucu: '../' adı reddedildi, bozuk veri CRC'de yakalandı, gerçek v1.1.0 kurulum zip'i (deflate) okundu (11 dosya)");
+  // depodaki GERÇEK kurulum zip'i (package-kurulum.sh, deflate) — yardımcının kuracağı paketle aynı denetimden geçmeli
+  const relDir = path.join(__dirname, "..", "..", "release");
+  const relZip = fsReal.readdirSync(relDir).find((n) => /^Spread_Kurulum_v\d+\.\d+\.\d+\.zip$/.test(n));
+  const relVer = relZip && /v(\d+\.\d+\.\d+)\.zip$/.exec(relZip)[1];
+  let real = [];
+  let kitOk = false;
+  try {
+    real = UPD.readZip(z, fsReal.readFileSync(path.join(relDir, relZip)));
+    UPD.checkKit(real, relVer);
+    kitOk = true;
+  } catch (e) {
+    fail(`gerçek kurulum zip'i: ${e.message}`);
+  }
+  if (!rej || !crc || !kitOk) fail(`zip okuyucu: ../ reddi=${rej} CRC=${crc} paket=${kitOk}`);
+  else ok(`zip okuyucu: '../' adı reddedildi, bozuk veri CRC'de yakalandı, gerçek ${relZip} (deflate, ${real.length} dosya) okundu ve paket denetiminden geçti`);
   if (UPD.cmpVersion("1.10.0", "1.9.9") !== 1 || UPD.cmpVersion("1.2.0", "1.2.0") !== 0 || UPD.cmpVersion("1.2.0", "1.2.1") !== -1) fail("cmpVersion");
   else ok("sürüm karşılaştırma sayısal (1.10.0 > 1.9.9)");
 };
