@@ -52,7 +52,7 @@ import {
 import { bindState, frameFromRecord, itemKey, itemOf, layoutState, misplacedAgainst, parkedFromRecord } from "./collect";
 import { analyze, compareLinkGroups, groupsFromLayout, partlyParked, reduceToPresent, type LayoutFrame } from "./sessions";
 import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
-import { getLinker, HELPER_VERSION, readPanelLinkResult, writeLinkPlan, type LinkGroupResult, type PingResult } from "./linker";
+import { dropLinkPlan, getLinker, HELPER_VERSION, readPanelLinkResult, writeLinkPlan, type LinkGroupResult, type PingResult } from "./linker";
 import { big, fmtClip, relocate, secOf, settle, sleep, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
 import { confirmRedo, reconcileAndLog, stale } from "./records";
 import { assertSameSequence, requireActive, type SeqContext } from "./session";
@@ -609,6 +609,7 @@ export async function runBind(): Promise<void> {
     if (bs === "partial") {
       // v1.2.1: BAĞLA kaydı bu düzenle tutmuyor → bayat: unutulur; BAĞLA planını canlı timeline'dan kurar (ön koşullar aşağıda denetlenir)
       saveBindRecord(ctx.guid, null);
+      await dropLinkPlan(ctx.guid);
       log(stale("Bağla"), "warn");
       rec = loadRecord(ctx.guid)!;
       bs = bindState(rec, s0);

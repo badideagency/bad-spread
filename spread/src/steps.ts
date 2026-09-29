@@ -5,13 +5,17 @@
 // önce canlı timeline'la karşılaştırılır — tutmayan işaret silinir (records.ts → reconcile). KAYIT İPUCUDUR, KİLİT DEĞİLDİR.
 
 import { readPanelLinkResult } from "./linker";
+import type { Mid } from "./prints";
 import { loadRecord } from "./settings";
 import type { StepId, StepView } from "./ui";
 
 const KEY = "spread.steps.v1";
 
-/** fp / tp: işlemin sonundaki timeline parmak izi (records.ts); v1.2.0 ve öncesinin kayıtlarında yok */
-export type StepMark = { kind: "ok" | "warn"; text: string; at: string; fp?: string; tp?: string };
+/**
+ * fp / tp: işlemin sonundaki timeline parmak izi (records.ts; v1.2.0 ve öncesinin kayıtlarında yok); mid: işlemin ARA hâlleri (kısmi
+ * Ctrl+Z tanınsın, prints.ts); backup: işlemin aldığı yedek sequence
+ */
+export type StepMark = { kind: "ok" | "warn"; text: string; at: string; fp?: string; tp?: string; mid?: Mid[]; backup?: string | null };
 type Saved = Partial<Record<StepId, StepMark>>;
 
 function all(): Record<string, Saved> {
@@ -66,6 +70,15 @@ export function setStepPrint(guid: string, step: StepId, fp: string, tp: string)
   const m = a[guid]?.[step];
   if (!m) return;
   a[guid] = { ...a[guid], [step]: { ...m, fp, tp } };
+  saveAll(a);
+}
+
+/** v1.2.1: işlemin ara hâllerini ve yedeğini işarete yazar (işaret yoksa bir şey yapmaz). */
+export function setStepMids(guid: string, step: StepId, mid: Mid[], backup: string | null): void {
+  const a = all();
+  const m = a[guid]?.[step];
+  if (!m) return;
+  a[guid] = { ...a[guid], [step]: { ...m, mid, backup } };
   saveAll(a);
 }
 

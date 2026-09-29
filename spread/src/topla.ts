@@ -10,7 +10,7 @@
 // tek başına taşınır; tutmazsa "İLK TAŞIMA TUTMADI".
 
 import { selectExactly } from "./edit";
-import { classify, sourcesOf, where } from "./classify";
+import { classify, sourcesOf, where, type Classified } from "./classify";
 import {
   bindState,
   clipKey,
@@ -31,6 +31,7 @@ import {
   askUser,
   ceilTo,
   confirmNotStopped,
+  digest,
   expectState,
   forgetStopped,
   frameTicks,
@@ -43,11 +44,15 @@ import {
   reportStop,
   runTx,
   SpreadStop,
+  stoppedOf,
 } from "./guard";
 import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
 import { fmtClip, relocate, secOf, settle, snapshot, ticks, trackLabel, TICKS_PER_SECOND, type ClipInfo, type Snapshot } from "./model";
 import { analyze, describeLinks, duplicateSets, partlyParked, suspiciousMembers, type Analysis, type DuplicateSet, type Recording } from "./sessions";
+import { dropLinkPlan } from "./linker";
+import { Trail } from "./prints";
 import { confirmRedo, reconcileAndLog, stale } from "./records";
+import { setStepMids } from "./steps";
 import { requireActive, type SeqContext } from "./session";
 import { getGapSec, getThreshold, loadRecord, mappingFor, saveBindRecord, saveMapping, saveRecord, type CollectRecord } from "./settings";
 import { done, log, progress } from "./ui";
@@ -93,6 +98,28 @@ function dupText(dups: DuplicateSet[]): string {
   );
 }
 
+/**
+ * v1.2.1: BAĞLA kesiminin canlı timeline'daki izi (kayıttan bağımsız): aynı harici kaynağın aynı track'te, AYNI senkron konumunda
+ * (start − in eşit) zamanda çakışmayan birden çok parçası. Senkron sonrası bir kayıt tek klip olur; BAĞLA onu yerinde parçalara böler.
+ */
+export function cutPieces(items: Classified[]): string[] {
+  const groups = new Map<string, ClipInfo[]>();
+  for (const x of items) {
+    if (x.role !== "external") continue;
+    const c = x.clip;
+    const k = `${c.projId}|${c.track}|${BigInt(c.start) - BigInt(c.inPt)}`;
+    groups.set(k, [...(groups.get(k) ?? []), c]);
+  }
+  const out: string[] = [];
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const sorted = list.slice().sort((a, b) => (BigInt(a.start) < BigInt(b.start) ? -1 : 1));
+    const apart = sorted.every((c, i) => i === 0 || BigInt(sorted[i - 1].end) <= BigInt(c.start));
+    if (apart) out.push(`${where(sorted[0])}: ${sorted.length} parça`);
+  }
+  return out;
+}
+
 async function select(ctx: SeqContext, clips: ClipInfo[], what: string) {
   const so = await selectExactly(ctx, clips);
   for (const n of so.notes) log(`   ${n}`, "dim");
@@ -104,6 +131,7 @@ export async function runCollect(): Promise<void> {
   const executed: string[] = [];
   let backupName: string | null = null;
   let ctx: SeqContext | null = null;
+  const trail = new Trail(); // v1.2.1: ara hâller (kısmi Ctrl+Z tanınsın)
   log("▶ TOPLA", "head");
   try {
     ctx = await requireActive();
@@ -111,6 +139,7 @@ export async function runCollect(): Promise<void> {
     const sAll = await snapshot(ctx);
     // v1.2.1: kayıt ipucudur, kilit değil — tutmayan kayıt silinir; tutan kayıtta yalnız soru
     await reconcileAndLog(ctx.guid, sAll);
+    const halfAsked = stoppedOf(ctx.guid)?.digest === digest(sAll); // yarım iş sorusu bu hâl için soruldu → kesim sorusu tekrar sorulmaz
     if (!(await confirmNotStopped(ctx, sAll, "TOPLA"))) return log("İptal edildi — hiçbir şey değişmedi.", "warn");
     if (!(await confirmRedo(ctx.guid, sAll, "topla", "topla"))) return; // Bağla'dan sonraki hâl aşağıda kendi sorusuyla
     for (const w of sAll.warnings) throw new SpreadStop(`Okuma sorunu: ${w}. TOPLA BAŞLAMADI.`);
@@ -140,8 +169,10 @@ export async function runCollect(): Promise<void> {
     // çalışır ama taşınanların bağı çözülür.
     let bs = bindState(rec, s0);
     if (bs === "partial") {
-      // BAĞLA kaydı bu düzenle tutmuyor (kısmen geri alınmış / elle değişmiş) → bayat: unutulur, TOPLA normal çalışır
+      // BAĞLA kaydı bu düzenle tutmuyor (kısmen geri alınmış / elle değişmiş) → bayat: unutulur (reconcile bunu önceden soruya çevirir;
+      // burası yalnız çift kopyalar düşülünce farklılaşan durum için)
       saveBindRecord(ctx.guid, null);
+      await dropLinkPlan(ctx.guid);
       log(stale("Bağla"), "warn");
       rec = loadRecord(ctx.guid);
       bs = bindState(rec, s0);
@@ -164,6 +195,28 @@ export async function runCollect(): Promise<void> {
         return;
       }
       log("Bağla kaydı var (sesler kesilmiş) ama kullanıcı devam dedi.", "warn");
+    } else {
+      // v1.2.1: kayıt yoksa da (↻ ile silinmiş, başka bilgisayar) kesilmiş sesler canlı timeline'dan tanınır → SORU
+      const pieces = halfAsked ? [] : cutPieces(classify(s0));
+      if (pieces.length) {
+        const ans = await askUser(
+          "Bu sequence'ta sesler kesilmiş görünüyor: aynı ses kaydının birden çok parçası aynı senkron konumunda " +
+            `(${pieces.slice(0, 3).join("; ")}${pieces.length > 3 ? ` … ${pieces.length - 3} kayıt daha` : ""}). Bağla yapılmış olabilir (kaydı yok). ` +
+            "Topla kesilmiş seslerden oturum bulmaya çalışır — sonuç beklediğin gibi olmayabilir (önce yedek alınır, Ctrl+Z ile geri alınır). " +
+            "Yine de çalıştırılsın mı?",
+          [
+            "Sesler kesilmiş görünüyor (aynı kaydın parçaları).",
+            "Bağla yapılmış olabilir; Topla kesilmiş seslerden oturum bulmaya çalışır.",
+            "Önerilen: Bağla öncesi yedek sequence ya da Ctrl+Z ile Bağla'yı geri al.",
+          ],
+          { title: "Topla yine de çalıştırılsın mı?", yes: "Yine de çalıştır", no: "Vazgeç" }
+        );
+        if (ans !== "Evet") {
+          log("İptal edildi — hiçbir şey değişmedi.", "warn");
+          return;
+        }
+        log("Sesler kesilmiş görünüyor ama kullanıcı devam dedi.", "warn");
+      }
     }
     // park kaydı YALNIZ TOPLA'nın bıraktığı düzen duruyorsa geçerli: TOPLA tamamen geri alınmışsa bırakılır (her şey senkron
     // sonucundan yeniden), düzen el ile değişmişse sorulur
@@ -390,6 +443,7 @@ export async function runCollect(): Promise<void> {
       const probs = compareLayout(s0.clips.map((c) => expOf(c)), s);
       if (probs.length) throw new SpreadStop("Çift kopya silme doğrulaması tutmadı (yalnız fazla kopyalar silinmeliydi).", probs);
       log(`✓ TX-0 doğrulandı: ${drop.length} fazla kopya silindi, kalan ${s.clips.length} klip tick düzeyinde yerinde.`, "ok");
+      trail.note(s, executed.length);
       beforeLast = prev;
       prev = s;
     }
@@ -410,6 +464,7 @@ export async function runCollect(): Promise<void> {
       helpers = r.helpers;
       beforeLast = prev;
       prev = r.after;
+      trail.note(r.after, executed.length);
     }
     // park yeri: hem bugünkü düzenin hem YENİ düzenin sonunun ötesi (yerleştirme park kopyalarına değmesin), kare hizalı
     const pb = await parkBase(ctx, prev);
@@ -448,6 +503,7 @@ export async function runCollect(): Promise<void> {
       if (probs.length)
         throw new SpreadStop(isMeasure ? `İLK TAŞIMA TUTMADI (park, ${first}): sıfırdan farklı zaman ofsetli clone beklenen yere gitmedi.` : `"${label}" doğrulaması tutmadı.`, probs);
       log(`✓ ${label} doğrulandı (${list.length} klip, tick düzeyinde).`, "ok");
+      trail.note(s, executed.length);
       beforeLast = prev;
       prev = s;
     };
@@ -485,6 +541,7 @@ export async function runCollect(): Promise<void> {
           probs
         );
       log(`✓ ${label} doğrulandı (${list.length} klip, tick düzeyinde).`, "ok");
+      trail.note(s, executed.length);
       beforeLast = prev;
       prev = s;
     };
@@ -512,6 +569,7 @@ export async function runCollect(): Promise<void> {
     for (const r of plan.parkedRecs) log(`   park: ${r.label} (${trackLabel(r.clips[0].kind, plan.placements.find((p) => p.x.clip === r.clips[0])!.track)}, zamanı aynı)`, "dim");
     forgetStopped(ctx.guid);
     saveRecord(record(null));
+    if (rec?.bind) await dropLinkPlan(ctx.guid); // BAĞLA aşaması bu TOPLA'yla geçersiz → eski KES planı da
     saveMapping(mapping);
     log(CHECK_MSG, "head");
     log(`Beğenmezsen: timeline'a tıkla, Ctrl+Z'ye ${executed.length} kez bas — ya da yedek sequence "${backupName}"i kullan.`, "dim");
@@ -521,8 +579,9 @@ export async function runCollect(): Promise<void> {
       `${nS} oturum toplandı${drop.length ? `, ${drop.length} çift kopya silindi` : ""}.`,
       `Şimdi timeline'ı gözle kontrol et, sonra Bağla. Beğenmezsen Ctrl+Z × ${executed.length} ya da yedek sequence "${backupName}".`
     );
+    setStepMids(ctx.guid, "topla", trail.between(executed.length), backupName);
   } catch (e) {
-    if (executed.length && ctx) await rememberStopped(ctx, "TOPLA");
+    if (executed.length && ctx) await rememberStopped(ctx, "TOPLA", { backup: backupName, mids: trail.mids });
     reportStop("TOPLA", e, executed, backupName);
   }
 }

@@ -46,7 +46,9 @@ import {
 import { errText, fmtClip, relocate, secOf, settle, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
 import { where } from "./classify";
 import { makePlan, type Placement, type Plan, type Unit } from "./plan";
+import { Trail } from "./prints";
 import { confirmRedo, reconcileAndLog } from "./records";
+import { setStepMids } from "./steps";
 import { requireActive, sequenceGuid, sequenceName, type SeqContext } from "./session";
 import { edgeDelta, fmtDelta, fmtDiff, frameOf, frameText, overwriteFit, type Frame, type OverwriteFit } from "./trimstate";
 import { done, log, progress } from "./ui";
@@ -100,7 +102,8 @@ class Overwriter {
     private backupGuid: string,
     private seqFrame: bigint | null,
     private executed: string[],
-    private pending: Set<Unit>
+    private pending: Set<Unit>,
+    private trail: Trail
   ) {}
 
   frame(u: Unit): Frame {
@@ -135,6 +138,7 @@ class Overwriter {
     });
     await settle();
     const s = await snapshot(ctx);
+    this.trail.note(s, executed.length);
     for (const u of list) pending.delete(u);
     const v = verifySpread(plan, s, { pending, loose: new Set(list) });
     if (v.problems.length)
@@ -195,6 +199,7 @@ class Overwriter {
     });
     await settle();
     const after = await snapshot(ctx);
+    this.trail.note(after, executed.length);
     this.beforeLast = this.prev;
     this.prev = after;
     return after;
@@ -204,8 +209,9 @@ class Overwriter {
     const { plan, pending } = this;
     const pre = isMeasure ? "ilk " : "";
     const vidUnits = new Set(tails.filter((i) => i.p.clip.kind === "V").map((i) => i.u));
-    // bağlı ses videoyu izliyor mu bilinmiyorsa: önce yalnız videolar (videosu düzeltilmeyen kameraların sesleri doğrudan)
-    const deferred = this.follow === false ? [] : tails.filter((i) => i.p.clip.kind === "A" && vidUnits.has(i.u));
+    // HER ZAMAN önce yalnız videolar (videosu düzeltilmeyen kameraların sesleri doğrudan); videosu düzeltilen kameraların sesleri
+    // okunur: izlediyse action yok, izlemediyse AYRI transaction'da (video + ses SetOutPoint'i aynı transaction'da hiç ölçülmedi)
+    const deferred = tails.filter((i) => i.p.clip.kind === "A" && vidUnits.has(i.u));
     const now1 = tails.filter((i) => !deferred.includes(i));
     progress(0.85, "Kuyruk farkı düzeltiliyor (SetOutPoint)…");
     const s1 = await this.setOuts(now1, `${pre}kuyruk düzeltme`);
@@ -226,12 +232,13 @@ class Overwriter {
         return overwriteFit(i.p.clip, n, this.frame(i.u)) === "exact" ? "followed" : sameEdges(i.now, n) ? "unchanged" : "other";
       });
       const known = this.follow;
-      if (st.every((x) => x === "followed")) this.follow = true;
-      else if (st.every((x) => x === "unchanged") && known === null) this.follow = false;
+      const all = (x: string) => st.every((y) => y === x);
+      if (all("followed") && known !== false) this.follow = true;
+      else if (all("unchanged") && known !== true) this.follow = false;
       else
         throw new SpreadStop(
-          known === true
-            ? "Kuyruk düzeltme: ilk ölçümde bağlı ses videonun SetOutPoint'ini izlemişti, bu kez izlemedi. Durduruldu."
+          known !== null && (all("followed") || all("unchanged"))
+            ? `Kuyruk düzeltme: ilk ölçümde bağlı ses videonun SetOutPoint'ini ${known ? "izlemişti, bu kez izlemedi" : "izlememişti, bu kez izledi"}. Durduruldu.`
             : "Kuyruk düzeltme: bağlı seslerin bir kısmı videonun SetOutPoint'ini izledi, bir kısmı izlemedi ya da başka türlü değişti. Durduruldu.",
           [
           ...deferred.map((i, k) => `${trackLabel("A", i.p.target)} "${i.p.clip.name}": ${st[k] === "followed" ? "izledi (aslıyla aynı)" : st[k] === "unchanged" ? "değişmedi" : `başka fark: ${fmtDelta(edgeDelta(i.p.clip, v1.found.get(i.p)!), this.frame(i.u))}`}`),
@@ -250,6 +257,7 @@ export async function runSpread(): Promise<void> {
   const executed: string[] = [];
   let backupName: string | null = null;
   let ctx: SeqContext | null = null;
+  const trail = new Trail(); // v1.2.1: ara hâller (kısmi Ctrl+Z tanınsın)
   log("▶ SPREAD", "head");
   try {
     ctx = await requireActive();
@@ -282,6 +290,7 @@ export async function runSpread(): Promise<void> {
     const moving = plan.overwrite.length + plan.clone.length;
     if (!moving) {
       log("✓ Zaten dağıtılmış: her klip kendi hedef track'inde. Yapılacak bir şey yok.", "ok");
+      forgetStopped(ctx.guid);
       done("spread", "ok", "Zaten dağıtılmış; yapılacak bir şey yok.", "Sonra: Premiere'de Clip › Synchronize, ardından Topla.", true);
       return;
     }
@@ -328,6 +337,7 @@ export async function runSpread(): Promise<void> {
       helpers = r.helpers;
       expected = r.after;
       beforeLast = s1;
+      trail.note(r.after, executed.length);
     }
 
     // 3) TX-B "dağıt": clone + remove (tek transaction). Önce timeline beklenen hâlde mi; seçim + referanslar HEMEN öncesinde taze.
@@ -353,6 +363,7 @@ export async function runSpread(): Promise<void> {
     });
     await settle();
     let prev = await snapshot(ctx);
+    trail.note(prev, executed.length);
     beforeLast = so.snap; // TX-B öncesi (seçim klipleri değiştirmez) — TX-B geri alınırsa sonraki adım bunu görür
     const vB = verifySpread(plan, prev, { pending });
     if (vB.problems.length) throw new SpreadStop("Taşıma doğrulaması tutmadı.", vB.problems);
@@ -360,7 +371,7 @@ export async function runSpread(): Promise<void> {
     // 4) + 5) kameralar: ilki tek başına (ölçüm), sonra kalanlar; kuyrukta < 1 kare fark → ayrı transaction'da SetOutPoint
     if (plan.overwrite.length) {
       const first = plan.overwrite[0];
-      const ow = new Overwriter(ctx, plan, backup.guid, seqFrame, executed, pending);
+      const ow = new Overwriter(ctx, plan, backup.guid, seqFrame, executed, pending, trail);
       await ow.step([first], "ilk overwrite (ölçüm)", true, prev, beforeLast);
       if (plan.overwrite.length > 1) {
         progress(0.75, `${plan.overwrite.length - 1} kamera daha yerleştiriliyor…`);
@@ -389,13 +400,16 @@ export async function runSpread(): Promise<void> {
       "spread",
       "ok",
       `${plan.placements.length} klip kendi track'ine dağıtıldı.`,
-      "Sonra: Premiere'de Clip › Synchronize (menü gri ise timeline'a tıkla, Ctrl+A), ardından Topla."
+      "Sonra: Premiere'de Clip › Synchronize (menü gri ise timeline'a tıkla, Ctrl+A), ardından Topla. " +
+        `Beğenmezsen Ctrl+Z × ${executed.length} (hepsini birden) ya da yedek sequence "${backupName}".`
     );
+    // kısmi Ctrl+Z (ör. 3 adımdan 1'i) tanınsın: ara hâller işarette (records.ts → reconcile)
+    setStepMids(ctx.guid, "spread", trail.between(executed.length), backupName);
     log(`Beğenmezsen: timeline'a tıkla, Ctrl+Z'ye ${executed.length} kez bas — ya da yedek sequence "${backupName}"i kullan.`, "dim");
     forgetStopped(ctx.guid);
   } catch (e) {
     // v1.2.1: SPREAD de yarım iş kaydı bırakır (bir sonraki işlem bu hâli görürse SORAR; geri alınınca kayıt kendiliğinden silinir)
-    if (executed.length && ctx) await rememberStopped(ctx, "SPREAD");
+    if (executed.length && ctx) await rememberStopped(ctx, "SPREAD", { backup: backupName, mids: trail.mids });
     reportStop("SPREAD", e, executed, backupName);
   }
 }

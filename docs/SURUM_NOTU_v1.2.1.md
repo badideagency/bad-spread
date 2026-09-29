@@ -24,9 +24,14 @@ Yeniden başlat. Başlıkta **1.2.1** görünür.
   - tutmuyorsa kayıt silinir, günlüğe "Timeline değişmiş (geri alma/elle düzenleme) — önceki Dağıt kaydı unutuldu." yazılır ve işlem
     normal çalışır (sıradaki adım göstergesi de kendiliğinden düzelir);
   - tutuyorsa kilit yok, yalnız soru: "Bu sequence'ta Dağıt zaten yapılmış görünüyor. Yine de çalıştırılsın mı?"
+- Ctrl+Z'ye gereğinden **az** basıldıysa (Dağıt 3–5 adımdır; ara adımlarda kameralar geçici olarak timeline'da yoktur) panel bunu
+  tanır ve sorar: "Dağıt yarım geri alınmış görünüyor … Ctrl+Z'ye N kez daha bas — ya da yedek sequence". Topla için de aynı.
+- Bağla kısmen geri alındıysa ya da sesler kesilmiş görünüyorsa (kayıt olmasa bile) Topla önce sorar.
 - Clip › Synchronize (klipleri yalnız zamanda kaydırır) Dağıt ✓'ünü silmez.
 - **↻** açık sequence'ın bütün kayıtlarını siler (adım işaretleri, yarım iş kaydı, Topla / Bağla kaydı, eski Bağla planı), sonra
-  panelleri yeniden yükler: "Bu sequence'ın kayıtları temizlendi." Başka sequence'ların kayıtları ve kırpma ölçümü kalır.
+  panelleri yeniden yükler: "Bu sequence'ın kayıtları temizlendi." Başka sequence'ların kayıtları ve kırpma ölçümü kalır. Tek istisna:
+  Bağla kesimi bağlanmayı bekliyorsa ↻ önce sorar ("Kayıtlar da temizlensin mi?" → Temizle ve yenile / Yalnız yenile), çünkü kayıt
+  silinirse o kesim artık bağlanamaz.
 - Ctrl+Z'nin bıraktığı boş track'ler Dağıt'ta yeniden kullanılır (önce onlar dolar, yeni track gerekirse sonra açılır).
 
 ## Emre için 5 adımlık sınama
@@ -42,7 +47,7 @@ Yeniden başlat. Başlıkta **1.2.1** görünür.
 
 ## Doğrulama
 
-- Mock: 102 → 114 senaryo (316 → 365 denetim). Yeniler: gerçek 12 kliplik veri (red yok, plan kurulur, 0 yeni track), gerçekten
+- Mock: 102 → 117 senaryo (316 → 376 denetim). Yeniler: gerçek 12 kliplik veri (red yok, plan kurulur, 0 yeni track), gerçekten
   kırpılmış klip (red sürer), overwrite ölçümü (birebir; sonu medya sonuna uzamış → ayrı SetOutPoint; bağlı ses izliyor / izlemiyor;
   baş kayması → DUR; ≥ 1 kare → DUR), Dağıt → Ctrl+Z → Dağıt, Dağıt → ↻ → Dağıt, Topla → Ctrl+Z → Topla, ↻ başka sequence'a dokunmaz,
   değişmemiş timeline → soru. 12 Eylül verisiyle çalışan senaryolar aynen geçer.

@@ -16,7 +16,7 @@ import { getLinker } from "./src/linker";
 import { bindSettingInputs, renderMapping } from "./src/settings";
 import { errText, readShape, shapeOf, snapshot } from "./src/model";
 import { rememberStep, setStepPrint, stepViews } from "./src/steps";
-import { clearSequenceRecords, fingerprint, hasRecords, reconcileAndLog, trackPrint } from "./src/records";
+import { clearSequenceRecords, fingerprint, hasRecords, pendingLink, reconcileAndLog, trackPrint } from "./src/records";
 import { SPREAD_VERSION } from "./src/version";
 import { CHECK_EVERY_MS, checkForUpdate, type Latest } from "./src/update";
 import { askUser } from "./src/guard";
@@ -146,13 +146,18 @@ async function stampStep(): Promise<void> {
   pendingPrint = null;
   if (!p) return;
   try {
-    const ctx = await requireActive();
-    if (ctx.guid !== p.guid) return; // sequence değişti → iz yazılmaz (kayıt bir sonraki doğrulamada "doğrulanamıyor" sayılır)
+    let ctx = await requireActive();
+    if (ctx.guid !== p.guid) {
+      // kullanıcı arada başka sequence'a geçti → işlemin sequence'ı listeden bulunur (salt okuma)
+      const seq = (await ctx.project.getSequences()).find((x) => sequenceGuid(x) === p.guid); // d.ts:L2520 Project.getSequences
+      if (!seq) return;
+      ctx = { ...ctx, sequence: seq, guid: p.guid, name: sequenceName(seq) };
+    }
     const s = await snapshot(ctx);
     setStepPrint(p.guid, p.step, fingerprint(s), trackPrint(s));
     shapes.set(p.guid, shapeOf(s));
   } catch {
-    /* okunamazsa iz yok */
+    /* okunamazsa iz yok (bir sonraki doğrulamada "parmak izi yok" diye unutulur) */
   }
 }
 
@@ -195,6 +200,13 @@ async function checkHelper(verbose: boolean): Promise<void> {
 
 const LAST_CHECK_KEY = "spread.updateCheck.v1";
 const RELOAD_NOTE = "spread.reloadNote.v1"; // v1.2.1: ↻ sonrası bildirim (tek seferlik)
+const dropReloadNote = () => {
+  try {
+    localStorage.removeItem(RELOAD_NOTE);
+  } catch {
+    /* yoksa geç */
+  }
+};
 
 function paintUpdate(): void {
   setUpdateStrip(latest ? { version: latest.version, helperOk: helperReachable } : null);
@@ -336,14 +348,27 @@ async function reloadPanels(): Promise<void> {
     const { sequence } = await getActive();
     if (sequence) {
       const g = sequenceGuid(sequence);
-      await clearSequenceRecords(g);
-      shapes.delete(g);
-      log("Bu sequence'ın kayıtları temizlendi.", "head");
-      try {
-        localStorage.setItem(RELOAD_NOTE, sequenceName(sequence));
-      } catch {
-        /* bildirim yalnız bu satırda kalır */
+      // Bağla kesimi bağlanmayı bekliyorsa kayıtları silmek bağlamayı imkânsız kılar (KES planı + kayıt gider) → yalnız bu durumda sorulur
+      let clear = true;
+      if (pendingLink(g)) {
+        const ans = await askUser(
+          "Bu sequence'ta Bağla kesimi bağlanmayı bekliyor (Spread Helper panelindeki Bağla ya da burada Bağla). ↻ kayıtları silerse bu kesim " +
+            "artık bağlanamaz: Bağla'yı Ctrl+Z ile geri alıp Topla ve Bağla'yı yeniden yapman gerekir. Kayıtlar da temizlensin mi?",
+          ["Bağla kesimi bağlanmayı bekliyor.", "Kayıtlar silinirse bu kesim artık bağlanamaz.", "Yalnız yenile = kayıtlar kalır, paneller yenilenir."],
+          { title: "Kayıtlar da temizlensin mi?", yes: "Temizle ve yenile", no: "Yalnız yenile" }
+        );
+        clear = ans === "Evet";
       }
+      if (clear) {
+        await clearSequenceRecords(g);
+        shapes.delete(g);
+        log("Bu sequence'ın kayıtları temizlendi.", "head");
+        try {
+          localStorage.setItem(RELOAD_NOTE, sequenceName(sequence));
+        } catch {
+          /* bildirim yalnız bu satırda kalır */
+        }
+      } else log("↻ Kayıtlar korunuyor (Bağla kesimi bağlanmayı bekliyor); yalnız paneller yenileniyor.", "head");
     }
   } catch (e) {
     log(`Kayıtlar temizlenemedi: ${errText(e)}`, "warn");
@@ -357,12 +382,14 @@ async function reloadPanels(): Promise<void> {
       window.location.reload();
     } catch (e) {
       log(`↻ Panel yeniden yüklenemedi: ${errText(e)}. Paneli kapatıp aç.`, "warn");
+      dropReloadNote();
       unlock();
       return;
     }
-    // yeniden yükleme sessizce olmadıysa panel kilitli kalmasın
+    // yeniden yükleme sessizce olmadıysa panel kilitli kalmasın (bildirim bu oturumda günlükte kaldı; sonraki açılışta çıkmasın)
     setTimeout(() => {
       log("↻ Panel yeniden yüklenmedi; gerekirse paneli kapatıp aç.", "warn");
+      dropReloadNote();
       unlock();
     }, 5000);
   }, h ? 600 : 50);

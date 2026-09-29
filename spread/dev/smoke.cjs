@@ -32,7 +32,7 @@ const frames = (n) => BigInt(n) * FRAME25;
 const secOf = (t) => (Number(t) / Number(TPS)).toFixed(3);
 
 // ------------------------------------------------------------ mock ayarları (senaryo başına)
-const M0 = { broken: false, nonseq: false, nobackup: false, backupActive: false, falseTx: null, badBackup: false, noType: false, undoAfterTx: null, setSem: "real", linkFailName: null, linkedSemantics: "link", cloneTimeBroken: false, planWriteFails: false, fetchError: null, hostVersion: "26.5.1", chType: null, linkRejectMixed: false, channelApi: true, timebase: FRAME25, noFootage: false, owMode: "clip", owShift: 0n, owExtra: 0n, linkTrimFollow: false };
+const M0 = { broken: false, nonseq: false, nobackup: false, backupActive: false, falseTx: null, badBackup: false, noType: false, undoAfterTx: null, setSem: "real", linkFailName: null, linkedSemantics: "link", cloneTimeBroken: false, planWriteFails: false, fetchError: null, hostVersion: "26.5.1", chType: null, linkRejectMixed: false, channelApi: true, timebase: FRAME25, noFootage: false, owMode: "clip", owShift: 0n, owShiftFor: null, owExtra: 0n, linkTrimFollow: false };
 // v1.2.1 overwrite modları: M.owMode "clip" (varsayılan: proje öğesinin klip süresi = p.clipDur ?? p.dur → aslıyla birebir), "media"
 // (kuyruk medya sonuna uzar: p.dur); M.owShift: video + ses start'ı bu kadar kayık (baş kayması); M.owExtra: kuyruk bu kadar uzun.
 // M.linkTrimFollow: bağlı videoya SetOutPoint → bağlı sesler de aynı farkla değişir (gerçek Premiere'de ölçülmedi; SPREAD ölçer).
@@ -142,7 +142,7 @@ function wrapItem(id) {
           const d = v - c0[field];
           if (name === "end" || name === "out") (f.c.end += d), (f.c.outPt += d); // kuyruk kenarı
           else (f.c.start += d), (f.c.inPt += d); // baş kenarı
-          if (M.linkTrimFollow && name === "out" && f.c.linkId) // bağlı partnerler aynı farkla (yalnız bu kipte)
+          if ((typeof M.linkTrimFollow === "function" ? M.linkTrimFollow(f.c.name) : M.linkTrimFollow) && name === "out" && f.c.linkId) // bağlı partnerler aynı farkla (yalnız bu kipte)
             for (const grp of [f.s.v, f.s.a]) for (const tr of grp) for (const x of tr) if (x.id !== id && x.linkId === f.c.linkId) (x.end += d), (x.outPt += d);
         } else fn(f, BigInt(t.ticks));
         // en kötü durum: set sonrası aynı track'te çakışan klip EZİLİR (Premiere'in davranışı ölçülmedi)
@@ -279,7 +279,7 @@ const editorFor = (seqW) => {
         const k = p.channels;
         if ((p.hasVideo && vIdx >= S.v.length) || (k && aIdx + k - 1 >= S.a.length))
           throw new Error(`mock: overwrite olmayan track'e (V${vIdx + 1}/A${aIdx + 1}) — KANITLANMADI`);
-        const st = BigInt(time.ticks) + M.owShift;
+        const st = BigInt(time.ticks) + (M.owShiftFor && !p.name.startsWith(M.owShiftFor) ? 0n : M.owShift);
         const len = (M.owMode === "media" ? p.dur : p.clipDur ?? p.dur) + M.owExtra;
         const L = "L" + nextId++;
         if (p.hasVideo) {
@@ -1799,6 +1799,12 @@ scenarios.partial_undo = async () => {
     else ok(`Ctrl+Z × ${k} (kesim geri alındı) → bayat BAĞLA kaydı unutuldu; BAĞLA canlı timeline'dan plan kuramadı, hiçbir şey değişmedi`);
     if (r.ok || !/KES planı okunamadı/.test(r.summary) || counters.links !== n0) fail(`Ctrl+Z × ${k} sonrası yardımcı panel: ${r.summary}`);
     else ok(`Ctrl+Z × ${k} → eski KES planı silindi; yardımcı paneldeki Bağla planı bulamadı, hiçbir şey bağlanmadı`);
+    // inceleme #13 M2: kısmen geri alınmış BAĞLA'dan sonra TOPLA sessizce çalışmamalı → SORU (Vazgeç → hiçbir şey)
+    let tq = "";
+    const ot = await clickAndWait("btn-collect", async (x) => ((tq = tq || x), no()), doneRe);
+    if (!/^Bu sequence'ta önceki Bağla kısmen geri alınmış görünüyor/.test(tq) || counters.txNames.length !== tx0 || !/İptal edildi/.test(ot))
+      fail(`Ctrl+Z × ${k} sonrası TOPLA sormadı:\n${tq}\n${failLines(ot)}`);
+    else ok(`Ctrl+Z × ${k} → TOPLA 'Bağla kısmen geri alınmış görünüyor … yine de?' diye SORDU; Vazgeç → hiçbir şey`);
     await stopHelper();
     restore(snap);
     undoStack.length = 0;
@@ -4276,9 +4282,10 @@ async function a027Tail(follow) {
   checkLayout(seqByGuid("guid-a027"), exp, `kuyruk medya sonuna uzadı → SetOutPoint (${tag})`);
   if (!/ölçüm "A042C001_260925XX\.MP4": V1 yalnız kuyruk \+6214924800 tick = \+24\.467 ms = \+0\.733 kare; A1 yalnız kuyruk \+6214924800 tick/.test(out)) fail("ilk ölçüm kuyruk farkını yazmadı");
   else ok("ilk ölçüm: V1 ve A1 yalnız kuyruk +6214924800 tick = +24.467 ms = +0.733 kare");
+  // video ve ses SetOutPoint'i HER ZAMAN ayrı transaction'da (birlikte hiç ölçülmedi)
   const want = follow
     ? "Spread: yedek sequence,Spread: dağıt,Spread: ilk overwrite (ölçüm),Spread: ilk kuyruk düzeltme,Spread: overwrite,Spread: kuyruk düzeltme"
-    : "Spread: yedek sequence,Spread: dağıt,Spread: ilk overwrite (ölçüm),Spread: ilk kuyruk düzeltme,Spread: ilk kuyruk düzeltme (ses),Spread: overwrite,Spread: kuyruk düzeltme";
+    : "Spread: yedek sequence,Spread: dağıt,Spread: ilk overwrite (ölçüm),Spread: ilk kuyruk düzeltme,Spread: ilk kuyruk düzeltme (ses),Spread: overwrite,Spread: kuyruk düzeltme,Spread: kuyruk düzeltme (ses)";
   if (counters.txNames.join(",") !== want) fail(`transaction'lar: ${counters.txNames.join(", ")}`);
   else ok(`transaction'lar: ${counters.txNames.slice(1).map((x) => x.replace("Spread: ", "")).join(" → ")} (SetOutPoint overwrite'tan AYRI)`);
   const acts = [...counters.setActions.values()].flat();
@@ -4348,7 +4355,7 @@ scenarios.hint_spread_undo = async () => {
   lsStore.set("spread.steps.v1", JSON.stringify({ "guid-a027": { spread: { kind: "ok", text: "12 klip kendi track'ine dağıtıldı.", at: "2026-09-29T08:00:00.000Z" } } }));
   markLog();
   await revisit("guid-a027");
-  if (!shown("btn-spread") || stepsOf("guid-a027").spread || !/Önceki Dağıt kaydı timeline'la doğrulanamıyor \(eski sürümün kaydı/.test(newLog()))
+  if (!shown("btn-spread") || stepsOf("guid-a027").spread || !/Önceki Dağıt kaydı timeline'la doğrulanamıyor \(parmak izi yok: eski sürümün/.test(newLog()))
     fail(`eski sürümün Dağıt ✓ işareti sequence açılınca unutulmadı: ${JSON.stringify(stepsOf("guid-a027"))}\n${newLog()}`);
   else ok("1.2.0'dan kalan parmak izsiz 'Dağıt ✓' → sequence açılınca doğrulanamadı, unutuldu (günlükte); Dağıt düğmesi görünür");
   const before = a027Before();
@@ -4368,12 +4375,30 @@ scenarios.hint_spread_undo = async () => {
   out = await clickAndWait("btn-spread", yes);
   if (!/✓ SPREAD tamam/.test(out) || /zaten yapılmış görünüyor|YARIM/.test(out)) fail("geri alınan Dağıt yeniden çalışmadı:\n" + failLines(out));
   else ok("aynı sequence'ta Dağıt yeniden çalıştı (kilit yok, soru yok) — Ctrl+Z sayısı yine açık: " + (/Ctrl\+Z'ye (\d+) kez/.exec(out) || ["", "?"])[1]);
-  // kısmi geri alma (yalnız son adım): Dağıt yine çalışır (canlı timeline'dan plan), kayıt engellemez
+  // kısmi geri alma (3 adımdan yalnız 1'i): kameraların çoğu o anda YOK (dağıt'ta silindi) → "normal" çalışmak onları kaybettirir.
+  // Ara hâl tanınır → kilit değil SORU, kaç Ctrl+Z daha gerektiğini söyler; Vazgeç → hiçbir şey; kalan Ctrl+Z'lerden sonra Dağıt normal.
+  undoN(1);
+  mockGen++;
+  let q = "", title = "";
+  const n0 = counters.txNames.length;
+  out = await clickAndWait("btn-spread", async (x) => ((q = q || x), (title = title || els["ask-title"].textContent), no()));
+  if (!/Timeline, önceki Dağıt'ın ara hâllerinden birinde \(yarım geri alınmış; klipler eksik olabilir\): tamamen geri almak için Ctrl\+Z × 2 daha ya da yedek sequence "A027C012_260803UH Copy/.test(out) ||
+      !/^Bu sequence'ta önceki Dağıt yarım geri alınmış görünüyor: .*Ctrl\+Z'ye 2 kez daha bas/.test(q) || title !== "Dağıt yine de çalıştırılsın mı?" || counters.txNames.length !== n0 || !/İptal edildi/.test(out))
+    fail("kısmi Ctrl+Z tanınmadı / sorulmadı:\n" + title + " | " + q + "\n" + failLines(out));
+  else ok("kısmi Ctrl+Z (3 adımdan 1'i) → ara hâl tanındı: 'Dağıt yarım geri alınmış … Ctrl+Z'ye 2 kez daha bas' SORUSU (kilit değil); Vazgeç → hiçbir şey");
+  if (shown("btn-spread") !== true) fail("kısmi geri almadan sonra gösterge Dağıt'a dönmedi");
+  undoN(2);
+  mockGen++;
+  if (a027Before() !== before) return fail("Ctrl+Z × 2 daha aslına döndürmedi");
+  out = await clickAndWait("btn-spread", yes);
+  if (!/✓ SPREAD tamam/.test(out) || /yarım geri alınmış görünüyor/.test(out)) fail("kalan Ctrl+Z'lerden sonra Dağıt normal çalışmadı:\n" + failLines(out));
+  else ok("kalan Ctrl+Z × 2 → yarım kaydı kendiliğinden unutuldu, Dağıt normal çalıştı (12 kamera)");
+  // "Yine de çalıştır": soru kilit değil — ara hâlde de çalışır (eksik kameralarla, kullanıcının seçimi)
   undoN(1);
   mockGen++;
   out = await clickAndWait("btn-spread", yes);
-  if (!/✓ SPREAD tamam|✗ SPREAD DURDU: (?!.*zaten)/.test(out) || /zaten yapılmış görünüyor/.test(out) || !/önceki Dağıt kaydı unutuldu/.test(out)) fail("kısmi geri almadan sonra Dağıt engellendi:\n" + failLines(out));
-  else ok("kısmi Ctrl+Z (× 1) → Dağıt kayda takılmadan canlı timeline'dan yeniden planladı");
+  if (!/kullanıcı devam dedi/.test(out) || !/✓ SPREAD tamam|Zaten dağıtılmış/.test(out)) fail("'Yine de çalıştır' sonrası Dağıt çalışmadı:\n" + failLines(out));
+  else ok("ara hâlde 'Yine de çalıştır' → Dağıt çalıştı (soru kilit değil)");
 };
 
 scenarios.hint_spread_reload = async () => {
@@ -4415,12 +4440,22 @@ scenarios.hint_topla_undo = async () => {
   await sleep(150);
   if (!stepsOf("guid-main-edit").topla?.fp || !lsStore.get("spread.collectRecord.v1")?.includes("guid-main-edit")) return fail("TOPLA işareti / kaydı yazılmadı");
   const m = /Ctrl\+Z'ye (\d+) kez bas/.exec(o1);
-  undoN(Number(m ? m[1] : 0));
+  const n = Number(m ? m[1] : 0);
+  // önce KISMİ geri alma (1 adım): ara hâl tanınır → SORU (kaç Ctrl+Z daha); Vazgeç → hiçbir şey
+  undoN(1);
+  mockGen++;
+  let pq = "";
+  const tx0 = counters.txNames.length;
+  const op = await clickAndWait("btn-collect", async (x) => ((pq = pq || x), no()), doneRe);
+  if (!new RegExp(`^Bu sequence'ta önceki Topla yarım geri alınmış görünüyor: .*Ctrl\\+Z'ye ${n - 1} kez daha bas`).test(pq) || counters.txNames.length !== tx0 || lsStore.get("spread.collectRecord.v1")?.includes("guid-main-edit"))
+    fail(`Topla kısmi Ctrl+Z tanınmadı / sorulmadı (${n - 1} daha beklenirdi):\n${pq}\n${failLines(op)}`);
+  else ok(`Topla → Ctrl+Z × 1 (${n} adımdan) → 'Topla yarım geri alınmış … Ctrl+Z'ye ${n - 1} kez daha bas' SORUSU; yarım TOPLA'nın kaydı unutuldu; Vazgeç → hiçbir şey`);
+  undoN(n - 1);
   mockGen++;
   if (mainTracks() !== before) return fail("mock TOPLA'yı geri almadı");
   const qs = [];
   const o2 = await clickAndWait("btn-collect", async (x) => (qs.push(x), yes()), doneRe);
-  if (!/Timeline değişmiş \(geri alma\/elle düzenleme\) — önceki Topla kaydı unutuldu\./.test(o2) || qs.some((x) => /zaten yapılmış/.test(x)) || !/✓ TOPLA tamam/.test(o2) || /Zaten toplanmış/.test(o2))
+  if (!/Timeline değişmiş \(geri alma\/elle düzenleme\) — önceki Topla \(yarım iş\) kaydı unutuldu\./.test(o2) || qs.some((x) => /zaten yapılmış|yarım geri alınmış/.test(x)) || !/✓ TOPLA tamam/.test(o2) || /Zaten toplanmış/.test(o2))
     fail("geri alınan TOPLA yeniden çalışmadı:\n" + qs.join("\n---\n") + "\n" + failLines(o2));
   else ok("Topla → Ctrl+Z → Topla: bayat TOPLA kaydı unutuldu (günlükte), TOPLA baştan çalıştı; kilit / soru yok");
 };
@@ -4491,6 +4526,72 @@ scenarios.reload_scope = async () => {
   lsStore.delete("spread.reloadNote.v1");
   delete globalThis.location;
   await stopHelper();
+};
+
+scenarios.reload_pending_link = async () => {
+  // inceleme #13 M3: Bağla kesimi bağlanmayı beklerken ↻ → "Kayıtlar da temizlensin mi?" (Yalnız yenile = kayıtlar ve KES planı kalır);
+  // temizlenince (ya da kayıt hiç yoksa) TOPLA kesilmiş sesleri CANLI timeline'dan tanır → SORU
+  await collectThen(smallSpec());
+  await stopHelper();
+  const o1 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ KES tamam/.test(o1)) return fail("köprüsüz KES tamamlanmadı:\n" + failLines(o1));
+  await sleep(150);
+  updReset();
+  await startUpdHelper();
+  globalThis.location = { reload: () => upd.uxpReloads++ };
+  const planFile = path.join(TMPHOME, "Library", "Application Support", "BadIdeaAgency", "SpreadHelper", "link-plan.json");
+  const rec = () => lsStore.get("spread.collectRecord.v1")?.includes("guid-main-edit");
+  els["btn-reload"].click();
+  await sleep(300);
+  const title = els["ask-title"].textContent;
+  await no();
+  await sleep(900);
+  if (title !== "Kayıtlar da temizlensin mi?" || !rec() || !fsReal.existsSync(planFile) || upd.uxpReloads !== 1) fail(`bekleyen bağlamada ↻: [${title}] kayıt=${rec()} plan=${fsReal.existsSync(planFile)} reload=${upd.uxpReloads}`);
+  else ok("Bağla kesimi bağlanmayı beklerken ↻ → 'Kayıtlar da temizlensin mi?'; Yalnız yenile → kayıt ve KES planı kaldı, paneller yenilendi");
+  await sleep(5300);
+  upd.uxpReloads = 0;
+  els["btn-reload"].click();
+  await sleep(300);
+  await yes();
+  await sleep(900);
+  if (rec() || fsReal.existsSync(planFile)) fail("'Temizle ve yenile' kayıtları / planı silmedi");
+  else ok("'Temizle ve yenile' → kayıtlar ve bu sequence'ın KES planı silindi");
+  await sleep(5300);
+  lsStore.delete("spread.reloadNote.v1");
+  delete globalThis.location;
+  await stopHelper();
+  const n = counters.txNames.length;
+  let q = "";
+  const o2 = await clickAndWait("btn-collect", async (x) => ((q = q || x), no()), doneRe);
+  if (!/^Bu sequence'ta sesler kesilmiş görünüyor: aynı ses kaydının birden çok parçası/.test(q) || counters.txNames.length !== n || !/İptal edildi/.test(o2))
+    fail("kayıtsız kesilmiş düzende TOPLA sormadı:\n" + q + "\n" + failLines(o2));
+  else ok("kayıt yokken (↻ sonrası) TOPLA kesilmiş sesleri canlı timeline'dan tanıdı → SORU; Vazgeç → hiçbir şey");
+};
+
+scenarios.a027_batch_stop = async () => {
+  // inceleme #13: ilk kamera birebir ama kalanlardan biri (C005) baştan kayık → "OVERWRITE TUTMADI", Ctrl+Z sayısı + yedek adı
+  setupA027();
+  const before = a027Before();
+  M.owShift = FRAME2997 / 2n;
+  M.owShiftFor = "A042C005";
+  const out = await clickAndWait("btn-spread", yes);
+  if (!/✗ SPREAD DURDU: OVERWRITE TUTMADI: .*Durduruldu; başka hiçbir şeye dokunulmadı/.test(out) || !/A042C005_260925XX\.MP4": ölçülen fark start \+4237833600 tick/.test(out) || !/Ctrl\+Z'ye 3 kez bas — ya da yedek sequence "A027C012_260803UH Copy"/.test(out) || counters.setActions.size)
+    fail("toplu overwrite'ta baş kayması yakalanmadı:\n" + failLines(out));
+  else ok("ilk kamera birebir, C005 +0.5 kare kayık → OVERWRITE TUTMADI; fark tick + ms + kare; Ctrl+Z × 3 ya da yedek; SetOutPoint denenmedi");
+  undoN(3);
+  if (a027Before() !== before) fail("Ctrl+Z × 3 aslına döndürmedi");
+  else ok("Ctrl+Z × 3 → asıl düzen birebir");
+};
+
+scenarios.a027_follow_mismatch = async () => {
+  // bağlı ses ilk kamerada videonun SetOutPoint'ini İZLEDİ, sonrakilerde izlemedi → tutarsız → DUR (tahmin yok)
+  setupA027();
+  M.owMode = "media";
+  M.linkTrimFollow = (name) => name.startsWith("A042C001");
+  const out = await clickAndWait("btn-spread", yes);
+  if (!/✗ SPREAD DURDU: Kuyruk düzeltme: ilk ölçümde bağlı ses videonun SetOutPoint'ini izlemişti, bu kez izlemedi/.test(out) || !/Ctrl\+Z'ye 5 kez bas/.test(out))
+    fail("izleme tutarsızlığında durmadı:\n" + failLines(out));
+  else ok("bağlı ses ilk kamerada izledi, sonrakilerde izlemedi → DURDU; Ctrl+Z × 5 (dağıt, ilk overwrite, ilk kuyruk, overwrite, kuyruk)");
 };
 
 // ------------------------------------------------------------ çalıştır

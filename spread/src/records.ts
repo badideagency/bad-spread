@@ -18,9 +18,10 @@
 // clearSequenceRecords: ↻ Yenile — bu sequence'ın bütün kayıtlarını siler (kalibrasyon hariç).
 
 import { bindState, layoutState } from "./collect";
-import { askUser, digest, forgetStopped, stoppedOf } from "./guard";
+import { askUser, digest, forgetStopped, setStopped, stoppedOf } from "./guard";
 import { dropLinkPlan, readPanelLinkResult } from "./linker";
 import type { Snapshot } from "./model";
+import { fingerprint, trackPrint } from "./prints";
 import { forgetRecord, loadRecord, saveBindRecord } from "./settings";
 import { forgetSteps, stepMarks } from "./steps";
 import { log, type StepId } from "./ui";
@@ -29,28 +30,7 @@ export const STEP_LABEL: Record<StepId, string> = { spread: "Dağıt", topla: "T
 const ORDER: StepId[] = ["spread", "topla", "bagla"];
 const OP_STEP: Record<string, StepId> = { SPREAD: "spread", Spread: "spread", TOPLA: "topla", BAĞLA: "bagla" };
 
-function hash(text: string): string {
-  let h1 = 0x811c9dc5;
-  let h2 = 0x01000193;
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
-    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
-    h2 = Math.imul(h2 + c, 0x5bd1e995) >>> 0;
-  }
-  return `${h1.toString(16)}:${h2.toString(16)}`;
-}
-
-/** Tam parmak izi: klip sayısı + klip başına (kaynak, tür, track, start, end, in, out) — sırasız. */
-export function fingerprint(s: Snapshot): string {
-  const keys = s.clips.map((c) => [c.projId, c.projName, c.kind, c.track, c.start, c.end, c.inPt, c.outPt].join("|")).sort();
-  return `${s.clips.length}:${hash(keys.join("\n"))}`;
-}
-
-/** Yerleşim parmak izi: klip sayısı + klip başına (kaynak, tür, track) — zamanlar HARİÇ (Synchronize bunu değiştirmez). */
-export function trackPrint(s: Snapshot): string {
-  const keys = s.clips.map((c) => [c.projId, c.projName, c.kind, c.track].join("|")).sort();
-  return `${s.clips.length}:${hash(keys.join("\n"))}`;
-}
+export { fingerprint, trackPrint } from "./prints";
 
 /** Bu sequence için hiç kayıt var mı (yoksa şekil izlemeye gerek yok). */
 export function hasRecords(guid: string): boolean {
@@ -59,12 +39,18 @@ export function hasRecords(guid: string): boolean {
 }
 
 export const stale = (what: string) => `Timeline değişmiş (geri alma/elle düzenleme) — önceki ${what} kaydı unutuldu.`;
-const legacy = (what: string) => `Önceki ${what} kaydı timeline'la doğrulanamıyor (eski sürümün kaydı, parmak izi yok) — unutuldu.`;
+const unprinted = (what: string) =>
+  `Önceki ${what} kaydı timeline'la doğrulanamıyor (parmak izi yok: eski sürümün ya da işlem sonunda okunamamış bir kayıt) — unutuldu.`;
+const GEN: Record<string, string> = { Dağıt: "Dağıt'ın", Topla: "Topla'nın", Bağla: "Bağla'nın" };
+const partialLine = (what: string, left: number, backup?: string | null) =>
+  `Timeline, önceki ${GEN[what] ?? what} ara hâllerinden birinde (yarım geri alınmış; klipler eksik olabilir): tamamen geri almak için ` +
+  `Ctrl+Z × ${left} daha${backup ? ` ya da yedek sequence "${backup}"` : ""}. Bir sonraki işlem sorar.`;
 
 /**
- * Bu sequence'ın kayıtlarını canlı timeline'la karşılaştırır; tutmayanları siler. @returns günlük satırları (bir şey silinmediyse boş)
- * Silme sırası: yarım iş → BAĞLA aşaması (bindState "none" / "partial") → TOPLA kaydı (layoutState "undone") → adım işaretleri
- * (en son geçerli adım ve öncekiler kalır; sonrakiler silinir).
+ * Bu sequence'ın kayıtlarını canlı timeline'la karşılaştırır; tutmayanları siler. @returns günlük satırları (bir şey değişmediyse boş)
+ * Sıra: yarım iş → biten işlemin ARA hâli (kısmi Ctrl+Z → yarım iş kaydına çevrilir: SORU + kaç Ctrl+Z) → BAĞLA aşaması (bindState
+ * "none" → unutulur; "partial" → unutulur + yarım iş kaydı: SORU) → TOPLA kaydı (layoutState "undone") → adım işaretleri (en son geçerli
+ * adım ve öncekiler kalır; sonrakiler silinir).
  */
 export async function reconcile(guid: string, s: Snapshot): Promise<string[]> {
   const lines: string[] = [];
@@ -73,27 +59,60 @@ export async function reconcile(guid: string, s: Snapshot): Promise<string[]> {
     lines.push(text);
     if (id) said.add(id);
   };
+  const fp = fingerprint(s);
+  const tp = trackPrint(s);
+  const dg = digest(s);
 
-  // 1) yarım iş koruması: DURDU anındaki timeline birebir duruyor mu
+  // 1) yarım iş koruması: DURDU anındaki timeline birebir duruyor mu; değilse durmuş işlemin ara hâllerinden birinde mi (kısmi geri alma)
   const st = stoppedOf(guid);
-  if (st && st.digest !== digest(s)) {
-    forgetStopped(guid);
-    forget(null, stale(`${STEP_LABEL[OP_STEP[st.op ?? ""] ?? "spread"] ?? st.op} (yarım iş)`));
+  if (st && st.digest !== dg) {
+    const label = STEP_LABEL[OP_STEP[st.op ?? ""] ?? "spread"] ?? st.op ?? "işlem";
+    const hit = st.mids?.find((x) => x.fp === fp);
+    if (hit) {
+      setStopped(guid, { ...st, digest: dg, left: hit.left });
+      lines.push(partialLine(label, hit.left, st.backup));
+    } else {
+      forgetStopped(guid);
+      forget(null, stale(`${label} (yarım iş)`));
+    }
   }
 
-  // 2) BAĞLA aşaması: kesme/silme duruyor mu ("none" = tamamen geri alınmış, "partial" = kısmen geri alınmış / elle değişmiş)
+  // 2) biten bir işlemin ARA hâli: kullanıcı Ctrl+Z'ye gereğinden az basmış → işaret bayat, ama "normal" çalışmak içeriği kaybeder
+  //    (ör. Dağıt'ın kameraları eksik) → yarım iş kaydına çevrilir: bir sonraki işlem kaç Ctrl+Z daha gerektiğini söyleyerek SORAR
+  const m = stepMarks(guid);
+  let partial: StepId | null = null;
+  for (const id of ["topla", "spread"] as StepId[]) {
+    const x = m[id];
+    const hit = x?.mid?.find((y) => y.fp === fp);
+    if (!x || !hit) continue;
+    partial = id;
+    if (stoppedOf(guid)?.digest !== dg) setStopped(guid, { op: id === "spread" ? "SPREAD" : "TOPLA", digest: dg, left: hit.left, backup: x.backup ?? null, mids: x.mid });
+    lines.push(partialLine(STEP_LABEL[id], hit.left, x.backup));
+    const drop = ORDER.slice(ORDER.indexOf(id));
+    forgetSteps(guid, drop);
+    for (const d of drop) said.add(d);
+    if (id === "topla" && loadRecord(guid)) {
+      forgetRecord(guid); // bu TOPLA yürürlükte değil (yarım geri alınmış) → kaydı (park listesi, çerçeve) da
+      await dropLinkPlan(guid);
+    }
+    break;
+  }
+
+  // 3) BAĞLA aşaması: kesme/silme duruyor mu ("none" = tamamen geri alınmış → unutulur; "partial" = kısmen geri alınmış / elle değişmiş
+  //    → unutulur, ama kesilmiş parçalar ya da silinmiş sesler timeline'da karışık → yarım iş kaydı: bir sonraki işlem SORAR)
   let rec = loadRecord(guid);
   if (rec?.bind) {
     const bs = bindState(rec, s);
     if (bs === "none" || bs === "partial") {
       saveBindRecord(guid, null);
       await dropLinkPlan(guid); // bu sequence'ın planı bu (bayat) BAĞLA'nındır; yeni bir BAĞLA yeni plan yazar
-      forget("bagla", stale("Bağla"));
+      forget("bagla", bs === "partial" ? `${stale("Bağla")} (Kısmen geri alınmış görünüyor — bir sonraki işlem sorar.)` : stale("Bağla"));
+      if (bs === "partial" && stoppedOf(guid)?.digest !== dg) setStopped(guid, { op: "BAĞLA", digest: dg, bindPartial: true, backup: null });
       rec = loadRecord(guid);
     }
   }
 
-  // 3) TOPLA kaydı: TOPLA tamamen geri alınmışsa (timeline TOPLA öncesi hâlinde) bayat. Elle düzenleme ("changed") bayat SAYILMAZ:
+  // 4) TOPLA kaydı: TOPLA tamamen geri alınmışsa (timeline TOPLA öncesi hâlinde) bayat. Elle düzenleme ("changed") bayat SAYILMAZ:
   //    BAĞLA'nın çerçevesi / eşlemesi / park listesi bu kayıttan gelir; tutarlılığı BAĞLA canlı timeline'dan kendisi denetler.
   if (rec && layoutState(rec, s) === "undone") {
     forgetRecord(guid);
@@ -101,22 +120,21 @@ export async function reconcile(guid: string, s: Snapshot): Promise<string[]> {
     rec = null;
   }
 
-  // 4) adım işaretleri (yalnız görünüm): sondan başa, geçerli olan ilk adım ve öncekiler kalır
-  const m = stepMarks(guid);
-  const fp = fingerprint(s);
-  const tp = trackPrint(s);
-  const recFresh = rec && (!m.spread || rec.at >= m.spread.at) ? rec : null;
+  // 5) adım işaretleri (yalnız görünüm): sondan başa, geçerli olan ilk adım ve öncekiler kalır
+  const m2 = stepMarks(guid);
+  const recFresh = rec && (!m2.spread || rec.at >= m2.spread.at) ? rec : null;
   const valid: Record<StepId, boolean> = {
-    bagla: !!recFresh?.bind || m.bagla?.fp === fp,
-    topla: !!recFresh || m.topla?.fp === fp,
-    spread: !!m.spread && (m.spread.tp === tp || m.spread.fp === fp),
+    bagla: !!recFresh?.bind || m2.bagla?.fp === fp,
+    topla: !!recFresh || m2.topla?.fp === fp,
+    // Topla yarım geri alınmışsa Dağıt'ı yapılmış sayılır (Topla ondan sonra çalıştı)
+    spread: partial === "topla" || (!!m2.spread && (m2.spread.tp === tp || m2.spread.fp === fp)),
   };
   const drop: StepId[] = [];
   for (const id of [...ORDER].reverse()) {
     if (valid[id]) break;
-    if (!m[id]) continue;
+    if (!m2[id]) continue;
     drop.push(id);
-    if (!said.has(id)) forget(id, m[id]!.fp ? stale(STEP_LABEL[id]) : legacy(STEP_LABEL[id]));
+    if (!said.has(id)) forget(id, m2[id]!.fp ? stale(STEP_LABEL[id]) : unprinted(STEP_LABEL[id]));
   }
   if (drop.length) forgetSteps(guid, drop);
   return lines;
@@ -180,6 +198,14 @@ export function describeRecords(guid: string, s: Snapshot): string[] {
   }
   if (L.length === 1) L.push("(bu sequence için kayıt yok)");
   return L;
+}
+
+/** ↻ için: BAĞLA kesimi yapılmış, bağlanmayı bekliyor mu (kayıt + yardımcı panelin sonucu; timeline okunmaz). */
+export function pendingLink(guid: string): boolean {
+  const b = loadRecord(guid)?.bind;
+  if (!b || b.stage !== "cut") return false;
+  const pr = readPanelLinkResult();
+  return !(pr && pr.ok && pr.planCreatedAt === b.at);
 }
 
 /** ↻ Yenile: bu sequence'ın BÜTÜN kayıtlarını siler (adım işaretleri, yarım iş, TOPLA / BAĞLA kaydı, eski KES planı). Kalibrasyon kalır. */

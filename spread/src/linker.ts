@@ -304,10 +304,6 @@ async function post(path: string, body: unknown, ms: number): Promise<Record<str
 }
 
 /**
- * KES planını yardımcının okuyacağı dosyaya yazar (köprüsüz BAĞLA). Yazılamazsa hata metni döner; plan panelin rapor kutusuna da
- * konur (yardımcı panelde "Planı yapıştır").
- */
-/**
  * v1.2.1: bu sequence'ın ESKİ KES planını (link-plan.json) ve onun paneldeki bağlama sonucunu (link-result.json) siler — başka bir
  * sequence'ın planına dokunmaz. @param createdAt verilirse yalnız o plan. @returns silinen dosya sayısı (okunamazsa / yoksa 0)
  */
@@ -335,6 +331,10 @@ export async function dropLinkPlan(guid: string, createdAt?: string): Promise<nu
   return n;
 }
 
+/**
+ * KES planını yardımcının okuyacağı dosyaya yazar (köprüsüz BAĞLA). Yazılamazsa hata metni döner; plan panelin rapor kutusuna da
+ * konur (yardımcı panelde "Planı yapıştır").
+ */
 export async function writeLinkPlan(text: string): Promise<{ ok: boolean; path: string; detail: string }> {
   let path = "?";
   try {

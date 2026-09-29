@@ -229,7 +229,8 @@ function shapeText(v: number, a: number, per: Map<string, number>): string {
 /** Timeline'ın şekli: track sayıları + track başına klip sayısı. Değişirse kayıtlar tam parmak iziyle yeniden karşılaştırılır. */
 export function shapeOf(s: Snapshot): string {
   const per = new Map<string, number>();
-  for (const c of s.clips) per.set(`${c.kind}${c.track}`, (per.get(`${c.kind}${c.track}`) ?? 0) + 1);
+  // döngü index'i (readShape ile aynı; getTrackIndex farklı dönerse bile şekiller karşılaştırılabilir kalsın)
+  for (const c of s.clips) per.set(`${c.kind}${c.loopTrack}`, (per.get(`${c.kind}${c.loopTrack}`) ?? 0) + 1);
   return shapeText(s.vCount, s.aCount, per);
 }
 
