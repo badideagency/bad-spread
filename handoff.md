@@ -6,6 +6,11 @@ Kaynak: kullanıcının 2026-09-29 raporu (Emre; Spread 1.2.0, Premiere 26.5.1, 
 Premiere kaydetmeden kapatılmaz, token gömülmez, PlayerDebugMode yalnız HKCU, TrLR varsayılanı Sil, UI/UX Pro Max `--persist` yok,
 kaynak kod güncelleme deposuna GİTMEZ.
 
+**Yayın (2026-09-29):** PR #5 birleştirildi (main `22af288`); `node scripts/publish-update.mjs --no-build` → güncelleme deposunda commit
+`5ad062c` "Spread 1.2.1": main'deki `release/Spread_Kurulum_v1.2.1.zip` ile bayt bayt aynı zip, `latest.json` 1.2.1 (sha256
+`a64a44fc…4736`). Dışarıdan doğrulandı: raw `latest.json` 1.2.1; indirilen zip'in sha256'sı tutuyor; yardımcının kendi
+`validateLatest` + `checkKit` + `checkCcx` denetiminden geçiyor. Depoda yalnız README.md, latest.json, releases/*.zip.
+
 ### HATA 1 — kanıt ve kural (`spread/src/trimstate.ts`, TEK kural)
 
 - Veri (fixture: `spread/dev/fixtures/rapor-260929-a027.json`): tek kamera 29.97 fps, 12 dokunulmamış klip V9 / A9'da, hepsi in = 0.
