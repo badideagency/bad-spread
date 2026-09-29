@@ -296,6 +296,28 @@ scenarios.motor_tekrar = async () => {
     if (c1.status !== "ok") wrong++;
     rows.push(`iki dar eşleşme (aynı şarkı): X ${x.status === "ok" ? "YERLEŞTİ" : `emin değil${x.maybe ? ` (dar kanıt, olası yer G${x.maybe.group} ${x.maybe.pos.toFixed(1)} sn)` : ""}`}`);
   }
+  // (i) dar kanıt dondurulmaz: X'in önce yalnız iki kısa kamerayla (dar) eşleşmesi var; geniş eşleştiği DJI L gruba sonra giriyor →
+  //     X o zaman GÜÇLÜ yerleşmeli (inceleme #15 ikinci doğrulama)
+  {
+    const M = scene(1000, 93);
+    const r = await CORE.senkronSolve(
+      [
+        input("Z", "audio", "Zoom", "Z", true, null, record(M, 0, 500, MIC.zoom1, 1)),
+        input("C2", "camera", "A", "C2", true, null, record(M, 460, 45, MIC.cam, 2)),
+        input("C3", "camera", "B", "C3", true, null, record(M, 470, 50, MIC.cam2, 3)),
+        input("X", "camera", "C", "X", true, null, record(M, 488, 35, MIC.cam, 4)),
+        input("L", "audio", "DJI", "L", false, null, record(M, 500, 400, { gain: 0.3, lp: 0.5, hp: 0.7, noise: 0.03 }, 5)),
+      ],
+      { frameSec: 1 / 25 },
+      quiet
+    );
+    const z = r.placed.find((p) => p.name === "Z");
+    const x = r.placed.find((p) => p.name === "X");
+    const good = x.status === "ok" && Math.abs(x.pos - z.pos - 488) < 0.001;
+    if (!good) wrong += x.status === "ok" ? 1 : 0;
+    if (x.status !== "ok") wrong++; // yer kaybı da bu senaryoda hata
+    rows.push(`dar kanıt sonra güçlenir: X ${x.status === "ok" ? `${(x.pos - z.pos).toFixed(3)} sn (gerçek 488)` : "emin değil"}`);
+  }
   // (f) DC kayması olan kamera sesi yine yerleşir
   {
     const M = scene(900, 55);

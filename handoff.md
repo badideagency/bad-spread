@@ -66,10 +66,10 @@ Hesap YARDIMCIDA (CEP'in Node'u), UXP yalnız okur ve yerleştirir. Kısıtlar a
     ipucuyla daraltılmış. İki kısa klip arasındaki eşleşme DAR: rakip tekrarlar hiç aday olmaz → oran sınaması boştur (20 sn klipler,
     8 sn döngü: +0.654 yerine +200.654 olmalıydı).
   - Grup yalnız geniş eşleşmesi olan bir dosyadan kurulur (dar eşleşmeli kök hiç büyüyemez).
-  - GÜÇLÜ yerleşim = grubun dayanağı ya da güçlü yerleşmiş bir dosyaya GENİŞ eşleşme. Tahminler yalnız güçlü dosyalardan gelir, kısıtlar
-    yalnız güçlü dosyalara karşı denetlenir. Yalnız dar eşleşmelerle (≥ 2 kısa klip — ikisi de aynı tekrarlayan olayı görmüş olabilir,
-    N2: aynı şarkı iki kez çalınmış, X 300 sn yanlış yere) bulunan yer "emin değil" + raporda "olası yer: G1 … sn (dar kanıt — kontrol
-    et)"; başka gruba giremez.
+  - GÜÇLÜ yerleşim = grubun dayanağı ya da güçlü yerleşmiş bir dosyaya GENİŞ eşleşme; grup yalnız güçlü yerleşimlerle büyür (tahminler
+    ve kısıtlar da yalnız onlardan). Yalnız dar eşleşmelerle (≥ 2 kısa klip — ikisi de aynı tekrarlayan olayı görmüş olabilir, N2: aynı
+    şarkı iki kez çalınmış, X 300 sn yanlış yere) bulunan yer dondurulmaz (sonra güçlü bir komşu gelirse güçlü yerleşir); grup bitince
+    hâlâ öyleyse "emin değil" + raporda "olası yer: G1 … sn (dar kanıt — kontrol et)", başka gruba giremez.
   - Bir grupta eşleşmesi olup orada yerleşemeyen (çelişen / kısıtı bozan) dosya "engelli": başka grup kuramaz, başka gruba giremez
     (önce X/Y birbirini tutup sahte "Grup 2" kuruyordu). Gerekçesi korunur. Yalnız gerçekten kurulan grup (≥ 2 güçlü dosya) engeller;
     tek başına kalan kök dağılır, komşuları serbest (N3).
@@ -86,7 +86,7 @@ Hesap YARDIMCIDA (CEP'in Node'u), UXP yalnız okur ve yerleştirir. Kısıtlar a
 - Bilinçli ödünleşimler (yanlış yerleşim yerine "emin değil" — kullanıcının "önce sıfır yanlış" kuralı):
   - Kaydın ucuna yalnız ~14.5 sn binen kısa klip, tek eşleşmesi dar → "emin değil" (önce doğru yerleşiyordu).
   - Yalnız kısa dosyalardan oluşan çekim (ör. 40 sn WAV + üç 30 sn klip; aralarında ≥ 60 sn'lik aralıkta sınanabilen eşleşme yok)
-    HİÇ senkronlanmaz: hepsi "emin değil" (dar kanıtla bulunan olası yerler raporda) (N4).
+    HİÇ senkronlanmaz: hepsi "emin değil" — geniş eşleşmesi olan dosya olmadığı için grup da kurulmaz, olası yer de raporlanmaz (N4).
   - Saatin anlamı belirsizse (aynı uzunlukta dosyalar + creation_time) ikinci tur yok.
 - Kalan risk: GENİŞ bir eşleşme de tekrar yüzünden yanlış olabilir, eğer tekrar aranan bütün aralığı kapsıyorsa (ör. uzun bir kayıtta
   aynı şarkı iki kez ve klip yalnız şarkıyı içeriyor → iki aday → oran sınaması "emin değil" der; ama kayıt yalnız BİR çalınışı
@@ -152,6 +152,11 @@ Doğrulama turu (aynı ajan; bütün eski repro'lar 0 yanlış, M2 akışında a
 | N4 | Yalnız kısa dosyalardan oluşan çekim hiç senkronlanmaz | belgelendi (bilinçli ödünleşim) |
 | N5 | Bilinmeyen lead 0 sayılıyordu | `leadOk = false` → Uygula taşımaz; rapor yazar |
 | nit | probe yorumu "ilk kare 0.5"; grup sonu lead'siz | düzeltildi |
+
+İkinci doğrulama: engelleyici yok (N1–N5 kapandı; sıradan çekimlerde — Zoom 1400 sn + 2 DJI + 2 kamera 20–120 sn, saat başlangıç ya da
+bitiş, 4 tohum, 122 dosya — hepsi yerleşti, 0 dar kanıt, 0 yanlış, 0 yanlış saat yasağı). Küçük: dar kanıtla önce "yerleşen" dosya
+sonradan gelen güçlü komşuyla yeniden değerlendirilmiyordu (yer kaybı, yanlış değil) → dar kanıtlılar büyüme sırasında dondurulmaz,
+güçlü aday her zaman önce. Nit'ler: N4 metni, Dene özetinde ses başlangıcı bilinmeyenler → düzeltildi.
 
 ### Belirsizlikler (v1.4.0) — gerçek Windows + Premiere'de bakılacak
 1. Gerçek kamera dosyaları: ffmpeg'in her kameranın kapsayıcısını / ses kodeğini okuyup okumadığı (BRAW gibi okuyamadığı biçim "ses

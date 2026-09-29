@@ -913,8 +913,8 @@ var SpreadCore = (function(exports) {
 				};
 				let bestSup = 0;
 				let bestUsed = [];
-				let bestSolid = false;
 				const why = /* @__PURE__ */ new Map();
+				const narrow = /* @__PURE__ */ new Map();
 				for (let i = 0; i < n; i++) {
 					if (P.group[i] !== 0 || P.blocked[i] || banned.has(i)) continue;
 					const est = [];
@@ -967,6 +967,13 @@ var SpreadCore = (function(exports) {
 						why.set(i, reason || "uygun konum yok");
 						continue;
 					}
+					if (!chosen.m.some((x) => wide(x.k))) {
+						narrow.set(i, {
+							p: chosen.p,
+							sup: chosen.m.length
+						});
+						continue;
+					}
 					if (chosen.w > bestW) {
 						bestI = i;
 						bestPos = chosen.p;
@@ -980,23 +987,18 @@ var SpreadCore = (function(exports) {
 						};
 						bestSup = chosen.m.length;
 						bestUsed = chosen.m.map((x) => [x.k, x.q]);
-						bestSolid = chosen.m.some((x) => wide(x.k));
 					}
 				}
 				if (bestI < 0) {
 					for (const [i, w] of why) if (P.group[i] === 0 && !P.why[i]) P.why[i] = w;
-					const mem = nodes.map((_, i) => i).filter((i) => P.group[i] === g);
-					const strong = mem.filter((i) => P.solid[i]);
-					for (const i of mem) if (!P.solid[i]) {
-						P.group[i] = 0;
-						if (strong.length >= 2) {
-							P.maybe[i] = {
-								g,
-								pos: P.pos[i]
-							};
-							P.blocked[i] = true;
-							P.why[i] = `dar kanıt: yalnız kısa kliplerle ${P.support[i]} eşleşme (geniş aralıkta sınanmış eşleşme yok; tekrarlayan içerik olabilir) — olası yer raporda, elle kontrol et`;
-						}
+					const strong = nodes.map((_, i) => i).filter((i) => P.group[i] === g);
+					if (strong.length >= 2) for (const [i, x] of narrow) {
+						P.maybe[i] = {
+							g,
+							pos: x.p
+						};
+						P.blocked[i] = true;
+						P.why[i] = `dar kanıt: yalnız kısa kliplerle ${x.sup} eşleşme (geniş aralıkta sınanmış eşleşme yok; tekrarlayan içerik olabilir) — olası yer raporda, elle kontrol et`;
 					}
 					if (strong.length >= 2) {
 						for (let i = 0; i < n; i++) if (P.group[i] === 0 && !P.blocked[i] && inc[i].some((k) => P.group[edges[k].a === i ? edges[k].b : edges[k].a] === g)) {
@@ -1012,7 +1014,7 @@ var SpreadCore = (function(exports) {
 				P.via[bestI] = bestVia;
 				P.viaPeak[bestI] = bestPk;
 				P.support[bestI] = bestSup;
-				P.solid[bestI] = bestSolid;
+				P.solid[bestI] = true;
 				P.why[bestI] = "";
 				for (const [k, q] of bestUsed) P.used.set(k, q);
 			}

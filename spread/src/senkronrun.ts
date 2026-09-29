@@ -282,7 +282,9 @@ export async function runSenkron(): Promise<void> {
     const r = out.result;
     const nOk = r.placed.filter((p) => p.status === "ok").length;
     const nNo = files.length + unreadable.length - nOk;
+    const nNoLead = r.placed.filter((p) => p.status === "ok" && out.files.some((f) => f.id === p.id && f.leadOk === false)).length;
     log(`✓ SENKRON (Dene) bitti: ${nOk}/${files.length + unreadable.length} dosya ${r.groups.length} grupta yerleşti; emin değil ${nNo}. Timeline'a dokunulmadı.`, "ok");
+    if (nNoLead) log(`  ${nNoLead} dosyanın sesi eşleşti ama ses akışının dosya başına göre yeri bilinmiyor → Uygula onları taşımaz (en sona).`, "warn");
     for (const l of text.split("\n").filter((x) => /^ {2}(Grup|G\d|")/.test(x)).slice(0, 80)) log(l, "dim");
     if (path) log(`Rapor: ${path} (Sorun bildir raporuna da eklenir).`, "dim");
     if (!getSenkronApply() || !nOk) {
