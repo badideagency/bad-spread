@@ -5003,9 +5003,11 @@ scenarios.senkron_dene = async () => {
     fail("senkron-deneme.txt eksik / yanlış:\n" + rep.split("\n").slice(0, 30).join("\n") + "\nhatalar ms: " + errs.join(", "));
   else ok(`senkron-deneme.txt: grup özeti, dosya başına konum / güven / eşleştiği dosya / saat ipucu farkı, 'emin değil' listesi; bilinen ofsetler ≤ ${Math.max(...errs).toFixed(3)} ms`);
   const issue = await (async () => {
+    copied = null;
     markLog();
     els["btn-issue"].click();
-    for (let i = 0; i < 200 && !copied; i++) await sleep(20);
+    // rapor bütün günlüğü toplar (tam koşuda uzun sürer; bu sırada panel meşgul) → "Sorun raporu:" satırını bekle
+    for (let i = 0; i < 3000 && !/Sorun raporu:/.test(newLog()); i++) await sleep(20);
     return copied ?? "";
   })();
   if (!/---- SON SENKRON DENEMESİ/.test(issue) || !/SPREAD SENKRON — DENEME RAPORU/.test(issue)) fail("Sorun bildir raporunda SENKRON bölümü yok");
