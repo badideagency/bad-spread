@@ -18,9 +18,15 @@
 // 6) SIRA: her cihazın sıra anahtarları (sayaç / Zoom saati / DJI saati) oturumları sıralar; birden çok oturumdaki her cihaz aynı
 //    sırayı vermeli. Çelişki ya da belirsizlik → kullanıcıya sorulur (tahmin yok).
 // 7) GRUP (BAĞLA): oturum İÇİNDE zamanda çakışan kameralar; çapa = en uzun (eşitlikte alt V track = V1 cihazı, sonra erken start).
+// 8) v1.3.0 SENKRON SAĞLIĞI (health.ts): veto yalnız cihaz kimliği KESİN olanlarda (kameralar, Zoom; DJI / bilinmeyen desenli sesler
+//    birden çok eşzamanlı mikrofon olabilir → kendi çakışmaları normal). Veto tek anlamlı çözülemezse VE çakışan tek bir cihazsa, ya
+//    da bir oturumun içinde cihazın sayaç sırası ile zaman sırası tersse: en uzun tutarlı zincir doğru sayılır, gerisi ŞÜPHELİ /
+//    BELİRSİZ → oturuma girmez, bağ üretmez, park'a gider (silinmez). Birden çok cihaz birlikte çakışıyorsa gruplar üst üste
+//    konmuştur → eskisi gibi "ayrılamadı" (kullanıcıya sorulur).
 
 import { cmpStart, fileName, type Classified } from "./classify";
 import { cmpOrder, recordingLabel, type Identity } from "./identity";
+import { certainDevice, chainSelect, compressLabels, conflict, counterUsable, HEALTH_DEFAULT_FRAME, vetoDevice } from "./health";
 import { big, secOf, trackLabel } from "./core";
 import type { ClipInfo, Snapshot } from "./model";
 
@@ -65,6 +71,15 @@ export interface OrderIssue {
   lines: string[];
 }
 
+/** v1.3.0: Premiere senkronunun yanlış yere koyduğu kayıt (oturuma girmez, park'a gider). */
+export interface Suspect {
+  rec: Recording;
+  /** true: birden çok en uzun zincir var, bu kayıt yalnız bazılarında → hangisinin doğru olduğu çıkarılamadı */
+  ambiguous: boolean;
+  /** çeliştiği (doğru sayılan) kayıtlar ve nasıl; "fit": doğru sayılan zincire sığmıyor (rec = kendisi) */
+  against: { rec: Recording; how: "overlap" | "order" | "fit" }[];
+}
+
 export interface Analysis {
   recordings: Recording[];
   links: Link[];
@@ -79,12 +94,18 @@ export interface Analysis {
   warnings: string[];
   sessionOf: Map<Recording, Session>;
   recordingOf: Map<ClipInfo, Recording>;
+  /** v1.3.0 SENKRON SAĞLIĞI: yanlış yerde olduğu seçilen kayıtlar (orphans'ta DEĞİL; oturumsuz → park) */
+  suspects: Suspect[];
+  /** v1.3.0: kuralın uygulanmadığı cihazlar ve nedeni (ör. DJI: kimlik kesin değil) */
+  healthNotes: string[];
 }
 
 export interface AnalyzeOpts {
   threshold: number;
   /** bu klipler analize girmez (TOPLA düzeninde park track'lerindekiler) */
   exclude?: Set<ClipInfo>;
+  /** v1.3.0: sequence'ın kare süresi (tick) — senkron sağlığında "≥ 1 kare çakışma"; yoksa 23.976 */
+  frameTicks?: bigint | null;
 }
 
 const pct = (r: number) => `%${(r * 100).toFixed(1)}`;
@@ -236,6 +257,8 @@ function vetoPairs(recs: Recording[]): [Recording, Recording][] {
     for (let j = i + 1; j < recs.length; j++) {
       const a = recs[i];
       const b = recs[j];
+      // v1.3.0: DJI'da veto yok (DJI_01 / DJI_02 … eşzamanlı ayrı mikrofonlar olabilir → çakışmaları normal)
+      if (!vetoDevice(a.kind, a.ident) || !vetoDevice(b.kind, b.ident)) continue;
       if (a.device === b.device && a.ident.recording !== b.ident.recording && overlapOf(a, b) > 0n) out.push([a, b]);
     }
   return out;
@@ -367,32 +390,142 @@ export function analyze(s: Snapshot, items: Classified[], opts: AnalyzeOpts): An
   const vetoDecisions: string[] = [];
   const unresolved: Unresolved[] = [];
   const finalComps: Recording[][] = [];
-  for (const comp of components(recordings, links)) {
-    const v = vetoPairs(comp);
-    if (!v.length) {
-      finalComps.push(comp);
-      continue;
-    }
+  const suspects: Suspect[] = [];
+  const frame = opts.frameTicks && opts.frameTicks > 0n ? opts.frameTicks : HEALTH_DEFAULT_FRAME;
+  const linksAmong = (recs: Recording[]) => {
+    const set = new Set(recs);
+    return links.filter((l) => set.has(l.a) && set.has(l.b));
+  };
+  const unresolvedOf = (comp: Recording[], v: [Recording, Recording][], extra: string[] = []) => {
     const conflicts = v.map(([a, b]) => `${a.device}: ${a.label} ${recSpan(a)} ↔ ${b.label} ${recSpan(b)} (aynı cihazın iki kaydı üst üste)`);
-    const res = resolveVeto(comp, links);
-    if (res) {
-      finalComps.push(...res.parts);
-      vetoDecisions.push(
-        `VETO: ${conflicts.join("; ")} → en zayıf ${res.cut.length} bağ (≤ ${pct(res.level)}; kalanların en zayıfı ${pct(res.next)}) kesildi: ` +
-          res.cut.map((l) => `${l.a.label}↔${l.b.label} ${pct(l.ratio)}`).join(", ")
-      );
-    } else {
-      const inComp = new Set(comp);
-      const own = links.filter((l) => inComp.has(l.a) && inComp.has(l.b)).sort((x, y) => x.ratio - y.ratio);
-      unresolved.push({
-        recordings: comp,
-        lines: [
-          ...conflicts,
-          `bağlar (zayıftan güçlüye): ${own.slice(0, 12).map((l) => `${l.a.label}↔${l.b.label} ${pct(l.ratio)}`).join(", ")}${own.length > 12 ? " …" : ""}`,
-          "en zayıf bağları kesmek tek anlamlı bir ayrım vermiyor → tahmin edilmedi",
-        ],
-      });
+    const own = linksAmong(comp).sort((x, y) => x.ratio - y.ratio);
+    unresolved.push({
+      recordings: comp,
+      lines: [
+        ...conflicts,
+        ...extra,
+        `bağlar (zayıftan güçlüye): ${own.slice(0, 12).map((l) => `${l.a.label}↔${l.b.label} ${pct(l.ratio)}`).join(", ")}${own.length > 12 ? " …" : ""}`,
+        "en zayıf bağları kesmek tek anlamlı bir ayrım vermiyor → tahmin edilmedi",
+      ],
+    });
+  };
+  /** oturum içinde sayaç sırası ters olan çiftler (metin) */
+  const orderLines = (comp: Recording[], d: string) => {
+    const recs = comp.filter((r) => r.device === d);
+    const out: string[] = [];
+    for (let i = 0; i < recs.length; i++)
+      for (let j = i + 1; j < recs.length; j++)
+        if (conflict({ ...recs[i], order: recs[i].ident.order }, { ...recs[j], order: recs[j].ident.order }, frame, true) === "order")
+          out.push(`${d}: ${recs[i].label} ${recSpan(recs[i])} ↔ ${recs[j].label} ${recSpan(recs[j])} (dosya sırası ile zaman sırası ters)`);
+    return out;
+  };
+  // v1.3.0 SENKRON SAĞLIĞI tetiklenen bileşenler (cihaz(lar)ıyla); seçim tur sonunda cihaz bazında, birleşim üzerinde yapılır
+  let pending: { comp: Recording[]; devs: string[]; v: [Recording, Recording][]; lines: string[] }[] = [];
+  const settle = (comp: Recording[]): void => {
+    const v = vetoPairs(comp);
+    if (v.length) {
+      const conflicts = v.map(([a, b]) => `${a.device}: ${a.label} ${recSpan(a)} ↔ ${b.label} ${recSpan(b)} (aynı cihazın iki kaydı üst üste)`);
+      const res = resolveVeto(comp, links);
+      if (res) {
+        vetoDecisions.push(
+          `VETO: ${conflicts.join("; ")} → en zayıf ${res.cut.length} bağ (≤ ${pct(res.level)}; kalanların en zayıfı ${pct(res.next)}) kesildi: ` +
+            res.cut.map((l) => `${l.a.label}↔${l.b.label} ${pct(l.ratio)}`).join(", ")
+        );
+        for (const p of res.parts) settle(p);
+        return;
+      }
+      // v1.3.0: ilişkisiz gruplar olarak ayrılamıyor. Çakışan YALNIZ bir KESİN cihazsa (ör. tek kamera; DJI veto dışı) tek tek klipler
+      // yanlış yerde olabilir → en uzun tutarlı zincir seçilir (chainSelect; tek anlamlı değilse yine sorulur). Birden çok cihaz birlikte
+      // çakışıyorsa GRUPLAR üst üste konmuştur (her grup kendi içinde doğru olabilir) → eskisi gibi kullanıcıya sorulur.
+      const devs = [...new Set(v.map(([x]) => x.device))];
+      if (devs.length === 1 && certainDevice(v[0][0].kind, v[0][0].ident)) pending.push({ comp, devs, v, lines: [] });
+      else unresolvedOf(comp, v);
+      return;
     }
+    // v1.3.0: oturum İÇİNDE aynı cihazın sayaç sırası zaman sırasıyla ters → imkânsız (tek cihaz kayıtları sırayla alır)
+    if (comp.length > 1) {
+      const bad = [...new Set(comp.map((r) => r.device))].filter((d) => {
+        const recs = comp.filter((r) => r.device === d);
+        if (recs.length < 2 || !certainDevice(recs[0].kind, recs[0].ident) || !counterUsable(recs.map((r) => r.ident))) return false;
+        return orderLines(comp, d).length > 0;
+      });
+      if (bad.length) {
+        pending.push({ comp, devs: bad, v: [], lines: bad.flatMap((d) => orderLines(comp, d)) });
+        return;
+      }
+    }
+    finalComps.push(comp);
+  };
+  // Seçim CİHAZ bazında, cihazın tetiklendiği bütün bileşenlerin BİRLEŞİMİ üzerinde (yanlış yere düşen klip başka bir bileşenin
+  // altına düşmüş olabilir → tek bileşende cihazın sayaç sırasının yarısı görünmez). Sığma aralığı = bu bileşenlerin kapsadığı zaman.
+  // Seçim tek anlamlı değilse (chainSelect.ask) o cihazın bileşenleri eskisi gibi SORULUR. Her seçilen bileşen en az bir kayıt kaybeder
+  // (üst üste ya da sırası ters iki kayıt aynı zincirde olamaz) → döngü biter.
+  const orderNotes: string[] = [];
+  let queue = components(recordings, links);
+  for (let round = 0; queue.length; round++) {
+    pending = [];
+    for (const c of queue) settle(c);
+    if (!pending.length) break;
+    const verdict = new Map<Recording, Suspect>();
+    const asked = new Map<string, string>();
+    for (const d of [...new Set(pending.flatMap((p) => p.devs))]) {
+      const comps = pending.filter((p) => p.devs.includes(d)).map((p) => p.comp);
+      const all = comps.flat();
+      const recs = all.filter((r) => r.device === d);
+      const useOrder = counterUsable(recs.map((r) => r.ident));
+      const units = recs.map((r) => ({ start: r.start, end: r.end, order: useOrder ? r.ident.order : null, rec: r }));
+      const span = { start: all.reduce((m, r) => (r.start < m ? r.start : m), all[0].start), end: all.reduce((m, r) => (r.end > m ? r.end : m), all[0].end) };
+      const sel = chainSelect(units, frame, useOrder, span);
+      if (sel.ask) {
+        asked.set(d, `${d}: ${sel.ask}`);
+        continue;
+      }
+      for (const u of [...sel.suspect, ...sel.ambiguous]) {
+        // gerekçe: doğru ya da belirsiz sayılanlarla çakışma / ters sıra; hiçbiri yoksa ve sığma yüzünden dışarıdaysa "sığmıyor"
+        const against = [...sel.keep, ...sel.ambiguous]
+          .filter((k) => k !== u)
+          .map((k) => ({ rec: k.rec, how: conflict(u, k, frame, useOrder) as Suspect["against"][number]["how"] | null }))
+          .filter((x): x is Suspect["against"][number] => x.how !== null);
+        if (sel.fitOut.has(u) && !against.length) against.push({ rec: u.rec, how: "fit" });
+        verdict.set(u.rec, { rec: u.rec, ambiguous: sel.ambiguous.includes(u), against });
+      }
+    }
+    queue = [];
+    for (const p of pending) {
+      const ask = p.devs.filter((d) => asked.has(d)).map((d) => asked.get(d)!);
+      const rest = p.comp.filter((r) => !verdict.has(r));
+      // yalnız SIRA bozukluğuyla (veto'suz) tetiklenen bileşen tek anlamlı seçilemiyorsa (ör. Sony sayacı C9999 → C0001 döndü) 1.2.1'deki
+      // gibi oturum olarak kalır, uyarıyla (inceleme #14 doğrulaması m1)
+      if (!p.v.length && ask.length) {
+        finalComps.push(p.comp);
+        orderNotes.push(`SIRA: ${p.lines.join("; ")} — hangi klibin yanlış olduğu çıkarılamadı (ör. sayaç başa döndü) → oturum olduğu gibi kaldı; senkronu kontrol et`);
+        continue;
+      }
+      // tek anlamlı seçim yok ya da (güvenlik) hiçbir şey çıkarılamadı / tur sınırı → eskisi gibi kullanıcıya sorulur (tahmin yok)
+      if (ask.length || rest.length === p.comp.length || round >= 20) {
+        unresolvedOf(p.comp, p.v, [...p.lines, ...ask]);
+        continue;
+      }
+      for (const r of p.comp) if (verdict.has(r)) suspects.push(verdict.get(r)!);
+      queue.push(...components(rest, linksAmong(rest)));
+    }
+  }
+  // kuralın uygulanmadığı ses cihazları (kimlik kesin değil: DJI) — yalnız bilgi (Durum raporu), kendi dosyaları üst üsteyse
+  const healthNotes: string[] = [...orderNotes];
+  warnings.push(...orderNotes);
+  const uncertain = new Map<string, Recording[]>();
+  for (const r of recordings) if (r.kind === "audio" && !vetoDevice(r.kind, r.ident)) uncertain.set(r.device, [...(uncertain.get(r.device) ?? []), r]);
+  for (const [d, recs] of uncertain) {
+    let n = 0;
+    for (let i = 0; i < recs.length; i++) for (let j = i + 1; j < recs.length; j++) if (recs[i].ident.recording !== recs[j].ident.recording && overlapOf(recs[i], recs[j]) > 0n) n++;
+    if (n)
+      healthNotes.push(
+        `ses ${d}: cihaz kimliği kesin değil (${recs.length} dosya; birden çok eşzamanlı mikrofon olabilir) → kendi dosyalarının çakışması hata sayılmaz (${n} çakışan çift)`
+      );
+  }
+  for (const d of [...new Set(recordings.filter((r) => r.kind === "camera").map((r) => r.device))]) {
+    const recs = recordings.filter((r) => r.device === d && r.kind === "camera");
+    if (recs.length > 1 && !counterUsable(recs.map((r) => r.ident))) healthNotes.push(`kamera ${d}: dosya sayacı güvenle çözülemiyor → sıra kuralı uygulanmaz (yalnız çakışma)`);
   }
   const orphans = finalComps.filter((c) => c.length === 1).map((c) => c[0]);
   const raw: Session[] = finalComps
@@ -408,7 +541,52 @@ export function analyze(s: Snapshot, items: Classified[], opts: AnalyzeOpts): An
   order.forEach((x, i) => (x.id = `O${i + 1}`));
   const sessionOf = new Map<Recording, Session>();
   for (const x of order) for (const r of x.recordings) sessionOf.set(r, x);
-  return { recordings, links, sessions: order, orphans, unresolved, vetoDecisions, duplicates, orderIssue, errors, warnings, sessionOf, recordingOf };
+  return { recordings, links, sessions: order, orphans, unresolved, vetoDecisions, duplicates, orderIssue, errors, warnings, sessionOf, recordingOf, suspects, healthNotes };
+}
+
+/**
+ * v1.3.0 SENKRON SAĞLIĞI özeti. head: tek cümle (TOPLA sorusu / günlük), lines: ayrıntı. Şüpheli yoksa head null.
+ * Örnek: "Premiere senkronu 8 klipte bozuk: C002…C009 (aynı kameranın C001/C013 klipleriyle çakışıyor)."
+ */
+export function healthSummary(a: Analysis): { head: string | null; lines: string[] } {
+  if (!a.suspects.length) return { head: null, lines: [] };
+  const byDev = new Map<string, Suspect[]>();
+  for (const s of a.suspects) byDev.set(s.rec.device, [...(byDev.get(s.rec.device) ?? []), s]);
+  const sureParts: string[] = [];
+  const ambParts: string[] = [];
+  const lines: string[] = [];
+  const HOW = { overlap: "çakışıyor", order: "sırası ters", fit: "doğru sayılan sırasına sığmıyor" } as const;
+  for (const [d, list] of byDev) {
+    const kind = list[0].rec.kind === "camera" ? "kameranın" : "ses cihazının";
+    const sure = list.filter((s) => !s.ambiguous);
+    const amb = list.filter((s) => s.ambiguous);
+    if (sure.length) {
+      // başlıkta yalnız DOĞRU sayılanlar (belirsizlerle çakışma satır satır ayrıntıda)
+      const ambSet = new Set(amb.map((s) => s.rec));
+      const shown = sure.flatMap((s) => s.against.filter((x) => x.how !== "fit" && !ambSet.has(x.rec)));
+      const against = [...new Set(shown.map((x) => x.rec))];
+      const hows = new Set(shown.map((x) => x.how));
+      const verb = [hows.has("overlap") ? "çakışıyor" : "", hows.has("order") ? "sırası ters" : ""].filter(Boolean).join(" / ");
+      const why = against.length
+        ? `aynı ${kind} ${compressLabels(against.map((r) => r.ident))} klipleriyle ${verb}`
+        : sure.some((s) => s.against.some((x) => x.how === "fit"))
+          ? "doğru sayılan sırasına sığmıyor"
+          : "";
+      sureParts.push(`${compressLabels(sure.map((s) => s.rec.ident))}${why ? ` (${why})` : ""}`);
+    }
+    if (amb.length) ambParts.push(`${compressLabels(amb.map((s) => s.rec.ident))} (aynı ${kind} klipleri; hangisinin doğru olduğu çıkarılamadı)`);
+    for (const s of list)
+      lines.push(
+        `${s.ambiguous ? "BELİRSİZ" : "ŞÜPHELİ"} ${d}: ${s.rec.label} ${recSpan(s.rec)}` +
+          (s.against.length ? ` — ${s.against.map((x) => (x.how === "fit" ? HOW.fit : `${x.rec.label} ile ${HOW[x.how]}`)).join(", ")}` : "")
+      );
+  }
+  const nSure = a.suspects.filter((s) => !s.ambiguous).length;
+  const nAmb = a.suspects.length - nSure;
+  const head =
+    (nSure ? `Premiere senkronu ${nSure} klipte bozuk: ${sureParts.join("; ")}.` : "Premiere senkronu bozuk görünüyor.") +
+    (nAmb ? ` ${nAmb} klip BELİRSİZ: ${ambParts.join("; ")}.` : "");
+  return { head, lines };
 }
 
 /**

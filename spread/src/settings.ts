@@ -234,6 +234,8 @@ export interface CollectRecord {
     guideCount: number;
     vPark: number;
     aPark: number;
+    /** v1.3.0 şeritler: birden çok track kullanan kaynak → track'leri (eski kayıtta yok) */
+    lanes?: [string, number[]][];
   };
   mapping: [string, Target][];
   thresholdPct: number;

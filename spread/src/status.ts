@@ -5,7 +5,7 @@
 
 import { classify, devicesOf, sourcesOf, roleLabel } from "./classify";
 import { bindState, layoutState, parkedFromRecord } from "./collect";
-import { analyze, describeLinks, sessionGroups } from "./sessions";
+import { analyze, describeLinks, healthSummary, sessionGroups } from "./sessions";
 import { getThreshold, loadRecord, loadTrimCal, mappingFor, recordDrift } from "./settings";
 import { hostVersion } from "./calibrate";
 import { frameTicks } from "./guard";
@@ -105,7 +105,18 @@ export async function buildStatusReport(): Promise<string> {
   // park listesi TOPLA KAYDINDAN (track sırasından tahmin yok)
   const rec = loadRecord(ctx.guid);
   const parked = parkedFromRecord(cls, rec);
-  const a = analyze(s, cls, { threshold: getThreshold(), exclude: parked });
+  const a = analyze(s, cls, { threshold: getThreshold(), exclude: parked, frameTicks: await frameTicks(ctx) });
+  // v1.3.0: Premiere senkronunun imkânsız bıraktığı durumlar (aynı cihazın kayıtları üst üste / sayaç sırası ters)
+  L.push("");
+  L.push(`SENKRON SAĞLIĞI${parked.size ? ` (TOPLA kaydındaki park'taki ${parked.size} klip hariç)` : ""}`);
+  const hs = healthSummary(a);
+  if (hs.head) {
+    L.push(`  ${hs.head} Bunlar oturuma alınmaz (TOPLA park track'ine alır, zamanı değişmez; silinmez) → elle düzelt ya da yeniden senkronla.`);
+    for (const l of hs.lines) L.push(`  ${l}`);
+  } else if (a.healthNotes.some((n) => /^SIRA:/.test(n)))
+    L.push("  klip ayrılmadı: sayaç sırası ters görünen oturum(lar) var ama hangi klibin yanlış olduğu çıkarılamadı (aşağıdaki SIRA notu)");
+  else L.push("  sorun yok: kimliği kesin hiçbir cihazın kayıtları üst üste değil, oturum içinde sayaç sırası ters değil");
+  for (const n of a.healthNotes) L.push(`  not: ${n}`);
   L.push("");
   L.push(
     `OTURUMLAR (güçlü bağ eşiği %${Math.round(getThreshold() * 100)}; ${rec ? `TOPLA kaydı ${rec.at} — kayıttaki park'taki ${parked.size} klip hariç` : "TOPLA kaydı yok"})`

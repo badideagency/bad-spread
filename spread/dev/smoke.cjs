@@ -4641,6 +4641,254 @@ scenarios.hint_redo = async () => {
   await stopHelper();
 };
 
+// ============================================================ v1.3.0 SENKRON SAĞLIĞI (Topla öncesi)
+// Tarif: tek kamera A043 (15 klip, 29.97 fps), 3 DJI mikrofonu eşzamanlı (8 WAV). Premiere Synchronize C002–C009'u C001 / C013'ün
+// üstüne atmış. fixtures/senkron-bozuk-a043.json (SENTETİK: tick'ler raporda yok, şekil tariften).
+const A043 = JSON.parse(fsReal.readFileSync(path.join(__dirname, "fixtures", "senkron-bozuk-a043.json"), "utf8"));
+const fr2997 = (secs) => BigInt(Math.round((secs * 30000) / 1001)) * FRAME2997;
+function setupA043(pos = "premiere") {
+  const s = setupSync({
+    cams: A043.kamera.map((c) => ({ name: c.ad, start: fr2997(c[pos]), dur: fr2997(c.sure) })),
+    wavs: A043.dji.map((w) => ({ name: w.ad, start: sec(w.start), dur: sec(w.sure) })),
+    others: [],
+  });
+  M.timebase = FRAME2997;
+  return s;
+}
+
+scenarios.health_unit = async () => {
+  const H = require(path.join(DIST, "src", "health.js"));
+  const u = (name, a, b, order) => ({ name, start: BigInt(a), end: BigInt(b), order });
+  // eşit uzun iki zincir: [X1, X3] ve [X2, X3] (X1 ile X2 çakışıyor) → sayaçsız / sığma bilgisi yok → X1, X2 BELİRSİZ, X3 doğru
+  let r = H.chainSelect([u("X1", 0, 100, null), u("X2", 50, 150, null), u("X3", 300, 400, null)], 1n, false);
+  const names = (l) => l.map((x) => x.name).join(",");
+  // inceleme #14 doğrulaması B1: sayaçsız cihazda (GoPro GX…, Canon MVI_…) sıra / sığma bilinmez → seçim yok, SORULUR
+  if (!r.ask || !/sayacı güvenle okunamıyor/.test(r.ask)) fail(`sayaçsız: ask ${r.ask} keep ${names(r.keep)} amb ${names(r.ambiguous)}`);
+  else ok("sayacı okunamayan cihazda üst üste klipler → hangisinin yanlış olduğu çıkarılamaz → SORULUR (tahmin yok)");
+  // sayaçlı + sığma: C2, C1'in yerine düşmüş; C1 (100 sn) bileşen başı (0) ile C2 (20) arasına sığmaz → [C1, C3] tek uygun zincir
+  r = H.chainSelect([u("C1", 10, 110, [1, 1]), u("C2", 20, 60, [1, 2]), u("C3", 300, 400, [1, 3])], 1n, true, { start: 0n, end: 500n });
+  if (names(r.keep) !== "C1,C3" || names(r.suspect) !== "C2" || r.ambiguous.length) fail(`sığma elemesi: keep ${names(r.keep)} amb ${names(r.ambiguous)} sus ${names(r.suspect)}`);
+  else ok("sığma denetimi: [C2, C3] zincirinde C1 başa sığmıyor → elendi; C1, C3 doğru, C2 şüpheli");
+  // sayaç sırası ters (çakışma yok): C2 C1'den önce, ikisinin de yeri uygun (sığıyor) → ayırt edilemez → ikisi de BELİRSİZ
+  r = H.chainSelect([u("C1", 300, 400, [1, 1]), u("C2", 100, 200, [1, 2])], 1n, true, { start: 0n, end: 1000n });
+  if (r.keep.length || (names(r.ambiguous) !== "C2,C1" && names(r.ambiguous) !== "C1,C2") || !r.ask) fail(`ters sıra: keep ${names(r.keep)} amb ${names(r.ambiguous)} ask ${r.ask}`);
+  else ok("sayaç sırası ters iki klip, ikisi de sığıyor → ikisi de BELİRSİZ, doğru sayılan yok → SORULUR (tahmin yok)");
+  // inceleme #14 B1: aynı adlı iki gövde (Sony C0001–C0003 ve C0500–C0501 aynı anda) → hiçbir sıra sığmıyor → SORULUR
+  r = H.chainSelect(
+    [u("C0001", 0, 100, [1]), u("C0002", 110, 200, [2]), u("C0003", 210, 300, [3]), u("C0500", 50, 150, [500]), u("C0501", 160, 260, [501])],
+    1n,
+    true,
+    { start: 0n, end: 300n }
+  );
+  if (!r.ask || !/tek bir sıralı çekim olarak yerleşemiyor/.test(r.ask)) fail(`iki gövde: ask ${r.ask} keep ${names(r.keep)} sus ${names(r.suspect)}`);
+  else ok("aynı adlı iki gövde (C0001… ile C0500… aynı anda) → hiçbir sıra sığmıyor → SORULUR, şüpheli yok");
+  // inceleme #14 M3: C005 bütün seslerden SONRA kaydedilmiş, C002'nin altına düşmüş → düz kural [C001…C004], sığma daha kısa → ayrışma:
+  // yalnız ikisinde de dışarıda olan (C005) şüpheli, ikisinde de içeride olan doğru, gerisi BELİRSİZ
+  r = H.chainSelect(
+    [u("C001", 0, 100, [1, 1]), u("C002", 110, 200, [1, 2]), u("C003", 210, 300, [1, 3]), u("C004", 310, 400, [1, 4]), u("C005", 120, 160, [1, 5])],
+    1n,
+    true,
+    { start: 0n, end: 420n }
+  );
+  if (r.ask || names(r.keep) !== "C001,C002" || names(r.ambiguous) !== "C003,C004" || names(r.suspect) !== "C005")
+    fail(`ayrışma: keep ${names(r.keep)} amb ${names(r.ambiguous)} sus ${names(r.suspect)} ask ${r.ask}`);
+  else ok("düz kural ile sığma ayrışınca: yalnız ikisinde de dışarıda olan ŞÜPHELİ (C005), ayrışanlar BELİRSİZ (C003, C004), ortaklar doğru");
+  if (!H.vetoDevice("audio", { pattern: "generic" }) || H.vetoDevice("audio", { pattern: "dji" }) || !H.vetoDevice("camera", { pattern: "sony" })) fail("vetoDevice");
+  else ok("veto: DJI hariç hepsinde (bilinmeyen adlı seslerde 1.2.1'deki gibi sürer)");
+  if (!H.counterUsable([{ pattern: "cinema", order: [43, 1] }, { pattern: "cinema", order: [43, 2] }]) || H.counterUsable([{ pattern: "dji", order: [1] }, { pattern: "dji", order: [2] }]) || H.counterUsable([{ pattern: "cinema", order: [1, 1] }, { pattern: "cinema", order: [1, 1] }]))
+    fail("counterUsable");
+  else ok("sayaç: sinema / Sony / Zoom güvenli; DJI / bilinmeyen desen ve tekrarlı sayaç → kullanılmaz");
+  if (!H.certainDevice("camera", { pattern: "generic" }) || H.certainDevice("audio", { pattern: "dji" }) || !H.certainDevice("audio", { pattern: "zoom" }) || H.certainDevice("audio", { pattern: "generic" }))
+    fail("certainDevice");
+  else ok("klip seçimi: kameralar ve Zoom; DJI / bilinmeyen adlı seste seçim yok");
+};
+
+scenarios.health_a043 = async () => {
+  setupA043();
+  const cam = (n) => clipNamed(new RegExp(`^A043C0${String(n).padStart(2, "0")}_`));
+  const before = new Map(A043.kamera.map((c, i) => [c.ad, cam(i + 1).map((x) => x.c.start)]));
+  const qs = [];
+  const out = await clickAndWait("btn-collect", async (x) => (qs.push(x), yes()), doneRe);
+  const conf = qs.find((x) => /^TOPLA — /.test(x)) ?? "";
+  if (!/SENKRON SAĞLIĞI: Premiere senkronu 8 klipte bozuk: C002…C009 \(aynı kameranın C001, C010…C014 klipleriyle çakışıyor \/ sırası ters\)\. Bunlar oturuma alınmadı/.test(conf))
+    fail("TOPLA sorusunda senkron sağlığı listesi yok / farklı:\n" + conf.split("\n").filter((l) => /SENKRON|ŞÜPHELİ|BELİRSİZ/.test(l)).join("\n"));
+  else ok("TOPLA sorusu: 'Premiere senkronu 8 klipte bozuk: C002…C009 (aynı kameranın C001, C010…C014 klipleriyle çakışıyor / sırası ters). Bunlar oturuma alınmadı …'");
+  if (/VETO|AYRILAMA/.test(qs.join("\n") + out)) fail("DJI eşzamanlı mikrofon çakışmaları veto / ayrılamadı üretti:\n" + out.split("\n").filter((l) => /VETO|AYRILAMA/.test(l)).join("\n"));
+  else ok("üç eşzamanlı DJI mikrofonunun çakışan dosyaları hata SAYILMADI (veto yok)");
+  // C002–C009 çıkınca iki DJI grubunu bağlayan kamera klibi kalmaz → 2 oturum (DJI kendi aralarında bağ kurmaz: kimlik kesin değil)
+  if (!/✓ TOPLA tamam: 2 oturum/.test(out)) return fail("TOPLA tamamlanmadı:\n" + failLines(out));
+  if (!/Track'ler: A → V1; DJI → A1 \(\+ A2, A3: eşzamanlı dosyalar, 3 şerit\)/.test(out) || !/DJI: bir oturumda 3 dosya aynı anda kayıtta/.test(out))
+    fail("eşzamanlı DJI dosyaları şeritlere dağılmadı:\n" + out.split("\n").filter((l) => /Track'ler|şerit/.test(l)).join("\n"));
+  else ok("üç eşzamanlı DJI dosyası tek track'e sığmıyor → DJI 3 şerit (A1 eşlenen, A2–A3 ek); çakışma yok");
+  const S0 = seqByGuid("guid-main-edit");
+  const djiBad = [];
+  for (const t of [0, 1, 2]) {
+    const list = S0.a[t].filter((c) => /^DJI_/.test(c.name)).map((c) => [c.start, c.end]).sort((x, y) => (x[0] < y[0] ? -1 : 1));
+    for (let i = 1; i < list.length; i++) if (list[i][0] < list[i - 1][1]) djiBad.push(`A${t + 1}`);
+  }
+  if (djiBad.length) fail("şeritte üst üste DJI: " + djiBad.join(", "));
+  const S = seqByGuid("guid-main-edit");
+  const frameInfo = JSON.parse(lsStore.get("spread.collectRecord.v1"))["guid-main-edit"].frame;
+  const bad = [];
+  for (let i = 1; i <= 15; i++) {
+    const clips = cam(i);
+    const parkedNow = clips.every((x) => x.track >= (x.kind === "V" ? frameInfo.vPark : frameInfo.aPark));
+    const sameTime = clips.every((x, k) => x.c.start === before.get(A043.kamera[i - 1].ad)[k]);
+    const suspect = i >= 2 && i <= 9;
+    if (suspect && !(parkedNow && sameTime)) bad.push(`C0${String(i).padStart(2, "0")} park'ta değil / zamanı değişti`);
+    if (!suspect && parkedNow) bad.push(`C0${String(i).padStart(2, "0")} yanlışlıkla park'ta`);
+    if (clips.length !== 2) bad.push(`C0${i}: ${clips.length} klip (video + kamera sesi olmalı)`);
+  }
+  if (bad.length) fail("park sonucu: " + bad.join("; "));
+  else ok("doğru 7 klip (C001, C010–C015) oturumda; 8 şüpheli (C002–C009) video + kamera sesiyle park track'inde, zamanları aynı, silinmedi");
+  if (!/Önce düzeltmek istersen Vazgeç/.test(conf)) fail("TOPLA sorusunda 'önce düzelt → Vazgeç' yolu yok");
+  const rec = JSON.parse(lsStore.get("spread.collectRecord.v1"))["guid-main-edit"];
+  if (A043.kamera.slice(1, 9).some((c) => !rec.parked.some((k) => k.includes(c.ad)))) fail("şüpheliler TOPLA kaydının park listesinde değil (BAĞLA onlara dokunabilir)");
+  else ok("şüpheliler TOPLA kaydının park listesinde → BAĞLA onlara dokunmaz");
+  // BAĞLA: şeritli DJI'lar kaynağın track'lerinde sayılır (yerinde); park'takilere dokunulmaz
+  await sleep(150);
+  await startHelper();
+  const ob = await clickAndWait("btn-bind", yes, doneRe);
+  await stopHelper();
+  if (!/✓ BAĞLA tamam/.test(ob)) fail("şeritli düzende BAĞLA tamamlanmadı:\n" + failLines(ob));
+  else if (A043.kamera.slice(1, 9).some((c, k) => cam(k + 2).length !== 2 || cam(k + 2).some((x) => x.c.start !== before.get(c.ad)[0])))
+    fail("BAĞLA park'taki şüphelilere dokundu");
+  else ok("BAĞLA şeritli düzende tamam (DJI şeritleri yerinde sayıldı); park'taki 8 şüpheliye dokunulmadı");
+  // DURUM raporu: SENKRON SAĞLIĞI bölümü (TOPLA'dan ÖNCEKİ düzende)
+  setupA043();
+  await clickAndWait("btn-status", yes, doneRe);
+  const rep = els.report.value;
+  const sec2 = rep.slice(rep.indexOf("SENKRON SAĞLIĞI"), rep.indexOf("OTURUMLAR"));
+  if (!/Premiere senkronu 8 klipte bozuk: C002…C009/.test(sec2) || !/ŞÜPHELİ A: A043C005_260925XX .*A043C013_260925XX ile çakışıyor/.test(sec2) || !/ses DJI: cihaz kimliği kesin değil \(8 dosya; birden çok eşzamanlı mikrofon olabilir\) → kendi dosyalarının çakışması hata sayılmaz \(\d+ çakışan çift\)/.test(sec2))
+    fail("DURUM raporunda SENKRON SAĞLIĞI bölümü eksik:\n" + sec2);
+  else ok("DURUM raporu: 'SENKRON SAĞLIĞI' — 8 şüpheli, her biri neyle çakıştığıyla; DJI: kimlik kesin değil, çakışmalar hata sayılmaz");
+  // doğru yerleşim (senkron sağlam): şüpheli yok, bölüm "sorun yok"
+  setupA043("dogru");
+  await clickAndWait("btn-status", yes, doneRe);
+  if (!/SENKRON SAĞLIĞI[^\n]*\n  sorun yok/.test(els.report.value)) fail("sağlam senkronda SENKRON SAĞLIĞI 'sorun yok' demedi");
+  else ok("sağlam senkron (gerçek yerler) → 'sorun yok'");
+  // sağlam senkronda TOPLA eski akış: şüpheli yok, sağlık satırı yok; C002–C009 iki DJI grubunu bağlar → tek oturum, hiçbir kamera park'ta değil
+  setupA043("dogru");
+  const q2 = [];
+  const o2 = await clickAndWait("btn-collect", async (x) => (q2.push(x), yes()), doneRe);
+  if (!/✓ TOPLA tamam: 1 oturum/.test(o2) || /SENKRON SAĞLIĞI|Park track'lerine .*A043/.test(q2.join("\n") + o2)) fail("sağlam senkronda TOPLA farklı davrandı:\n" + failLines(o2));
+  else ok("sağlam senkron → TOPLA eski akış: 1 oturum, sağlık uyarısı yok, hiçbir kamera klibi park'ta değil");
+};
+
+scenarios.health_a043_ayrisma = async () => {
+  // fixture'ın ilk sürümü: C002 ve C003 C001'in altında KENDİ aralarında sıralı → düz kural [C002, C003, C010–C015] (8), sığma
+  // [C001, C010–C015] (7) → ayrışma: C001–C003 BELİRSİZ (tahmin yok), C004–C009 şüpheli, C010–C015 doğru
+  setupA043("premiere_sirali");
+  await clickAndWait("btn-status", yes, doneRe);
+  const rep = els.report.value;
+  const sec2 = rep.slice(rep.indexOf("SENKRON SAĞLIĞI"), rep.indexOf("OTURUMLAR"));
+  if (!/Premiere senkronu 6 klipte bozuk: C004…C009 .*3 klip BELİRSİZ: C001…C003 \(aynı kameranın klipleri; hangisinin doğru olduğu çıkarılamadı\)/.test(sec2))
+    return fail("ayrışmada BELİRSİZ ayrımı yok:\n" + sec2);
+  ok("düz kural ile sığma ayrışıyor → 'Premiere senkronu 6 klipte bozuk: C004…C009 … 3 klip BELİRSİZ: C001…C003 (… hangisinin doğru olduğu çıkarılamadı)'");
+  setupA043("premiere_sirali");
+  const out = await clickAndWait("btn-collect", yes, doneRe);
+  const cam = (n) => clipNamed(new RegExp(`^A043C0${String(n).padStart(2, "0")}_`));
+  const rec = JSON.parse(lsStore.get("spread.collectRecord.v1") ?? "{}")["guid-main-edit"];
+  const parked = (i) => cam(i).every((x) => x.track >= (x.kind === "V" ? rec.frame.vPark : rec.frame.aPark));
+  const bad = [];
+  for (let i = 1; i <= 15; i++) if (parked(i) !== i <= 9) bad.push(`C0${String(i).padStart(2, "0")}`);
+  if (!/✓ TOPLA tamam/.test(out) || bad.length) fail("ayrışmada park sonucu: " + bad.join(", ") + "\n" + failLines(out));
+  else ok("TOPLA: C001–C009 park'ta (3 belirsiz + 6 şüpheli; zamanı aynı), yalnız C010–C015 oturumda");
+};
+
+scenarios.health_ask_stacked = async () => {
+  // inceleme #14 B1: iki ilişkisiz grup (Sony + Zoom 10:00 / A kamera + Zoom 11:00, 11:30) üst üste; çakışan YALNIZ Zoom → hiçbir Zoom
+  // sırası sığmıyor → klip seçilmez, 1.2.1'deki gibi AYRILAMAYAN OTURUM sorulur (Sony yanlış oturuma karışmaz)
+  setupSync({
+    cams: [
+      { name: "C0001.MP4", start: sec(100), dur: sec(100) },
+      { name: "A001C001_260912AB.MP4", start: sec(100), dur: sec(48) },
+      { name: "A001C002_260912AB.MP4", start: sec(154), dur: sec(46) },
+    ],
+    wavs: [
+      { name: "260912_100000_Tr1.WAV", start: sec(95), dur: sec(110) },
+      { name: "260912_110000_Tr1.WAV", start: sec(98), dur: sec(52) },
+      { name: "260912_113000_Tr1.WAV", start: sec(152), dur: sec(50) },
+    ],
+    others: [],
+  });
+  const qs = [];
+  const out = await clickAndWait("btn-collect", async (x) => (qs.push(x), no()), doneRe);
+  const q = qs.join("\n---\n");
+  if (!/AYRILAMAYAN OTURUM/.test(q) || !/tek bir sıralı çekim olarak yerleşemiyor/.test(q) || /SENKRON SAĞLIĞI/.test(q + out)) fail("üst üste gruplar sorulmadı / şüpheli üretildi:\n" + q + "\n" + failLines(out));
+  else ok("üst üste iki grup, çakışan yalnız Zoom → sığan sıra yok → AYRILAMAYAN OTURUM soruldu (şüpheli yok, tahmin yok)");
+};
+
+scenarios.health_generic_veto = async () => {
+  // inceleme #14 M2: bilinmeyen adlı ses (REC0001 / REC0002) — veto 1.2.1'deki gibi SÜRER: üst üste iki grup en zayıf bağlar kesilerek ayrılır
+  setupSync({
+    // grup içi bağlar %100; gruplar arası %91–%92.6 (güçlü ama açıkça zayıf) → REC0001 ↔ REC0002 vetosu en zayıfları keserek çözülür
+    cams: [
+      { name: "C0001.MP4", start: 0n, dur: sec(100) },
+      { name: "A001C001_260912AB.MP4", start: sec(12), dur: sec(95) },
+    ],
+    wavs: [
+      { name: "REC0001.WAV", start: 0n, dur: sec(100) },
+      { name: "REC0002.WAV", start: sec(9), dur: sec(100) },
+    ],
+    others: [],
+  });
+  const qs = [];
+  const out = await clickAndWait("btn-collect", async (x) => (qs.push(x), yes()), doneRe);
+  const q = qs.join("\n");
+  if (!/VETO: REC: REC0001 .*REC0002/.test(q + out) || !/✓ TOPLA tamam: 2 oturum/.test(out) || /SENKRON SAĞLIĞI/.test(q + out)) fail("bilinmeyen adlı seste veto çalışmadı:\n" + failLines(out) + "\n" + q.split("\n").filter((l) => /VETO|oturum/.test(l)).join("\n"));
+  else ok("bilinmeyen adlı ses (REC0001/REC0002) üst üste → VETO 1.2.1'deki gibi: en zayıf bağlar kesildi, 2 oturum; sağlık uyarısı yok");
+};
+
+scenarios.health_wrap = async () => {
+  // inceleme #14 doğrulaması m1: Sony sayacı başa dönmüş (C9998, C9999, C0001, C0002; çakışma yok) → sıra "ters" ama hangisi yanlış
+  // çıkarılamaz → 1.2.1'deki gibi TEK oturum, uyarı satırıyla (soru yok, park yok)
+  setupSync({
+    cams: [
+      { name: "C9998.MP4", start: 0n, dur: sec(100) },
+      { name: "C9999.MP4", start: sec(110), dur: sec(90) },
+      { name: "C0001.MP4", start: sec(210), dur: sec(90) },
+      { name: "C0002.MP4", start: sec(310), dur: sec(90) },
+    ],
+    wavs: [{ name: "260912_101512_Tr1.WAV", start: 0n, dur: sec(400) }],
+    others: [],
+  });
+  const qs = [];
+  const out = await clickAndWait("btn-collect", async (x) => (qs.push(x), yes()), doneRe);
+  const q = qs.join("\n");
+  if (!/✓ TOPLA tamam: 1 oturum/.test(out) || /AYRILAMAYAN|SENKRON SAĞLIĞI/.test(q) || !/SIRA: Sony: .*hangi klibin yanlış olduğu çıkarılamadı/.test(q + out))
+    return fail("sayaç dönüşü 1.2.1 gibi değil:\n" + failLines(out) + "\n" + q.split("\n").filter((l) => /SIRA|AYRIL|SENKRON/.test(l)).join("\n"));
+  ok("Sony sayacı başa dönmüş (C9998 → C0002) → tek oturum, soru / park yok, 'SIRA: … hangi klibin yanlış olduğu çıkarılamadı' uyarısı");
+  await clickAndWait("btn-status", yes, doneRe);
+  const sec2 = els.report.value.slice(els.report.value.indexOf("SENKRON SAĞLIĞI"), els.report.value.indexOf("OTURUMLAR"));
+  if (/sorun yok/.test(sec2) || !/klip ayrılmadı: sayaç sırası ters görünen/.test(sec2)) fail("Durum raporu SIRA notuyla çelişiyor:\n" + sec2);
+  else ok("Durum raporu: 'sorun yok' demez; 'klip ayrılmadı: sayaç sırası ters görünen oturum(lar) var …' + SIRA notu");
+};
+
+scenarios.health_order = async () => {
+  // (b) oturum İÇİNDE sayaç sırası ters (çakışma yok): Sony C0003, C0001'den önce düşmüş; tek DJI dosyası hepsini kapsıyor
+  setupSync({
+    cams: [
+      { name: "C0001.MP4", start: sec(100), dur: sec(100) },
+      { name: "C0002.MP4", start: sec(300), dur: sec(100) },
+      { name: "C0003.MP4", start: sec(20), dur: sec(60) },
+      { name: "C0004.MP4", start: sec(700), dur: sec(100) },
+    ],
+    wavs: [{ name: "DJI_01_20260925_090000.WAV", start: 0n, dur: sec(1000) }],
+    others: [],
+  });
+  const qs = [];
+  const out = await clickAndWait("btn-collect", async (x) => (qs.push(x), yes()), doneRe);
+  const conf = qs.find((x) => /^TOPLA — /.test(x)) ?? "";
+  if (!/SENKRON SAĞLIĞI: Premiere senkronu 1 klipte bozuk: C0003 \(aynı kameranın C0001, C0002 klipleriyle sırası ters\)/.test(conf))
+    return fail("oturum içi sayaç sırası bozukluğu bulunmadı:\n" + conf.split("\n").filter((l) => /SENKRON|ŞÜPHELİ|BELİRSİZ/.test(l)).join("\n") + "\n" + failLines(out));
+  ok("oturum içinde C0003 C0001'den önce (çakışma yok) → 'Premiere senkronu 1 klipte bozuk: C0003 (… C0001, C0002 klipleriyle sırası ters)'");
+  const c3 = clipNamed(/^C0003/);
+  if (!/✓ TOPLA tamam: 1 oturum/.test(out) || !c3.length || c3.some((x) => x.c.start !== sec(20) || x.track < (x.kind === "V" ? 1 : 3)))
+    fail("C0003 park'ta değil / zamanı değişti:\n" + failLines(out));
+  else ok("C0003 park track'inde (zamanı aynı); C0001, C0002, C0004 + DJI tek oturum");
+};
+
 // ------------------------------------------------------------ çalıştır
 (async () => {
   setupReal({ nCams: 2, nWavSessions: 1 });

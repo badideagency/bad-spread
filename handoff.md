@@ -1,4 +1,120 @@
-# handoff — Spread v1.2.1 (yanlış "kırpılmış" reddi + kayıt ipucudur, kilit değil) + geçmiş (v1.2.0, v1.1.0, v1.0.0, ADIM 3.4 … 1)
+# handoff — Spread v1.3.0 (senkron sağlığı + eşzamanlı DJI şeritleri) + geçmiş (v1.2.1, v1.2.0, v1.1.0, v1.0.0, ADIM 3.4 … 1)
+
+## v1.3.0 — SENKRON SAĞLIĞI (Topla öncesi) + eşzamanlı DJI mikrofonları için şerit
+
+Kaynak: kullanıcının 2026-09-29 isteği (Emre'nin yeni çekimi; tick'ler raporda yok): tek kamera A043C001…C015 (29.97 fps, 15 klip) +
+7–8 DJI WAV (birden çok DJI mikrofonu aynı anda kayıtta). Dağıt'tan sonra Premiere Clip › Synchronize C001 ve C010–C015'i sırayla
+(muhtemelen doğru) koymuş; C002–C009 rastgele yerlere, C001 / C013 ile üst üste düşmüş. İstek iki aşama: v1.3.0 koruma (bu bölüm),
+v1.4.0 kendi SENKRON motorumuz (ayrı bölüm). Kısıtlar aynen (Premiere kaydetmeden kapatılmaz, token gömülmez, PlayerDebugMode yalnız
+HKCU, TrLR varsayılanı Sil, kaynak kod güncelleme deposuna gitmez, UI/UX Pro Max `--persist` yok, yeni UI mevcut sade dile uyar).
+
+### Kurallar (`spread/src/health.ts` saf; `sessions.ts → analyze` kullanır → TOPLA, BAĞLA, Durum raporu aynı sonucu görür)
+
+- İmkânsız durumlar YALNIZ kimliği KESİN cihazlarda (`certainDevice`: kameralar + Zoom tarih_saat): (a) aynı cihazın iki kaydı ≥ 1 kare
+  üst üste; (b) sayaç sırası ile zaman sırası ters (yalnız sayaç güvenle çözülüyorsa: sinema A043C001 / Sony C0001 / Zoom tarih_saat,
+  cihazın bütün kayıtları aynı desende, sayaçlar tekil — `counterUsable`); (c) ses cihazında aynısı — yalnız Zoom. "1 kare" = sequence
+  timebase (okunamazsa 23.976).
+- **DJI**: DJI_01 / DJI_02 farklı mikrofon da olabilir, aynı mikrofonun bölünmüş dosyaları da → kural uygulanmaz ve **VETO da yok**
+  (`vetoDevice`; v1.2.1'e göre DEĞİŞTİ: DJI dosyalarının çakışması eskiden vetoydu). **Bilinmeyen adlı sesler** (ZOOM0001_Tr1, REC0001 …):
+  veto 1.2.1'deki gibi SÜRER (üst üste ilişkisiz grupları ayırır — inceleme #14 M2), klip seçimi yapılmaz (ayrılamazsa eskisi gibi sorulur).
+- KAPSAM (12 Eylül kanıtı: Premiere İLİŞKİSİZ grupları üst üste koyabiliyor, veto bunları doğru ayırıyor): seçim YALNIZ
+  - veto tek anlamlı çözülemeyen VE çakışanı TEK (kesin) cihaz olan bileşende (birden çok cihaz birlikte çakışıyorsa gruplar üst üste
+    konmuştur → eskisi gibi "AYRILAMAYAN OTURUM" sorusu), ya da
+  - veto'suz bir oturumun İÇİNDE sayaç sırası ters olan cihazda
+  çalışır. Seçim CİHAZ bazında, cihazın tetiklendiği bütün bileşenlerin BİRLEŞİMİ üzerinde (A043: yanlış yere düşen C004 / C005 / C007 /
+  C009 sonraki DJI grubunun altına düşmüş; tek bileşende sayaç sırasının yarısı görünmez). Tur tur: seçim → çıkarılanlar düşülür →
+  bileşenler yeniden kurulur → yeniden denetlenir (her seçilen bileşen en az bir kayıt kaybeder → biter).
+- Seçim (`chainSelect`, TAHMİN YOK):
+  - DÜZ kural (kullanıcının kuralı): sayaç sırasında dizili kayıtların, zaman sırası sayaca uyan ve ardışıkları < 1 kare çakışan en uzun
+    alt dizisi.
+  - SIĞMA (yalnız sayaç varken): tek cihaz sırayla kaydeder → zincir dışındakiler sayaçlarının düştüğü aralığa (zincirde önceki ile
+    sonraki arası; ilkten önce / sondan sonra: tetiklenen bileşenlerin kapsadığı zamanın başı / sonu) toplam süreleriyle sığmalı.
+    Koşul ardışık çifte bağlı → en uzun yol DP'si (numaralandırma yok, O(n²)); yol sayıları BigInt (inceleme #14: 8000 rastgele girdide
+    kaba kuvvetle birebir).
+  - Karar: cihazın sayacı güvenle okunamıyorsa (GoPro GX…, Canon MVI_…, bilinmeyen adlandırma) → **SORULUR** (sıra ve sığma
+    bilinmez; iki gövde / üst üste gruplar tek klip hatasından ayırt edilemez); hiçbir zincir sığmıyorsa (aynı adlı iki gövde / üst
+    üste gruplar) → **SORULUR** (AYRILAMAYAN OTURUM, gerekçe satırıyla);
+    sığan en uzun zincir düz kuralınki kadar uzunsa sığma yalnız EŞİT uzun zincirler arasında ayırır; daha kısaysa iki kural
+    ayrışıyor → yalnız İKİSİNDE de dışarıda olan **ŞÜPHELİ**, ikisinde de içeride olan doğru, gerisi **BELİRSİZ**; birden çok eşit
+    zincirde yalnız hepsinde olan doğru, bazılarında olan BELİRSİZ; doğru sayılan kalmazsa → SORULUR.
+  - Neden sığma var ama tek başına karar vermiyor (inceleme #14 B1 / M3): A043'te C001'in altına düşen klipler birbirinin de üstündeyse
+    (fixture `premiere`) düz kuralın 5 eşit zinciri var ([C001|C002|C003|C006|C008] + C010…C015) ve yalnız C001'li olan sığar →
+    C001 + C010…C015 doğru. İlk fixture sürümünde (`premiere_sirali`) C002 ve C003 C001'in altında KENDİ aralarında sıralıydı → düz
+    kural [C002, C003, C010…C015] (8), sığma [C001, C010…C015] (7) → ayrışma → C001–C003 BELİRSİZ, C004–C009 şüpheli. Sığmanın varsayımı
+    (cihazın ilk / son klipleri bileşenlerin kapsadığı zaman içinde) bir klip bütün harici seslerden sonra kaydedildiyse yanlıştır —
+    o yüzden ayrışmada karar değil, BELİRSİZ.
+- Yalnız SIRA bozukluğuyla (veto'suz, tek oturum içinde) tetiklenen bileşende seçim tek anlamlı değilse (ör. Sony sayacı C9999 →
+  C0001 döndü) 1.2.1'deki gibi oturum olarak kalır; günlükte / Durum raporunda "SIRA: … hangi klibin yanlış olduğu çıkarılamadı" uyarısı.
+- Şüpheli / belirsiz kayıt: oturum kurmaz, güçlü bağ üretmez (bileşenden çıkar), sahipsizlerle aynı yoldan **park track'ine** (zamanı
+  aynı, silinmez); TOPLA kaydının `parked` listesine girer → BAĞLA dokunmaz (BAĞLA'da park dışında kalırsa "önce TOPLA'ya bas").
+- Metin (`healthSummary`): "Premiere senkronu 8 klipte bozuk: C002…C009 (aynı kameranın C001, C010…C014 klipleriyle çakışıyor / sırası
+  ters). Bunlar oturuma alınmadı; park track'ine gider (zamanı değişmez, silinmez). → Elle düzelt ya da yeniden senkronla." Belirsizler
+  ayrı sayılır ("3 klip BELİRSİZ: C001…C003 (aynı kameranın klipleri; hangisinin doğru olduğu çıkarılamadı)"); yalnız sığma yüzünden
+  dışarıda kalan satırında "doğru sayılan sıraya sığmıyor". Etiket makara / cihaz karışıksa tam ad (A042C001 ≠ A043C001). TOPLA
+  onayında (özet + ayrıntı + "Önce düzeltmek istersen Vazgeç"), günlükte, bitiş kartında (uyarı: "senkronu bozuk N klip park'ta") ve
+  Durum raporunda ("SENKRON SAĞLIĞI" bölümü; DJI notu yalnız kendi dosyaları üst üsteyse). Şüpheli yoksa akış 1.2.1 ile aynı;
+  Durum raporunda "sorun yok".
+
+### Eşzamanlı DJI dosyaları → ŞERİT (`collect.ts → sourceLanes`, `makeFrame(…, width)`)
+
+DJI'ın veto dışı kalması tek başına yetmedi: bütün DJI dosyaları tek kaynak ("DJI") → tek hedef track → TOPLA planı "aynı hedef track'e
+düşen iki klip" ÇAKIŞMA'sıyla dururdu (1.2.1'de de; çok mikrofonlu DJI hiç çalışmıyordu). Şimdi:
+- YALNIZ veto dışı (DJI) kaynaklar: oturumdaki klipleri başlangıç sırasıyla en küçük boş şeride (açgözlü aralık bölme; oturum içi,
+  oturumlar TOPLA'da ayrık dizildiği için). Kaynağın şerit sayısı = oturumlar içindeki en büyük eşzamanlılık. Kesin cihazın (Zoom Tr1)
+  üst üste iki dosyası yine ÇAKIŞMA (inceleme #14 m4).
+- şerit 0 = kullanıcının eşlediği track (eşleme AYNEN), ek şeritler eşlenen bloğun hemen ardına (sonraki bloklar — korunan kamera sesi,
+  "sil", kılavuzlar, park — kayar); "sil" kaynağının şeritleri "sil" bloğunda yan yana.
+- çerçeve kaydı `frame.lanes` (eski kayıtta yok → şerit yok); BAĞLA'nın yerinde-mi denetimi harici sesi kaynağının HERHANGİ bir
+  şeridinde kabul eder (`sourceTracks`); yardımcı panelin çerçevesinde `silTracks` şeritleri içerir (`silTracksOf`).
+- günlük: "DJI: bir oturumda 3 dosya aynı anda kayıtta (kimliği kesin değil: eşzamanlı mikrofonlar olabilir) → 3 şerit (track)";
+  onayın track satırı: "DJI → A1 (+ A2, A3: eşzamanlı dosyalar, 3 şerit)".
+
+### İnceleme #14 (bağımsız alt ajan) ve düzeltmeler
+
+| # | Bulgu | Düzeltme |
+|---|---|---|
+| B1 | Sığan zincir yokken düz kurala düşüp tahmin ediyordu (iki gövde, farklı kameralı üst üste gruplar, hepsi belirsiz) | Sığan zincir yok / doğru sayılan yok → SORULUR (`chainSelect.ask`, gerekçe satırı AYRILAMAYAN sorusunda) |
+| M2 | Bilinmeyen adlı seslerin vetosu da kalkmıştı → üst üste gruplar sessizce birleşiyordu | Veto yalnız DJI'da kalkar (`vetoDevice`); `health_generic_veto` |
+| M3 | Sığma varsayımı en uzun zinciri düşürüp doğru klipleri yanlış gerekçeyle park edebiliyordu | Sığma yalnız eşit uzunlar arasında ayırır; ayrışmada ortak dışarıdakiler şüpheli, ayrışanlar BELİRSİZ; fixture ikiye ayrıldı |
+| m4 | Şerit kesin kaynaklara da veriliyordu (Zoom Tr1 üst üste) | Yalnız veto dışı (DJI) kaynaklar |
+| m5 | Gerekçesiz şüpheli; başlık belirsizleri de "bozuk" sayıyordu; soru geçmiş zamanda; bitiş kartı şüphelileri söylemiyordu | "sığmıyor" gerekçesi, ayrı BELİRSİZ sayısı, "park track'ine gider", bitiş kartı uyarı |
+| B1′ (doğrulama) | Sayacı okunamayan kamerada (GoPro / Canon) sığma hiç çalışmadığından tahmin yolu açık kalmıştı | Sayaçsız cihazda seçim yok → SORULUR |
+| m1′ (doğrulama) | Yalnız sıra bozukluğunda (sayaç başa dönmesi) soru 1.2.1'de çalışan akışı durduruyordu | Oturum olarak kalır + "SIRA:" uyarısı (`health_wrap`) |
+| nit | tur sınırında çift park; sıra tetiklemesinde gerekçesiz soru; makarasız etiket; tek dosyalı DJI notu; spread-core'da ölü ifade; yinelenen cmpOrder; iki kez kare okuma | hepsi düzeltildi |
+
+### Mock (v1.3.0): 119 → 126 senaryo
+
+- `health_unit`: eşit uzun zincirler → BELİRSİZ; sığma elemesi; ters sıra iki klip → BELİRSİZ + SORULUR; aynı adlı iki gövde → SORULUR;
+  ayrışma (C005 bütün seslerden sonra) → C005 şüpheli, C003 / C004 BELİRSİZ; `vetoDevice` / `counterUsable` / `certainDevice`.
+- `health_a043` (fixture `spread/dev/fixtures/senkron-bozuk-a043.json`, SENTETİK — tarifin şekli; gerçek tick'ler yok): TOPLA sorusu tam
+  metin; DJI veto / ayrılamadı YOK; DJI 3 şerit, şeritte üst üste DJI yok; doğru 7 klip oturumda, C002–C009 video + kamera sesiyle park'ta
+  zamanı aynı; TOPLA kaydının park listesinde; BAĞLA şeritli düzende tamam ve park'takilere dokunmaz; Durum raporu SENKRON SAĞLIĞI
+  bölümü; gerçek yerleşimde (`dogru`) Durum "sorun yok" ve TOPLA eski akış (1 oturum, sağlık uyarısı yok).
+  Not: bozuk yerleşimde C002–C009 çıkınca iki DJI grubunu bağlayan kamera klibi kalmaz → **2 oturum** (DJI dosyaları kendi aralarında
+  bağ kurmaz: aynı "cihaz"). TOPLA bunları ayrı bloklar olarak dizer; gerçek zamanda üst üste olan iki grubun göreli konumu korunmaz
+  (TOPLA'nın oturum kuralı; 1.2.1'de de böyle). Bu yüzden onay "Önce düzeltmek istersen Vazgeç" der.
+- `health_a043_ayrisma` (`premiere_sirali`): C001–C003 BELİRSİZ, C004–C009 şüpheli, TOPLA C001–C009'u park eder.
+- `health_ask_stacked`: Sony + Zoom 10:00 ile A kamera + Zoom 11:00 / 11:30 üst üste, çakışan yalnız Zoom → AYRILAMAYAN OTURUM soruldu.
+- `health_generic_veto`: REC0001 / REC0002 üst üste → VETO 1.2.1'deki gibi, 2 oturum.
+- `health_wrap`: Sony sayacı başa dönmüş (C9998, C9999, C0001, C0002) → tek oturum, "SIRA:" uyarısı, soru / park yok.
+- `health_order`: veto'suz oturumda Sony C0003 C0001'den önce → "1 klipte bozuk: C0003 (… C0001, C0002 klipleriyle sırası ters)", park.
+- Eski 119 senaryonun hiçbirinin beklentisi değişmedi (12 Eylül ve A042 / A027 fixture'larıyla çalışanlar dahil): `nested` ve
+  `adv_oversplit` (iki kesin cihaz / gereksiz kesim → yine SORULUR) aynen geçer.
+
+### Belirsizlikler (v1.3.0)
+
+1. Fixture sentetik: Premiere'in bozuk senkronda klipleri gerçekte nereye koyduğu (hep referansın altına mı, rastgele mi) bilinmiyor.
+   Seçim kuralı iki olasılığı (düz / sığma) karşılaştırır; ayrışırsa BELİRSİZ — gerçek A043 projesinde Durum raporu hangisi olduğunu
+   gösterir.
+2. DJI adındaki numara (DJI_01) mikrofon mu, dosya sayacı mı — bilinmiyor; kural bu yüzden DJI'a hiç uygulanmıyor. Aynı DJI mikrofonunun
+   GERÇEKTEN üst üste iki dosyası (bozuk senkron) artık yakalanmaz — v1.4.0 SENKRON'un işi.
+3. Aynı adlandırmayı kullanan iki gövde (iki Sony, ikisi de C####) tek cihaz sayılır: klipleri tek bir sıraya SIĞIYORSA (sırayla
+   çekilmiş gibi dizilmişse) seçim yapılabilir ve öteki gövdenin klibi yanlışlıkla ŞÜPHELİ / BELİRSİZ çıkabilir (silinmez, zamanı
+   değişmez; metin çakıştığı klibi yazar). Sığmıyorsa sorulur. Kimlik kuralı (dosya adı) bunu ayırt edemez.
+4. `premiere_sirali` gibi bir ayrışmada ilk DJI grubunun hiçbir kamerası kalmayabilir → o DJI dosyaları sahipsiz olarak park'a gider
+   (kurala uygun; gerçek sonucu Premiere'in klipleri nereye koyduğu belirler).
+5. Şerit ataması oturum içinde başlangıç sırasıyla; aynı kaynağın eşzamanlı dosyalarının hangisinin hangi şeride düştüğü mikrofon
+   kimliğini göstermez (kimlik yok).
 
 ## v1.2.1 — HATA 1: yanlış "kırpılmış kamera klibi" reddi · HATA 2: Ctrl+Z sonrası Dağıt / Topla kilidi
 

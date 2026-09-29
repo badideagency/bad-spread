@@ -1,4 +1,4 @@
-SPREAD 1.2.1 — Premiere Pro için çok kameralı çekim düzenleyici
+SPREAD 1.3.0 — Premiere Pro için çok kameralı çekim düzenleyici
 ================================================================
 
 KURULUM (bir kez)
@@ -24,6 +24,10 @@ GÜNLÜK KULLANIM (her çekim için; sıra hep aynı)
     Adım işaretleri yanlışsa: Ayarlar > "Adımı elle çalıştır".
   - Panelin kayıtları yalnız ipucudur, kilit değil (1.2.1): Ctrl+Z ile geri aldıysan panel bunu timeline'dan görür, eski ✓ silinir
     ve Dağıt / Topla yeniden yapılabilir. Timeline hiç değişmemişse yalnız "zaten yapılmış görünüyor, yine de çalıştırılsın mı?" diye sorar.
+  - Senkron sağlığı (1.3.0): Premiere Synchronize bazı klipleri yanlış yere koyduysa (aynı kameranın iki klibi üst üste ya da
+    klip sırası ters) Topla bunu fark eder, onayda "Premiere senkronu N klipte bozuk: …" yazar ve o klipleri oturuma ALMAZ
+    (park track'ine, zamanı değişmeden; silinmez). Önce düzeltmek istersen o soruda Vazgeç. Aynı anda kayıt yapan birden çok
+    DJI mikrofonunun üst üste dosyaları hata değildir: Topla onları yan yana track'lere koyar.
   - Her işlem önce kısa bir onay gösterir (en çok 3 satır). Okumadan "Devam" deme.
   - Her işlem önce yedek sequence alır.
   - Panel bir şey beklendiği gibi olmazsa DURUR: kırmızı tek satır + "Ne yapmalıyım?".
