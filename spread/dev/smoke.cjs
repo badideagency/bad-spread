@@ -5145,6 +5145,31 @@ scenarios.senkron_degisti = async () => {
   else ok(`DJI_02'nin track'inde (A${i2 + 1}) yolu okunamayan başka bir klip → Uygula başlamadı, hiçbir şey değişmedi`);
 };
 
+scenarios.senkron_lead = async () => {
+  // inceleme #15 N5: ses akışının dosya başına göre yeri bilinmeyen dosya (ffprobe > 5 sn kayma gösteriyor) — sesi eşleşse de Uygula onu
+  // bulunan yere TAŞIMAZ, emin olunmayanlarla en sona koyar; rapor bunu yazar
+  setupSenkron();
+  const dji2 = path.join(TMPHOME, "medya", "DJI_02_20260925_160001.WAV");
+  fsReal.writeFileSync(dji2 + ".meta.json", JSON.stringify({ audioStart: 9 }));
+  lsStore.set("spread.senkronApply.v1", "1");
+  await startHelper();
+  await sleep(600);
+  const out = await clickAndWait("btn-senkron", yes, senkronDoneRe);
+  lsStore.delete("spread.senkronApply.v1");
+  fsReal.rmSync(dji2 + ".meta.json", { force: true });
+  let rep = "";
+  try {
+    rep = fsReal.readFileSync(reportFile(), "utf8");
+  } catch {}
+  const d2 = mediaStartOf("DJI_02_20260925_160001.WAV");
+  const d1 = mediaStartOf("DJI_01_20260925_160000.WAV");
+  const okMove = /✓ SENKRON UYGULANDI/.test(out) && /"DJI_02_20260925_160001\.WAV": sesi eşleşti ama ses akışının dosya başına göre yeri bilinmiyor → taşınmaz, en sona/.test(out);
+  const atEnd = d2 !== null && d1 !== null && d2 >= sec(200) && d2 - d1 !== sec(1.5);
+  if (!okMove || !atEnd || !/DJI_02_20260925_160001\.WAV".*ses başlangıcı bilinmiyor → Uygula'da taşınmaz/.test(rep))
+    fail(`bilinmeyen ses başlangıcı: DJI_02 ${d2} DJI_01 ${d1}\n` + failLines(out) + out.split("\n").filter((l) => /DJI_02/.test(l)).join("\n"));
+  else ok("ses akışının başlangıcı bilinmeyen DJI_02 (ffprobe 9 sn kayma) → sesi eşleşti ama taşınmadı, en sona kondu; raporda yazıyor");
+};
+
 scenarios.senkron_grup_once = async () => {
   // iki ayrı çekim (iki grup; Grup 1 = eşleşmesi en güçlü dosyanın grubu = B çekimi); dosya adındaki saate göre Grup 2 (A, 16:00),
   // Grup 1'den (B, 17:00) 1 saat ÖNCE → Uygula önce onu koyar, Grup 1'i saat farkı kadar sonra (inceleme #15: eski kod saat sırasında

@@ -401,9 +401,10 @@
      * ffprobe: süre, ses akışı var mı, creation_time / timecode, ses başlangıç kayması.
      * lead = ilk ses akışının (ffmpeg "-map 0:a:0" ile AYNI akış) ÇÖZÜLEN ilk karesinin zamanı − dosyanın zaman sıfırı (ilk video akışının
      * start_time'ı, yoksa format start_time). Çözülen PCM o kareyle başlar; Premiere klibi dosyanın zaman sıfırına göre yerleştirir →
-     * motor konumları bununla düzeltir. Akışın start_time'ı yetmez: AAC'de kodlayıcı ön-dolgusu (ör. 1024 örnek) çözülürken atılır ve
-     * ilk karenin zamanı o kadar ileri kayar (Wine sınaması: sesi 0.5 sn geç başlayan MP4'te start_time 0.478, ilk kare 0.5).
-     * Kare okunamazsa akışın start_time'ı; o da yoksa lead yok.
+     * motor konumları bununla düzeltir. PCM[0] tanım gereği ilk ÇÖZÜLEN karedir; akışın start_time'ı çoğu dosyada aynıdır ama
+     * kodlayıcı ön-dolgusu / kırpma işaretleri (skip_samples) kareyi kaydırabilir → ölçülen değer kullanılır (Wine sınaması: sesi 0.5 sn
+     * geç başlayan MP4'te start_time da ilk kare de 0.478 — kap 0.5 − 1024/48000'i 1 ms'lik ölçekte yazıyor). Kare okunamazsa akışın
+     * start_time'ı; o da yoksa lead bilinmez (leadOk = false → UXP Uygula'da o dosyayı taşımaz, en sona koyar).
      */
     function firstAudioFrame(tools, file) {
       var args = ["-v", "error", "-select_streams", "a:0", "-read_intervals", "%+#16", "-show_entries", "frame=pts_time,best_effort_timestamp_time", "-print_format", "json", file.path];
@@ -554,7 +555,7 @@
             chain = chain.then(function () {
               if (job.cancel) throw fail("iptal", "iptal edildi");
               progress("ses okunuyor " + (i + 1) + "/" + req.files.length + ": " + f.name, 0.06 + 0.34 * (i / req.files.length));
-              var row = { id: f.id, name: f.name, path: f.path, ok: false, why: "", note: "", cached: false, seconds: null, clock: null, clockSrc: null, lead: 0, probe: null };
+              var row = { id: f.id, name: f.name, path: f.path, ok: false, why: "", note: "", cached: false, seconds: null, clock: null, clockSrc: null, lead: 0, leadOk: false, probe: null };
               info.push(row);
               var pr = null;
               return probe(tools, f)
@@ -591,9 +592,11 @@
                     }
                     // ses akışı dosya başından kaymışsa (ör. MP4'te AAC ön-dolgusu, kamerada sesin geç başlaması)
                     if (pr && pr.lead !== null) {
-                      if (Math.abs(pr.lead) <= 5) row.lead = pr.lead;
-                      else row.note = "ses akışı dosya başından " + pr.lead.toFixed(3) + " sn kaymış görünüyor (> 5 sn) — kullanılmadı";
-                    }
+                      if (Math.abs(pr.lead) <= 5) {
+                        row.lead = pr.lead;
+                        row.leadOk = true;
+                      } else row.note = "ses akışı dosya başından " + pr.lead.toFixed(3) + " sn kaymış görünüyor (> 5 sn) — kullanılmadı; dosya başına göre yeri bilinmiyor";
+                    } else row.note = "ffprobe ses akışının başlangıcını okuyamadı — dosya başına göre yeri bilinmiyor";
                     inputs.push({ id: f.id, name: f.name, kind: f.kind, device: f.device, recording: f.recording, certain: f.certain, order: f.order, pcm: d.pcm, clock: row.clock, clockSrc: row.clockSrc, lead: row.lead });
                   },
                   function (e) {
@@ -643,7 +646,7 @@
               var x = inputs.filter(function (q) {
                 return q.id === r.id;
               })[0];
-              return { id: r.id, name: r.name, ok: r.ok, why: r.why, note: r.note, cached: r.cached, seconds: r.seconds, lead: r.lead, clock: x ? x.clock : null, clockSrc: x ? x.clockSrc : null };
+              return { id: r.id, name: r.name, ok: r.ok, why: r.why, note: r.note, cached: r.cached, seconds: r.seconds, lead: r.lead, leadOk: r.leadOk, clock: x ? x.clock : null, clockSrc: x ? x.clockSrc : null };
             }),
             result: res,
           };

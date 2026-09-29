@@ -130,6 +130,7 @@ function buildReport(ctx: SeqContext, files: FileRow[], unreadable: string[], ou
   const r = out.result;
   const L: string[] = [];
   const byId = new Map(files.map((f) => [f.id, f]));
+  const noLead = new Set(out.files.filter((f) => f.leadOk === false).map((f) => f.id));
   L.push("================================================");
   L.push(`SPREAD SENKRON — DENEME RAPORU (Spread v${SPREAD_VERSION})`);
   L.push("================================================");
@@ -162,14 +163,15 @@ function buildReport(ctx: SeqContext, files: FileRow[], unreadable: string[], ou
       const tlDiff = ref && refTl !== null && tl !== null ? tl - refTl - (p.pos! - ref.pos!) : null;
       L.push(
         `  G${g.n}  ${p.pos!.toFixed(4).padStart(10)} sn  güven ${p.confidence.toFixed(2)} (tepe ${p.viaPeak.toFixed(3)}, oran ${p.viaRatio.toFixed(1)}, ${p.support} eşleşme)` +
-          `  ← ${p.via ?? "dayanak"}  saat: ${p.hintPos === null ? "—" : `${p.hintPos.toFixed(3)} (fark ${fmtS(p.hintDiff)})`}  timeline: ${fmtMs(tlDiff)}  "${p.name}"`
+          `  ← ${p.via ?? "dayanak"}  saat: ${p.hintPos === null ? "—" : `${p.hintPos.toFixed(3)} (fark ${fmtS(p.hintDiff)})`}  timeline: ${fmtMs(tlDiff)}  "${p.name}"` +
+          (noLead.has(p.id) ? "  · ses başlangıcı bilinmiyor → Uygula'da taşınmaz (en sona)" : "")
       );
     }
   }
   L.push("");
   L.push("EMİN DEĞİL (yerleştirilmedi; Uygula'da en sona, tek tek konur → Topla sahipsiz sayar)");
   if (!unsure.length && !unreadable.length && out.files.every((f) => f.ok)) L.push("  (yok)");
-  for (const p of unsure) L.push(`  "${p.name}" — ${p.why}`);
+  for (const p of unsure) L.push(`  "${p.name}" — ${p.why}${p.maybe ? `  · olası yer: G${p.maybe.group} ${p.maybe.pos.toFixed(3)} sn (dar kanıt — kontrol et)` : ""}`);
   for (const f of out.files.filter((x) => !x.ok)) L.push(`  "${f.name}" — ${f.why}`);
   for (const u of unreadable) L.push(`  ${u}`);
   L.push("");
@@ -338,6 +340,8 @@ async function apply(
   if (bad.length) throw new SpreadStop("Aynı dosyanın klipleri farklı senkron konumunda; Uygula başlamadı.", bad.map((f) => f.name));
   const r = out.result;
   const byId = new Map(files.map((f) => [f.id, f]));
+  // ses akışının başlangıcı bilinmeyen dosya (ffprobe okuyamadı / > 5 sn): sesi doğru eşleşse de dosya başının yeri belirsiz → taşınmaz
+  const noLead = new Set(out.files.filter((f) => f.leadOk === false).map((f) => f.id));
   const frame = fr && fr > 0n ? fr : null;
   const gap = ceilTo(secToTicks(getGapSec()), frame);
   // hedef medya başlangıçları (tick): gruplar sırayla; kameralar kareye yuvarlanır
@@ -348,7 +352,7 @@ async function apply(
   const groups = r.groups.slice().sort((a, b) => (a.clockFrom1 ?? 1e9 + a.n) - (b.clockFrom1 ?? 1e9 + b.n));
   let zero: bigint | null = null; // saat ipucu koordinatında Grup 1'in başı (ilk saatli grubun yerinden)
   for (const g of groups) {
-    const mem = r.placed.filter((p) => p.status === "ok" && p.group === g.n);
+    const mem = r.placed.filter((p) => p.status === "ok" && p.group === g.n && !noLead.has(p.id));
     const clock = g.clockFrom1 !== null && zero !== null ? zero + secToTicks(g.clockFrom1) : null;
     const origin = ceilTo(clock !== null && clock >= cursor ? clock : cursor, frame);
     if (zero === null && g.clockFrom1 !== null) zero = origin - secToTicks(g.clockFrom1);
@@ -368,6 +372,8 @@ async function apply(
   }
   // emin değil: sona, tek tek
   const unsure = files.filter((f) => !target.has(f.id));
+  for (const f of unsure.filter((x) => noLead.has(x.id) && r.placed.some((p) => p.id === x.id && p.status === "ok")))
+    log(`  "${f.name}": sesi eşleşti ama ses akışının dosya başına göre yeri bilinmiyor → taşınmaz, en sona.`, "warn");
   for (const f of unsure) {
     target.set(f.id, cursor);
     const len = f.clips.reduce((m, c) => (big(c.end) - big(c.start) + big(c.inPt) > m ? big(c.end) - big(c.start) + big(c.inPt) : m), 0n);

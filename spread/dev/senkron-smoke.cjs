@@ -227,7 +227,8 @@ scenarios.motor_tekrar = async () => {
     wrong += a3.status === "ok" ? 1 : 0;
     rows.push(`saat çelişkisi: A3 ${a3.status === "ok" ? "YERLEŞTİ" : `emin değil (${a3.why.slice(0, 40)}…)`}`);
   }
-  // (e) B1: saat ipucu turu doğru yöne bakar (8 sn'lik bölüm 50 sn önce tekrarlanıyor; 5 sn'lik klip)
+  // (e) B1: saat ipucu turu doğru yöne bakar (8 sn'lik bölüm 50 sn önce tekrarlanıyor; 5 sn'lik klip). A1 / A2 farklı uzunlukta →
+  //     saatin "kaydın başı" olduğu kanıtlı (N1) → ikinci tur ÇALIŞMALI ve A3 400'de
   {
     const M = scene(900, 5);
     for (let i = 0; i < 8 * SR; i++) M[349 * SR + i] = M[399 * SR + i];
@@ -236,8 +237,30 @@ scenarios.motor_tekrar = async () => {
         input("E1", "audio", "Zoom", "E1", true, [1], record(M, 0, 890, MIC.zoom1, 14)),
         input("E2", "audio", "DJI", "E2", false, null, record(M, 340, 300, MIC.lav1, 15)),
         input("A1", "camera", "A", "A1", true, [1], record(M, 100, 60, MIC.cam, 16), 5100),
-        input("A2", "camera", "A", "A2", true, [3], record(M, 600, 60, MIC.cam, 17), 5600),
+        input("A2", "camera", "A", "A2", true, [3], record(M, 600, 80, MIC.cam, 17), 5600),
         input("A3", "camera", "A", "A3", true, [2], record(M, 400, 5, MIC.cam, 18), 5400),
+      ],
+      { frameSec: 1 / 25 },
+      quiet
+    );
+    const e1 = r.placed.find((p) => p.name === "E1");
+    const a3 = r.placed.find((p) => p.name === "A3");
+    const bad = a3.status !== "ok" || Math.abs(a3.pos - e1.pos - 400) > 0.001;
+    wrong += bad ? 1 : 0;
+    rows.push(`tekrar eden bölüm (saat doğrulanmış): A3 ${a3.status === "ok" ? `${(a3.pos - e1.pos).toFixed(3)} sn (gerçek 400)` : "emin değil (ikinci tur çalışmadı)"}`);
+  }
+  // (g) N1: saat kaydın SONUNU gösteriyor (bazı telefon / drone creation_time'ı), A1 / A2 aynı uzunlukta → başlangıç varsayımı da tutuyor
+  //     ve A3'ü 55 sn önceki tekrarına işaret ediyor → ikinci tur yapılmamalı (yanlış saat tekrarı "doğrulatmasın")
+  {
+    const M = scene(900, 5);
+    for (let i = 0; i < 8 * SR; i++) M[345 * SR + i] = M[400 * SR + i];
+    const r = await CORE.senkronSolve(
+      [
+        input("E1", "audio", "Zoom", "E1", true, [1], record(M, 0, 890, MIC.zoom1, 14)),
+        input("E2", "audio", "DJI", "E2", false, null, record(M, 340, 300, MIC.lav1, 15)),
+        input("A1", "camera", "A", "A1", true, [1], record(M, 100, 60, MIC.cam, 16), 5160),
+        input("A2", "camera", "A", "A2", true, [3], record(M, 600, 60, MIC.cam, 17), 5660),
+        input("A3", "camera", "A", "A3", true, [2], record(M, 400, 5, MIC.cam, 18), 5405),
       ],
       { frameSec: 1 / 25 },
       quiet
@@ -246,7 +269,32 @@ scenarios.motor_tekrar = async () => {
     const a3 = r.placed.find((p) => p.name === "A3");
     const bad = a3.status === "ok" && Math.abs(a3.pos - e1.pos - 400) > 0.001;
     wrong += bad ? 1 : 0;
-    rows.push(`tekrar eden bölüm: A3 ${a3.status === "ok" ? `${(a3.pos - e1.pos).toFixed(3)} sn (gerçek 400)` : "emin değil"}`);
+    const noted = r.notes.some((n) => /cihaz saati doğrulanamadı/.test(n));
+    if (!noted) wrong++;
+    rows.push(`saat = kaydın sonu: A3 ${a3.status === "ok" ? `${(a3.pos - e1.pos).toFixed(3)} sn` : "emin değil"}${noted ? " (ikinci tur yapılmadı: saatin anlamı belirsiz)" : " — NOT YOK"}`);
+  }
+  // (h) N2: aynı şarkı iki kez; kayıt cihazı ilkinin başında bitiyor, C1 / C3 ilkini çekmiş; X ikinciyi — X'in yalnız C1 / C3'le dar
+  //     eşleşmeleri var (ikisi de aynı olayı görmüş) → "emin değil" + olası yer (dar kanıt), yerleşmiş sayılmaz
+  {
+    const M = scene(900, 81);
+    for (let i = 0; i < M.length; i++) M[i] *= 0.6;
+    const song = scene(30, 777);
+    for (const t of [300, 600]) for (let i = 0; i < song.length; i++) M[t * SR + i] += song[i];
+    const r = await CORE.senkronSolve(
+      [
+        input("Z", "audio", "Zoom", "Z", true, null, record(M, 0, 310, MIC.zoom1, 21)),
+        input("C1", "camera", "A", "C1", true, null, record(M, 280, 45, MIC.cam, 22)),
+        input("C3", "camera", "B", "C3", true, null, record(M, 285, 43, MIC.cam2, 23)),
+        input("X", "camera", "D", "X", true, null, record(M, 602, 22, MIC.cam, 24)),
+      ],
+      { frameSec: 1 / 25 },
+      quiet
+    );
+    const x = r.placed.find((p) => p.name === "X");
+    const c1 = r.placed.find((p) => p.name === "C1");
+    wrong += x.status === "ok" ? 1 : 0;
+    if (c1.status !== "ok") wrong++;
+    rows.push(`iki dar eşleşme (aynı şarkı): X ${x.status === "ok" ? "YERLEŞTİ" : `emin değil${x.maybe ? ` (dar kanıt, olası yer G${x.maybe.group} ${x.maybe.pos.toFixed(1)} sn)` : ""}`}`);
   }
   // (f) DC kayması olan kamera sesi yine yerleşir
   {
@@ -511,9 +559,11 @@ scenarios.yardimci_is = async () => {
     Math.abs(pos("DJI_02_20260925_140003.WAV") - pos("DJI_01_20260925_140000.WAV") - 3.25) < 0.001 &&
     fl("A060C002_260925XX.MP4").lead === 0.25 &&
     fl("DJI_02_20260925_140003.WAV").lead === 0 &&
+    fl("DJI_02_20260925_140003.WAV").leadOk === false &&
+    fl("A060C002_260925XX.MP4").leadOk === true &&
     /> 5 sn\) — kullanılmadı/.test(fl("DJI_02_20260925_140003.WAV").note);
   if (a.s.state === "done" && good && [...a.seen].some((t) => /ses okunuyor/.test(t)) && out.files.every((f) => f.ok && !f.cached))
-    ok(`iş: 4 dosya sahte ffmpeg'le çözüldü (ilerleme: ${[...a.seen].slice(0, 3).join(" → ")} …), konumlar ≤ 1 ms; ses akışı 0.25 sn geç başlayan klip dosya başına göre yerleşti, 7 sn'lik kayma kullanılmadı (not)`);
+    ok(`iş: 4 dosya sahte ffmpeg'le çözüldü (ilerleme: ${[...a.seen].slice(0, 3).join(" → ")} …), konumlar ≤ 1 ms; ses akışı 0.25 sn geç başlayan klip dosya başına göre yerleşti, 7 sn'lik kayma kullanılmadı (not; leadOk = false → Uygula taşımaz)`);
   else fail(`iş: ${a.s.state} ${a.s.error || ""} ${JSON.stringify(out && out.files)}`);
   const b = await run(mk());
   if (b.s.state === "done" && b.s.out.files.every((f) => f.cached)) ok("ikinci iş: 4 dosya önbellekten (yol + boyut + değişme zamanı), ffmpeg çalışmadı");

@@ -23,8 +23,9 @@ satırı ve **Senkron** düğmesi çıkar (Ayarlar › DENEYSEL › "Senkron · 
 - Eşleştirme: önce ses zarfıyla kaba arama (bütün kaymalar), sonra 8 kHz sinyalde ±1 sn içinde ince ayar (GCC-PHAT) → milisaniyenin
   altında. Güven: dalga biçimi uyumu (tepe) ve birinci / ikinci aday oranı; eşik altı → "emin değil" (tahmin yok). Aynı kamera
   kendisiyle üst üste olamaz, dosya sırası korunur; çelişen eşleşme düşer. Hiçbir sesle eşleşmeyen / sessiz klip "emin değil".
-  Tekrarlayan içerikte (müzik döngüsü, aynı jingle) tek ve dar bir eşleşmeye güvenilmez; kameranın saatiyle (dosya adı) çok çelişen
-  yerleşim "emin değil". Birbirine bağlanmayan kümeler ayrı grup (oturum); aralarındaki mesafe dosya adındaki saatten, yoksa boşluk.
+  Tekrarlayan içerikte (müzik döngüsü, aynı jingle) yalnız kısa kliplerle bulunan yere güvenilmez: "emin değil" + raporda "olası yer
+  (dar kanıt — kontrol et)"; kameranın saatiyle (dosya adı) çok çelişen yerleşim "emin değil". Yalnız kısa dosyalardan oluşan bir
+  çekim bu yüzden senkronlanmaz (hepsi "emin değil"). Birbirine bağlanmayan kümeler ayrı grup (oturum); aralarındaki mesafe dosya adındaki saatten, yoksa boşluk.
   Ses akışı videodan geç başlayan dosyada konum dosyanın başına göre verilir.
 - Topla'nın senkron sağlığı uyarısı artık "→ SENKRON (Spread) ile yeniden hizala ya da elle düzelt" der.
 
@@ -41,11 +42,13 @@ satırı ve **Senkron** düğmesi çıkar (Ayarlar › DENEYSEL › "Senkron · 
 - Sentetik sınama (`spread/dev/senkron-smoke.cjs`, 9 senaryo): 1 kamera + 3 eşzamanlı mikrofon (10/10, en büyük hata 0.029 ms);
   hiçbir harici sesle örtüşmeyen klip ve sessiz klip → "emin değil"; 2 kamera + Zoom, iki çekim (~128 dk ses, 19/19, en büyük hata
   0.008 ms, ~52 sn); uzun kayda karşı 12 kısa ilişkisiz klip → hepsi "emin değil"; tekrarlayan içerik (döngü, jingle, çelişen eşleşme,
-  saat çelişkisi, tekrar eden bölüm, DC kayması); yanlış yerleşim 0. Yardımcı: istek denetimi, zip, sha256, bozuk kurulum, indirme
+  saat çelişkisi, saatin kaydın sonunu gösterdiği kamera, aynı şarkıyı gören iki kısa klip, tekrar eden bölüm, DC kayması); sınanan
+  durumlarda yanlış yerleşim 0. Yardımcı: istek denetimi, zip, sha256, bozuk kurulum, indirme
   sırasında İptal, iş / ilerleme / önbellek / iptal, geç başlayan ses akışı.
 - Gerçek ffmpeg (Wine, `scripts/test-senkron-wine.sh`): sabit derleme indirilir + sha256 + çıkarma; WAV (48 kHz stereo), MP4 (H.264 +
   AAC), MOV (PCM) ve sesi 0.5 sn geç başlayan MP4 çözülür; bilinen ofsetler ≤ 0.02 ms (geç başlayan seste 0.66 ms — dosyanın kendi
   1 ms'lik zaman ölçeği).
 - Panel (mock Premiere, `spread/dev/smoke.cjs`): Dene timeline'a dokunmaz, rapor dosyası ve Sorun bildir bölümü; Uygula (yedek → ölçüm
   → park → yerleştir, tick düzeyinde) ve ardından Topla tek oturum; İptal; yardımcı yok / Dağıt düzeni değil (okunamayan bir klip
-  aynı track'te dahil) / eşleştirme sürerken timeline değişti / ffmpeg indirilemedi → açık hata; saate göre önce gelen grup önce.
+  aynı track'te dahil) / eşleştirme sürerken timeline değişti / ffmpeg indirilemedi → açık hata; saate göre önce gelen grup önce; ses
+  başlangıcı okunamayan dosya taşınmaz (en sona).
