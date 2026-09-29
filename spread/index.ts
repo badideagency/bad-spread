@@ -9,6 +9,7 @@ import { getActive, requireActive, sequenceGuid, sequenceName } from "./src/sess
 import { runSpread } from "./src/spread";
 import { runCollect } from "./src/topla";
 import { runBind } from "./src/bagla";
+import { cancelSenkron, runSenkron } from "./src/senkronrun";
 import { buildStatusReport } from "./src/status";
 import { buildIssueReport, saveIssueReport } from "./src/report";
 import { classify, sourcesOf } from "./src/classify";
@@ -44,7 +45,7 @@ import {
 } from "./src/ui";
 
 let busy = false;
-const ACTIONS = ["btn-spread", "btn-collect", "btn-bind", "btn-status", "btn-channels", "rerun-spread", "rerun-topla", "rerun-bagla", "man-spread", "man-topla", "man-bagla"];
+const ACTIONS = ["btn-spread", "btn-collect", "btn-bind", "btn-status", "btn-channels", "rerun-spread", "rerun-topla", "rerun-bagla", "man-spread", "man-topla", "man-bagla", "btn-senkron", "man-senkron"];
 let latest: Latest | null = null; // v1.2.0: yayındaki daha yeni sürüm (yoksa null)
 let helperReachable = false; // güncellemeyi yardımcı yapar: sürümü farklı olsa da ulaşılabiliyorsa yeter
 let lastSeqGuid: string | null = null; // kaynak eşlemesi en son bu sequence için tarandı
@@ -410,7 +411,7 @@ async function exclusive(label: string, fn: () => Promise<void>): Promise<void> 
     await stampStep();
   } catch (e) {
     log(`Beklenmeyen hata: ${errText(e)}`, "err");
-    opEnd("err", `${({ SPREAD: "Dağıt", TOPLA: "Topla", BAĞLA: "Bağla", GÜNCELLE: "Güncelleme" } as Record<string, string>)[label] ?? label}: beklenmeyen hata.`, "Sorun bildir'e bas ve raporu gönder.", [errText(e)]);
+    opEnd("err", `${({ SPREAD: "Dağıt", TOPLA: "Topla", BAĞLA: "Bağla", GÜNCELLE: "Güncelleme", SENKRON: "Senkron" } as Record<string, string>)[label] ?? label}: beklenmeyen hata.`, "Sorun bildir'e bas ve raporu gönder.", [errText(e)]);
   } finally {
     busy = false; // önce kilit (gösterge hata verse de panel kilitli kalmasın)
     opFinish();
@@ -557,6 +558,13 @@ function init(): void {
       actions[id]();
     });
   }
+  // v1.4.0 SENKRON (Dene; Ayarlar'daki deneysel anahtar açıksa ardından Uygula'yı sorar). İptal yalnız yardımcıdaki işi durdurur.
+  on("btn-senkron", () => void exclusive("SENKRON", runSenkron));
+  on("man-senkron", () => {
+    showSettings(false);
+    void exclusive("SENKRON", runSenkron);
+  });
+  on("btn-cancel", () => cancelSenkron());
   on("btn-settings", () => showSettings(true));
   on("btn-back", () => showSettings(false));
   on("result-help", toggleHint); // tıklama + Enter / Boşluk

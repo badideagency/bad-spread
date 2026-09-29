@@ -100,6 +100,14 @@ export function setTarget(source: string, t: Target): void {
   write(MAP_KEY, JSON.stringify(m));
 }
 
+export function getSenkronApply(): boolean {
+  return read(SENKRON_APPLY_KEY) === "1";
+}
+
+export function setSenkronApply(on: boolean): void {
+  write(SENKRON_APPLY_KEY, on ? "1" : "0");
+}
+
 export function getThreshold(): number {
   const v = Number(read(THR_KEY));
   return Number.isFinite(v) && v >= 50 && v <= 100 ? v / 100 : 0.9;
@@ -180,6 +188,16 @@ export function bindSettingInputs(): void {
   try {
     const thr = el<HTMLInputElement>("set-threshold");
     const gap = el<HTMLInputElement>("set-gap");
+    const sa = el<HTMLElement>("set-senkron-apply");
+    if (sa) {
+      const paint = () => (sa.textContent = `SENKRON uygula: ${getSenkronApply() ? "Açık" : "Kapalı"}`);
+      paint();
+      sa.addEventListener("click", () => {
+        setSenkronApply(!getSenkronApply());
+        paint();
+        log(`Deneysel: SENKRON uygula ${getSenkronApply() ? "AÇIK (Dene'den sonra uygulamayı sorar)" : "kapalı (yalnız Dene)"}`, "dim");
+      });
+    }
     if (thr) {
       thr.value = String(Math.round(getThreshold() * 100));
       thr.addEventListener("change", () => {
@@ -335,6 +353,8 @@ export function recordDrift(rec: CollectRecord, mapping: Map<string, Target>, th
 // kalibre edilmiş kural bir kırpmada tutmazsa kayıt silinir (bir sonraki BAĞLA yeniden ölçer).
 
 const CAL_KEY = "spread.trimCal.v1";
+/** v1.4.0: "Deneysel: SENKRON uygula" (varsayılan KAPALI → SENKRON yalnız Dene) */
+const SENKRON_APPLY_KEY = "spread.senkronApply.v1";
 
 function allCals(): Record<string, TrimCal> {
   try {

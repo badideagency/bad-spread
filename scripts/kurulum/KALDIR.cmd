@@ -1,8 +1,8 @@
 @echo off
 setlocal EnableExtensions
-title Spread 1.3.0 kaldirma
+title Spread 1.4.0 kaldirma
 rem ---------------------------------------------------------------------------------------------------------------
-rem Spread 1.3.0 - KUR.cmd'nin yaptigi her seyi geri alir. Yonetici izni ISTEMEZ; yalniz kullanicinin kendi alanina dokunur:
+rem Spread 1.4.0 - KUR.cmd'nin yaptigi her seyi geri alir. Yonetici izni ISTEMEZ; yalniz kullanicinin kendi alanina dokunur:
 rem   1) Spread paneli: Adobe UnifiedPluginInstallerAgent /remove "Spread" (bulunamazsa: Creative Cloud > Eklentiler)
 rem   2) Spread Helper klasoru: %APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper
 rem   3) PlayerDebugMode (HKCU\Software\Adobe\CSXS.11 / CSXS.12): KUR.cmd ONCESI degerlerine (onceki.txt) - yoksa silinir
@@ -58,7 +58,7 @@ rmdir "%BASE%" >nul 2>&1
 
 echo.
 echo ================================================================
-echo   Spread 1.3.0 kaldirma
+echo   Spread 1.4.0 kaldirma
 echo ================================================================
 if "%R_PANEL%"=="OK" echo   [tamam] Adobe kurucusu Spread panelini kaldirdigini bildirdi ^(ciktisi yukarida^)
 if "%R_PANEL%"=="HATA" echo   [ !!  ] Spread paneli kaldirilamadi - Creative Cloud ^> Eklentiler'den kaldir

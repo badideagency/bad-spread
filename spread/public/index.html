@@ -277,10 +277,23 @@
     }
     #sync-hint {
       display: none;
+      align-items: center;
       margin: -2px 0 6px 32px;
       font-size: 12px;
       line-height: 16px;
       color: var(--metin-sonuk);
+    }
+    /* v1.4.0: Dağıt ile Topla arasında SENKRON (ses eşleştirme; varsayılan "Dene": timeline'a dokunmaz) */
+    #btn-senkron {
+      min-height: 24px;
+      padding: 0 10px;
+      margin-left: 8px;
+    }
+    #btn-cancel {
+      display: none;
+      align-self: flex-start;
+      min-height: 24px;
+      margin: 4px 0 0 0;
     }
 
     /* onay kartı: başlık + en çok 3 satır + [Vazgeç] [Devam] */
@@ -488,7 +501,7 @@
 
       <div class="row">
         <div id="brand" class="grow">Spread</div>
-        <div id="ver">1.3.0</div>
+        <div id="ver">1.4.0</div>
         <div id="btn-reload" class="icon-btn" tabindex="1" title="Yenile: Spread ve Spread Helper panellerini yeniden yükle">
           <svg width="16" height="16" viewBox="0 0 16 16"><path d="M13.25 8a5.25 5.25 0 1 1-1.54-3.71" fill="none" stroke="#b8b4ac" stroke-width="1.3" stroke-linecap="round" /><path d="M11.9 1.9v2.6H9.3" fill="none" stroke="#b8b4ac" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </div>
@@ -507,7 +520,10 @@
         </div>
         <div id="rerun-spread" class="btn ghost rerun" tabindex="1">Yeniden çalıştır</div>
       </div>
-      <div id="sync-hint">Sonra: Clip › Synchronize</div>
+      <div id="sync-hint">
+        <span class="grow">Sonra: Senkron (sesleri eşleştirir) ya da Clip › Synchronize</span>
+        <div id="btn-senkron" class="btn secondary" tabindex="1" title="Dene: timeline'a dokunmadan rapor verir">Senkron</div>
+      </div>
 
       <div id="step-topla" class="step">
         <div class="row">
@@ -543,6 +559,7 @@
       <div id="progress">
         <div id="progress-track"><div id="progress-bar"></div></div>
         <div id="progress-text"></div>
+        <div id="btn-cancel" class="btn ghost" tabindex="1">İptal</div>
       </div>
 
       <div id="result">
@@ -590,6 +607,13 @@
       <div class="settings small">
         <label>Güçlü bağ eşiği (%) <input id="set-threshold" type="number" min="50" max="100" step="1" value="90" /></label>
         <label>Oturum arası boşluk (sn) <input id="set-gap" type="number" min="0" max="600" step="0.5" value="2" /></label>
+      </div>
+
+      <div class="section">DENEYSEL</div>
+      <div class="note">Senkron sesleri kendisi eşleştirir. “Dene” timeline’a dokunmaz; rapor verir (senkron-deneme.txt, Sorun bildir).</div>
+      <div class="row buttons-row">
+        <div id="man-senkron" class="btn secondary" tabindex="1">Senkron · Dene</div>
+        <div id="set-senkron-apply" class="btn secondary" tabindex="1" title="Açıkken Dene'den sonra timeline'a uygulamayı sorar">SENKRON uygula: Kapalı</div>
       </div>
 
       <div class="section">SPREAD HELPER</div>

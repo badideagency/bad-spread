@@ -1,4 +1,4 @@
-SPREAD 1.3.0 — Premiere Pro için çok kameralı çekim düzenleyici
+SPREAD 1.4.0 — Premiere Pro için çok kameralı çekim düzenleyici
 ================================================================
 
 KURULUM (bir kez)
@@ -14,6 +14,10 @@ KURULUM (bir kez)
 
 GÜNLÜK KULLANIM (her çekim için; sıra hep aynı)
   1. Dağıt       Her klibi kendi track'ine dağıtır. Zamanlar değişmez.
+     Senkron     (1.4.0, yeni) Dağıt'ın hemen altındaki "Senkron" düğmesi sesleri Spread'in kendisi eşleştirir. Şimdilik
+                 "Dene": timeline'a DOKUNMAZ, rapor verir (%APPDATA%\BadIdeaAgency\Spread\senkron-deneme.txt, Sorun bildir'e de
+                 eklenir). İlk kullanımda ffmpeg'i (~88 MB, bir kez) indirmek için sorar. Spread Helper açık olmalı.
+                 Uygulamak isteyen: Ayarlar > DENEYSEL > "SENKRON uygula: Açık" (önce yedek alır, yalnız zamanda taşır).
      Sonra Premiere'de Clip > Synchronize (Audio). Menü gri ise: timeline'a tıkla, Ctrl+A.
   2. Topla       Oturumları çekim sırasıyla dizer, kameraları ve sesleri kendi track'lerine koyar.
      Kontrol     Timeline'a göz at: oturumlar sırada mı, sesler kameralarla hizalı mı.

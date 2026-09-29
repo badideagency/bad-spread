@@ -27,6 +27,11 @@ function maybe(id: string): HTMLElement | null {
   }
 }
 
+/** v1.4.0: SENKRON'un İptal düğmesi (ilerleme alanında; yalnız yardımcıdaki iş sürerken). */
+export function showCancel(on: boolean): void {
+  show("btn-cancel", on, "flex");
+}
+
 function show(id: string, on: boolean, display = "block"): void {
   const e = maybe(id);
   if (e) e.style.display = on ? display : "none";
@@ -283,7 +288,7 @@ export function renderSteps(steps: Record<StepId, StepView>, next: StepId | null
     if (!canRerun) rerunOpen.delete(id);
     show(`rerun-${id}`, canRerun && rerunOpen.has(id), "flex");
   });
-  show("sync-hint", steps.spread.state === "done" && steps.topla.state === "todo");
+  show("sync-hint", steps.spread.state === "done" && steps.topla.state === "todo", "flex");
 }
 
 /** Biten bir adımın adına tıklanınca "Yeniden çalıştır" düğmesini aç / kapat. */

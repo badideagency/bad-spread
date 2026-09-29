@@ -1,4 +1,83 @@
-# handoff — Spread v1.3.0 (senkron sağlığı + eşzamanlı DJI şeritleri) + geçmiş (v1.2.1, v1.2.0, v1.1.0, v1.0.0, ADIM 3.4 … 1)
+# handoff — Spread v1.4.0 (SENKRON: kendi ses eşleştirmemiz, "Dene") + geçmiş (v1.3.0, v1.2.1, v1.2.0, v1.1.0, v1.0.0, ADIM 3.4 … 1)
+
+## v1.4.0 — SENKRON: kendi ses eşleştirmemiz (varsayılan "Dene"; "Uygula" deneysel anahtarın arkasında)
+
+Kaynak: kullanıcının 2026-09-29 isteği, AŞAMA 2. Hedef akış: Dağıt → SENKRON (Spread) → Topla → Bağla; Clip › Synchronize alternatif.
+Hesap YARDIMCIDA (CEP'in Node'u), UXP yalnız okur ve yerleştirir. Kısıtlar aynen (1.3.0).
+
+### Parçalar
+| Dosya | Ne |
+|---|---|
+| `spread/src/senkron.ts` (SAF) | Motor: zarf (100 Hz log-enerji − ±0.5 sn ortalama), kaba NCC (FFT + önek toplamları, en az `minOverlap` ortak), ince GCC-PHAT (8 kHz, ±1 sn, en enerjili ≤ 8 sn'lik bölüm, parabolik alt-örnek), güven, büyüyen yerleşim (±2 ms kümeleri; en ağır küme açıkça önde + kısıtlar), saat ipucu, rapor verisi. Yardımcıya `spread-core.js` içinde derlenir (`senkronSolve`, `senkronClock`) |
+| `cep-helper/js/senkron.js` | Yardımcı: istek denetimi, ffmpeg indirme / sha256 / çıkarma, ffprobe + çözme (mono 8 kHz s16le) + önbellek, iş / ilerleme / iptal. Köprü `POST /v1/senkron` `{op: start | status | cancel}` (helper.js) |
+| `spread/src/senkronrun.ts` | UXP: dosya yolları (`ClipProjectItem.getMediaFilePath`, d.ts:L973), iş başlatma + ilerleme + İptal, rapor (`senkron-deneme.txt` + Sorun bildir bölümü), Uygula |
+| `spread/public/index.html`, `index.ts`, `ui.ts`, `settings.ts` | Dağıt'ın altındaki "Senkron" düğmesi (ipucu satırında), ilerlemede İptal, Ayarlar › DENEYSEL ("Senkron · Dene", "SENKRON uygula: Kapalı/Açık", `spread.senkronApply.v1`, varsayılan kapalı) |
+
+### ffmpeg (sabit, kurulum paketine GÖMÜLMEZ)
+- Kaynak: gyan.dev'in resmî Windows derlemesi (ffmpeg.org indirme sayfasının Windows bağlantısı), GitHub sürüm deposu GyanD/codexffmpeg:
+  `https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip` (92 234 348 bayt, zip64 değil).
+  İzinli alan adları: github.com → 302 → release-assets.githubusercontent.com (eski: objects.githubusercontent.com).
+- sha256 (2026-09-29, bu oturumda indirilen dosyadan hesaplandı; `cep-helper/js/senkron.js → FFMPEG`):
+  - zip `04861d3339c5ebe38b56c19a15cf2c0cc97f5de4fa8910e4d47e5e6404e4a2d4`
+  - `bin/ffmpeg.exe` (87 429 632) `b90225987bdd042cca09a1efb5e34e9848f2d1dbf5fbcd388753a44145522997`
+  - `bin/ffprobe.exe` (87 291 904) `05e8fa639450f8191635192871ae37a3ec3e4638fa12f3b7d49c6522ba16a8ed`
+  - `LICENSE` (35 147) `8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903`
+- Kurulum: zip belleğe iner (≤ boy + 1 KB), sha256 tutmazsa HİÇBİR ŞEY yazılmaz; yalnız ffmpeg.exe, ffprobe.exe, LICENSE (→ LICENSE.txt)
+  çıkarılır (CRC-32 + her birinin sha256'sı), `.new` → yeniden adlandırma; `KAYNAK.txt` (sürüm, adres, sha256, lisans). Her yardımcı
+  oturumunda ilk kullanımda kurulu ikililer sha256 ile yeniden doğrulanır. İndirilemezse açık hata + zip'i elle aynı klasöre koyma yolu
+  (aynı denetim). Windows dışında: "SENKRON şimdilik yalnız Windows'ta".
+- **Lisans notu**: ffmpeg bu derlemede GPL v3 (derlemenin README / LICENSE'ı; libx264 vb. ile). Spread onu **dağıtmaz**: kullanıcının
+  bilgisayarına, kullanıcının onayıyla ("ffmpeg indirilsin mi?"), resmî derleyicinin yayımladığı değiştirilmemiş dosya olarak indirilir;
+  LICENSE.txt yanında durur; ayrı bir süreç olarak çalıştırılır (bağlanmaz / gömülmez). Kaynak: derlemenin README'sindeki commit
+  `https://github.com/FFmpeg/FFmpeg/commit/db69d06eee`.
+- Çağrı: `child_process.spawn(exe, [sabit bayraklar…, yol])` (kabuk yok; yol mutlak olmak zorunda → "-" ile başlayamaz):
+  ffprobe `-v error -print_format json -show_format -show_streams`; ffmpeg `-nostdin -hide_banner -loglevel error -i <yol> -map 0:a:0
+  -vn -sn -dn -ac 1 -ar 8000 -acodec pcm_s16le -f s16le pipe:1`. İlk ses akışı; kanallar karıştırılır (-ac 1).
+- Önbellek: `%APPDATA%\BadIdeaAgency\Spread\senkron-cache\<sha1(yol|boyut|mtime)>.pcm`; > 2 GB → en eskiler silinir. KALDIR.cmd bütün
+  `Spread` klasörünü (ffmpeg + önbellek dahil) siler.
+
+### Motor ayrıntıları (`DEFAULT_OPTS`, sentetik ölçümlerle seçildi)
+- Kaba aday: zarf NCC ≥ 0.15, ortak ≥ min(kısa dosya, 15 sn), en çok 4 aday (≥ 1 sn aralı). Zarf tek başına kısa kliplerde ayırt
+  edici DEĞİL (ölçüm: ilişkisiz 5 sn klip NCC 0.67'ye çıkabiliyor) → güven ince aşamadan:
+- İnce: GCC-PHAT tepesi ≥ 0.06, keskinlik (tepe / ±5 ms dışı en büyük) ≥ 2, birinci / ikinci aday oranı ≥ 3, ince sonuç kabaya ≤ 50 ms.
+  Ölçüm (sentetik, farklı mikrofon rengi / gürültü / yankı): doğru eşleşmeler tepe 0.14–0.77, keskinlik 2.6–6.5, oran 20–38; ilişkisiz
+  klipler tepe ≤ 0.027, keskinlik ≤ 1.5.
+- Çiftler: aynı KESİN cihazın farklı kayıtları eşleştirilmez (aynı anda olamaz); aynı kaydın kanalları (Zoom Tr1 ↔ Tr2) eşleşir ve aynı
+  başlangıçta olmak zorunda; kamera↔harici, harici↔harici (DJI mikrofonları dahil), kamera↔kamera (farklı cihaz).
+- Yerleşim: en güçlü bağlı dosya grubun dayanağı; her adımda yerleşmemiş dosyalar için yerleşmiş komşulardan gelen konum tahminleri ±2 ms
+  kümelenir; kısıtı bozan kümeler (kesin cihazın iki kaydı ≥ 1 kare üst üste; güvenli sayaçta dosya sırası ters) elenir, bir sonraki
+  güvenli tepe denenir; kalan en ağır küme ikinciden ≥ 2 kat ağır değilse "çelişen eşleşmeler" → emin değil. Bağlanmayan kümeler ayrı
+  grup; tek başına kalan dosya grup sayılmaz. Gruplar arası mesafe: aynı cihazın iki grupta saatli dosyası varsa (saat − konum) farkı.
+- Saat ipucu: dosya adı (YYYYMMDD_HHMMSS, YYMMDD_HHMMSS) > timecode > creation_time; cihaz başına tek kaynak (çoğunluk). Yalnız aramayı
+  daraltır (yerleşemeyenler için ±90 sn pencerede ikinci tur, eşikler aynı) ve raporlanır (beklenen konum, fark).
+
+### Uygula (deneysel)
+- Yalnız Dağıt düzeni: her track tek dosyanın klipleri; dosyanın bütün klipleri aynı medya başlangıcında. Değilse DUR.
+- Hedef: grup 1 başı 0; sonraki grup saat mesafesi önceki grubun sonundan sonraysa orada, değilse önceki sonu + Ayarlar'daki boşluk
+  (kareye hizalı). Kamera klipleri kareye yuvarlanır (günlükte ms), harici sesler tick düzeyinde. Emin olunmayanlar en sona, tek tek.
+- Adımlar (TOPLA'nın kanıtlı kalıbı): yedek sequence → ilk park (ölçüm, tek dosya; kareye oturmayan harici ses varsa o) → park →
+  ilk yerleştirme (ölçüm) → yerleştir; her adımdan sonra tick düzeyinde düzen karşılaştırması; tutmazsa DUR (Ctrl+Z sayısı + yedek).
+
+### Mock / sınama
+- `npm run smoke:senkron` (8 senaryo, `spread/dev/senkron-smoke.cjs` + `senkron-synth.cjs` + `fake-ffmpeg.cjs`): yukarıdaki ölçümler;
+  1 kamera + 3 mikrofon 10/10 (≤ 0.029 ms), kayıt dışı ve sessiz klip emin değil, 2 kamera + Zoom iki çekim 19/19 (≤ 0.008 ms,
+  128 dk ses ~45 sn), 12 kısa ilişkisiz klip hepsi emin değil, iptal; yardımcı: istek denetimi, zip, sha256 / indirme hatası, iş +
+  önbellek + iptal.
+- `scripts/test-senkron-wine.sh`: GERÇEK sabit ffmpeg (indirme + sha256 + çıkarma; ikinci açılışta doğrulama), Wine'da WAV 48 kHz
+  stereo + MP4 H.264/AAC + MOV PCM çözme; ofsetler ≤ 0.014 ms (AAC'nin baştaki gecikmesini ffmpeg edit list'le düşüyor).
+- Panel smoke: `senkron_dene` (timeline birebir aynı, rapor, Sorun bildir bölümü), `senkron_uygula` (5 transaction, konumlar, ardından
+  Topla 1 oturum), `senkron_iptal`, `senkron_yok` (yardımcı yok, Dağıt düzeni değil, ffmpeg sorusu / indirilemedi).
+
+### Belirsizlikler (v1.4.0) — gerçek Windows + Premiere'de bakılacak
+1. Gerçek kamera dosyaları: ffmpeg'in her kameranın kapsayıcısını / ses kodeğini okuyup okumadığı (BRAW gibi okuyamadığı biçim "ses
+   okunamadı" → emin değil). Çok akışlı kamera sesinde yalnız ilk akış kullanılır.
+2. AAC'li MP4'te Premiere'in baştaki kodek gecikmesini ffmpeg gibi düşüp düşmediği — düşmüyorsa sabit ~21–43 ms fark; raporun
+   "timeline farkı" sütunu Premiere senkronundan sonra bunu gösterir.
+3. Eşikler sentetik sesle seçildi; gerçek odada (yankı, uzak kamera mikrofonu) PHAT tepesi düşük kalırsa "emin değil" artar (yanlış
+   yerleşim değil). Rapor her çiftin tepe / oranını yazar → eşikler gerçek veriyle ayarlanır.
+4. CEP Node'unda uzun hesap: motor adımlar arasında `setImmediate` ile nefes alır; FFT'ler (2^18–2^19) tek adımda ~0.1–0.3 sn → yardımcı
+   paneli kısa süre takılabilir, Premiere takılmaz (ayrı süreç).
+5. Uygula: klonun alt-kare zaman ofsetini (harici ses) Premiere'in tam tick koyup koymadığı — ilk ölçüm adımı bunu sınar, tutmazsa DUR.
 
 ## v1.3.0 — SENKRON SAĞLIĞI (Topla öncesi) + eşzamanlı DJI mikrofonları için şerit
 

@@ -95,6 +95,21 @@ export interface UpdateOutcome {
   why?: string;
 }
 
+/** v1.4.0 SENKRON: yardımcının iş sonucu (cep-helper/js/senkron.js → out; result = spread/src/senkron.ts SenkronResult). */
+export interface SenkronOut {
+  ffmpeg: string | null;
+  files: { id: string; name: string; ok: boolean; why: string; cached: boolean; seconds: number | null; clock: number | null; clockSrc: string | null }[];
+  result: import("./senkron").SenkronResult;
+}
+
+export interface SenkronStatus {
+  state: "idle" | "running" | "done" | "error" | "cancelled" | "cancelling";
+  progress?: { text: string; frac: number };
+  out?: SenkronOut;
+  error?: string;
+  ffmpeg?: { installed: boolean; version: string; dir: string; supported: boolean };
+}
+
 export interface Linker {
   readonly name: string;
   ping(): Promise<PingResult>;
@@ -111,6 +126,11 @@ export interface Linker {
   link(sequenceName: string, groups: LinkGroup[]): Promise<LinkOutcome>;
   /** v1.1.0: ses kliplerinin kanal tipleri (salt okuma; onaydaki "mono + stereo karışık" uyarısı için). Hata fırlatmaz. */
   channels(sequenceName: string, items: LinkItem[]): Promise<ChannelsOutcome>;
+  /**
+   * v1.4.0 SENKRON: { op: "start", files, opts } işi başlatır (hemen döner), { op: "status" } ilerleme / sonuç, { op: "cancel" } iptal.
+   * Hata fırlatır (yardımcı yok / istek reddedildi).
+   */
+  senkron(body: Record<string, unknown>): Promise<SenkronStatus>;
   /** Yardımcı yoksa kullanıcıya gösterilecek kurulum talimatı. */
   installHint(): string[];
 }
@@ -446,6 +466,11 @@ class CepLinker implements Linker {
     } catch (e) {
       return { ok: false, types: items.map(() => null), detail: e instanceof HelperError ? `[${e.stage}] ${e.message}` : raw(e) };
     }
+  }
+
+  async senkron(body: Record<string, unknown>): Promise<SenkronStatus> {
+    const j = await post("/v1/senkron", body, body.op === "start" ? LINK_TIMEOUT_MS : 15000);
+    return j as unknown as SenkronStatus;
   }
 
   installHint(): string[] {

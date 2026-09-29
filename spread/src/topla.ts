@@ -60,7 +60,7 @@ import { done, log, progress } from "./ui";
 
 export const CHECK_MSG = "Kontrol et, sonra BAĞLA'ya bas.";
 /** v1.3.0: senkronu bozuk klipler için ne yapılacağı (TOPLA sorusu, günlük, Durum raporu). */
-export const HEALTH_ADVICE = "Bunlar oturuma alınmadı; park track'ine gider (zamanı değişmez, silinmez). → Elle düzelt ya da yeniden senkronla.";
+export const HEALTH_ADVICE = "Bunlar oturuma alınmadı; park track'ine gider (zamanı değişmez, silinmez). → SENKRON (Spread) ile yeniden hizala ya da elle düzelt.";
 
 export function printAnalysis(a: Analysis): void {
   for (const d of a.duplicates) log(`ÇİFT KOPYA: ${d}`, "err");
@@ -422,7 +422,7 @@ export async function runCollect(): Promise<void> {
     ].filter(Boolean);
     const summary: string[] = plan.moves.length
       ? [
-          ...(health.head ? [`${health.head} Bunlar oturuma alınmadı; park'a gider, silinmez → elle düzelt ya da yeniden senkronla (önce düzeltmek için: Vazgeç).`] : []),
+          ...(health.head ? [`${health.head} Bunlar oturuma alınmadı; park'a gider, silinmez → SENKRON (Spread) ile yeniden hizala ya da elle düzelt (önce: Vazgeç).`] : []),
           `${nS} oturum çekim sırasıyla sequence başından dizilecek; ${plan.moves.length} klip taşınacak (oturum içi konumlar korunur).`,
           ...(dups.length ? [`ÇİFT KOPYA: ${drop.length} fazla kopya ilk adımda silinecek (hangileri: günlükte).`] : []),
           ...(a.vetoDecisions.length ? [`${a.vetoDecisions[0]}${a.vetoDecisions.length > 1 ? ` (+${a.vetoDecisions.length - 1} VETO daha)` : ""}`] : []),
@@ -599,13 +599,13 @@ export async function runCollect(): Promise<void> {
     const nAmb = a.suspects.filter((x) => x.ambiguous).length;
     const nSus = a.suspects.length - nAmb;
     const hText = [nSus ? `${nSus} şüpheli` : "", nAmb ? `${nAmb} belirsiz` : ""].filter(Boolean).join(" + ");
-    if (a.suspects.length) log(`SENKRON SAĞLIĞI: senkronu bozuk görünen ${hText} klip park track'inde (zamanı aynı) — elle düzelt ya da yeniden senkronla.`, "warn");
+    if (a.suspects.length) log(`SENKRON SAĞLIĞI: senkronu bozuk görünen ${hText} klip park track'inde (zamanı aynı) — SENKRON (Spread) ile yeniden hizala ya da elle düzelt.`, "warn");
     done(
       "topla",
       a.suspects.length ? "warn" : "ok",
       `${nS} oturum toplandı${drop.length ? `, ${drop.length} çift kopya silindi` : ""}` + (a.suspects.length ? `; senkronu bozuk görünen ${hText} klip park'ta.` : "."),
       a.suspects.length
-        ? `Park'taki klipleri elle düzelt ya da yeniden senkronla (Topla'yı tekrar çalıştırabilirsin). Beğenmezsen Ctrl+Z × ${executed.length} ya da yedek sequence "${backupName}".`
+        ? `Park'taki klipleri SENKRON (Spread) ile yeniden hizala ya da elle düzelt (Topla'yı tekrar çalıştırabilirsin). Beğenmezsen Ctrl+Z × ${executed.length} ya da yedek sequence "${backupName}".`
         : `Şimdi timeline'ı gözle kontrol et, sonra Bağla. Beğenmezsen Ctrl+Z × ${executed.length} ya da yedek sequence "${backupName}".`
     );
     setStepMids(ctx.guid, "topla", trail.between(executed.length), backupName);
