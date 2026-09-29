@@ -5,6 +5,12 @@
 Kaynak: kullanıcının 2026-09-29 isteği, AŞAMA 2. Hedef akış: Dağıt → SENKRON (Spread) → Topla → Bağla; Clip › Synchronize alternatif.
 Hesap YARDIMCIDA (CEP'in Node'u), UXP yalnız okur ve yerleştirir. Kısıtlar aynen (1.3.0).
 
+**Yayın (2026-09-29):** PR #9 birleştirildi (main `c729dc7`); `node scripts/publish-update.mjs --no-build` → güncelleme deposunda commit
+`6e393c3` "Spread 1.4.0": main'deki `release/Spread_Kurulum_v1.4.0.zip` ile bayt bayt aynı zip, `latest.json` 1.4.0 (sha256
+`6a858bbb…c551`). Dışarıdan doğrulandı: raw `latest.json` 1.4.0; indirilen zip'in sha256'sı tutuyor; yardımcının `validateLatest` +
+`checkKit` (js/senkron.js, js/spread-core.js dahil) + `checkCcx` denetiminden geçiyor. Depoda yalnız README.md, latest.json,
+releases/*.zip. ffmpeg güncelleme deposunda YOK (kullanıcıda ilk SENKRON'da sabit adresten iner).
+
 ### Parçalar
 | Dosya | Ne |
 |---|---|
