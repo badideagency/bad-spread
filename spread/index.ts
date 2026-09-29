@@ -16,7 +16,7 @@ import { getLinker } from "./src/linker";
 import { bindSettingInputs, renderMapping } from "./src/settings";
 import { errText, readShape, shapeOf, snapshot } from "./src/model";
 import { rememberStep, setStepPrint, stepViews } from "./src/steps";
-import { clearSequenceRecords, fingerprint, hasRecords, pendingLink, reconcileAndLog, trackPrint } from "./src/records";
+import { clearSequenceRecords, dropForgotten, fingerprint, hasRecords, pendingLink, reconcileAndLog, trackPrint } from "./src/records";
 import { SPREAD_VERSION } from "./src/version";
 import { CHECK_EVERY_MS, checkForUpdate, type Latest } from "./src/update";
 import { askUser } from "./src/guard";
@@ -352,23 +352,22 @@ async function reloadPanels(): Promise<void> {
       let clear = true;
       if (pendingLink(g)) {
         const ans = await askUser(
-          "Bu sequence'ta Bağla kesimi bağlanmayı bekliyor (Spread Helper panelindeki Bağla ya da burada Bağla). ↻ kayıtları silerse bu kesim " +
-            "artık bağlanamaz: Bağla'yı Ctrl+Z ile geri alıp Topla ve Bağla'yı yeniden yapman gerekir. Kayıtlar da temizlensin mi?",
-          ["Bağla kesimi bağlanmayı bekliyor.", "Kayıtlar silinirse bu kesim artık bağlanamaz.", "Yalnız yenile = kayıtlar kalır, paneller yenilenir."],
+          "Bu sequence'ta Bağla kesimi bağlanmayı bekliyor (Spread Helper panelindeki Bağla ya da burada Bağla). ↻ Topla / Bağla kaydını ve " +
+            "KES planını da silerse bu kesim artık bağlanamaz: Bağla'yı Ctrl+Z ile geri alıp Topla ve Bağla'yı yeniden yapman gerekir. " +
+            "Bunlar da temizlensin mi? (Yalnız yenile = adım işaretleri ve yarım iş kaydı yine silinir; Topla / Bağla kaydı ve KES planı kalır.)",
+          ["Bağla kesimi bağlanmayı bekliyor.", "Topla / Bağla kaydı silinirse bu kesim artık bağlanamaz.", "Yalnız yenile = işaretler silinir, Topla / Bağla kaydı ve plan kalır."],
           { title: "Kayıtlar da temizlensin mi?", yes: "Temizle ve yenile", no: "Yalnız yenile" }
         );
         clear = ans === "Evet";
       }
-      if (clear) {
-        await clearSequenceRecords(g);
-        shapes.delete(g);
-        log("Bu sequence'ın kayıtları temizlendi.", "head");
-        try {
-          localStorage.setItem(RELOAD_NOTE, sequenceName(sequence));
-        } catch {
-          /* bildirim yalnız bu satırda kalır */
-        }
-      } else log("↻ Kayıtlar korunuyor (Bağla kesimi bağlanmayı bekliyor); yalnız paneller yenileniyor.", "head");
+      await clearSequenceRecords(g, !clear);
+      shapes.delete(g);
+      log(clear ? "Bu sequence'ın kayıtları temizlendi." : "Bu sequence'ın kayıtları temizlendi (Bağla bekliyor: Topla / Bağla kaydı ve KES planı korundu).", "head");
+      try {
+        localStorage.setItem(RELOAD_NOTE, sequenceName(sequence));
+      } catch {
+        /* bildirim yalnız bu satırda kalır */
+      }
     }
   } catch (e) {
     log(`Kayıtlar temizlenemedi: ${errText(e)}`, "warn");
@@ -530,7 +529,10 @@ function init(): void {
   }
   setDoneHandler((step, kind, text, noop) => {
     rememberStep(opGuid, step, kind, text, noop);
-    if (opGuid) pendingPrint = { guid: opGuid, step };
+    if (opGuid) {
+      pendingPrint = { guid: opGuid, step };
+      dropForgotten(opGuid); // yeni bir işlem bitti → eski "unutulanlar" artık geri yüklenmez
+    }
     paintSteps();
   });
   const actions: Record<StepId, () => void> = {

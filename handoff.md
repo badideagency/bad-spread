@@ -48,7 +48,7 @@ Akış artık: yedek → (TX-A track hazırlığı) → **dağıt** (clone + sil
 | Adım göstergesi (`steps.ts`, `spread.steps.v1`; `ui.ts renderSteps`) | Dağıt ✓ → Dağıt düğmesi GİZLİ (yalnız adın arkasında "Yeniden çalıştır"); işaret timeline'la hiç karşılaştırılmıyordu, ↻ silmiyordu (Emre'nin kilidi) | işaret işlem sonundaki parmak iziyle yazılır; tutmazsa silinir → sıradaki adım yeniden Dağıt |
 | Göstergede TOPLA / BAĞLA ✓ (`stepViews`: TOPLA kaydı + BAĞLA aşaması) | geri alınsa da ✓ kalıyordu | TOPLA geri alınınca (layoutState "undone") kayıt, BAĞLA geri alınınca (bindState "none"/"partial") aşama silinir |
 | Yarım iş koruması (`guard.ts assertNotStopped`, `spread.stoppedState.v2`) | TOPLA / BAĞLA "YARIM hâlde … BAŞLAMADI" | `confirmNotStopped`: tutuyorsa SORU; tutmuyorsa silinir; SPREAD de kullanır |
-| ↻ (`index.ts reloadPanels`) | yarım iş varsa "Yine de yenilensin mi?"; kayıtlara dokunmuyordu | bu sequence'ın bütün kayıtlarını siler, soru yok — TEK istisna: Bağla kesimi bağlanmayı bekliyorsa "Kayıtlar da temizlensin mi?" [Temizle ve yenile] [Yalnız yenile] (kayıt + KES planı silinirse o kesim artık bağlanamaz) |
+| ↻ (`index.ts reloadPanels`) | yarım iş varsa "Yine de yenilensin mi?"; kayıtlara dokunmuyordu | bu sequence'ın bütün kayıtlarını siler, soru yok — TEK istisna: Bağla kesimi bağlanmayı bekliyorsa "Kayıtlar da temizlensin mi?" [Temizle ve yenile] [Yalnız yenile]; "Yalnız yenile" de adım işaretlerini ve yarım iş kaydını siler, yalnız Topla / Bağla verisini ve KES planını korur (silinirse o kesim artık bağlanamaz) |
 | TOPLA: "Bu sequence BAĞLA'dan geçti … BAŞLAMADI" (kesimli BAĞLA) | kilit | SORU ("Bağla zaten yapılmış görünüyor … Yine de çalıştırılsın mı?", kesim uyarısıyla) |
 | TOPLA / BAĞLA: "BAĞLA'dan sonra düzen değişmiş … BAŞLAMADI" (bindState "partial") | kilit | bayat → aşama + eski KES planı silinir; timeline'da kesilmiş / silinmiş sesler karışık olduğu için yarım iş kaydı yazılır → bir sonraki işlem SORAR ("Bağla kısmen geri alınmış görünüyor"); Evet'te canlı timeline'dan çalışır (BAĞLA'nın ön koşulları planı yine denetler) |
 | TOPLA, kayıt YOKKEN kesilmiş sesler (↻ sonrası, başka bilgisayar) | kontrol yoktu | canlı timeline'dan tanınır (aynı kaynağın aynı track'te aynı senkron konumunda ≥ 2 parçası, `topla.ts cutPieces`) → SORU |
@@ -100,6 +100,16 @@ Tek kural, d.ts / uxp.d.ts yorumları, End + Out yokluğu, transaction'ı aşan 
 | Nit: JSDoc yeri, yeniden yükleme olmazsa ↻ bildirimi sonraki açılışta çıkıyordu, "Zaten dağıtılmış" `forgetStopped` çağırmıyordu | düzeltildi. `reconcile` planı `createdAt`'sız siler (bilerek: yalnız-bağla yolu `bind.at`'ı günceller) |
 | Eksik sınamalar: toplu overwrite'ta DUR, izleme tutarsızlığı, yarım işte "Yine de çalıştır" | `a027_batch_stop`, `a027_follow_mismatch`, `hint_spread_undo` (Yine de) |
 
+Düzeltmelerin doğrulaması (aynı ajan, 161b59b..98f164b): M1–M3, m1–m5 ve nit'ler düzeltilmiş; normal akışta (Dağıt → Synchronize →
+Topla → Bağla) ara hâl tanıma ya da `cutPieces` yanlış tetiklenmiyor. Kalan 3 Minor da düzeltildi:
+- N1: "Zaten dağıtılmış / toplanmış" (no-op) işaretin parmak izini, ara hâllerini ve yedeğini silmiyor (`hint_noop_mids`).
+- N2: kayıt unutulunca, geçerli olduğu hâlin parmak iziyle "unutulanlar"a (`spread.forgotten.v1`) konur; Ctrl+Z → Ctrl+Y ile o hâle
+  dönülürse işaretler, TOPLA / BAĞLA verisi ve KES planı geri yüklenir ("… unutulan kayıtlar geri yüklendi."). Yeni bir işlem bitince
+  ya da ↻'da silinir (`hint_redo`).
+- N3: ↻'da "Yalnız yenile" de işaretleri ve yarım iş kaydını siler; yalnız Topla / Bağla verisi ve KES planı kalır. (`pendingLink`
+  timeline okumaz: Ctrl+Z'den hemen sonra ↻'da soru gereksiz çıkabilir — yalnız soru.)
+- Nit'ler: iki kez "ara hâl" satırı yazılmıyor; kesim sorusu yalnız "Bağla kısmen geri alınmış" sorusu sorulduysa atlanıyor.
+
 ### Belirsizlikler / gerçek Premiere'de bakılacak (v1.2.1)
 
 1. Gerçek overwrite'ın kuyruğu: Premiere tam kare mi yerleştiriyor (ölçüm "birebir") yoksa medya sonuna mı uzatıyor ("yalnız kuyruk",
@@ -114,7 +124,7 @@ Tek kural, d.ts / uxp.d.ts yorumları, End + Out yokluğu, transaction'ı aşan 
 8. Kısmi Ctrl+Z tanıma, ara hâlin tam parmak izine dayanır: gerçek Premiere'in geri alması klipleri birebir eski tick'lerine
    döndürmezse ara hâl tanınmaz → kayıt "bayat" sayılır (1.2.0'daki gibi değil ama M1 öncesi davranış).
 
-### Mock (v1.2.1): 102 → 117 senaryo (316 → 376 ✓)
+### Mock (v1.2.1): 102 → 119 senaryo (316 → 379 ✓)
 
 - HATA 1: `trimstate_unit` (12 gerçek değer, sınırlar, kare kaynağı, overwriteFit), `a027_spread` (a), `a027_status`, `a027_trimmed` (b),
   `a027_tail` + `a027_tail_follow` (c: kuyruk medya sonuna uzadı → SetOutPoint; bağlı ses izlemiyor / izliyor), `a027_head` (d: baş
@@ -128,7 +138,7 @@ Tek kural, d.ts / uxp.d.ts yorumları, End + Out yokluğu, transaction'ı aşan 
   sormaz), güncelleme senaryoları (sürüm sabitleri paketin sürümünden). 12 Eylül rapor fixture'ıyla (`senkron-raporu-260912.txt`)
   çalışan senaryoların hiçbirinin beklentisi değişmedi; aynı günün düzenini kuran `real` (setupReal) transaction listesi / Ctrl+Z
   sayısı yüzünden değişti (düzen denetimi aynen).
-- İnceleme #13'ten sonra: `reload_pending_link`, `a027_batch_stop`, `a027_follow_mismatch`; `hint_spread_undo` / `hint_topla_undo` /
+- İnceleme #13'ten sonra: `reload_pending_link`, `a027_batch_stop`, `a027_follow_mismatch`, `hint_noop_mids`, `hint_redo`; `hint_spread_undo` / `hint_topla_undo` /
   `partial_undo` kısmi geri almayı ve "Yine de"yi sınar; `a027_tail` artık video ve ses SetOutPoint'lerini ayrı bekler.
 
 

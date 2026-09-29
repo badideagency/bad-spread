@@ -17,6 +17,7 @@ const KEY = "spread.steps.v1";
  */
 export type StepMark = { kind: "ok" | "warn"; text: string; at: string; fp?: string; tp?: string; mid?: Mid[]; backup?: string | null };
 type Saved = Partial<Record<StepId, StepMark>>;
+export type StepMarks = Saved;
 
 function all(): Record<string, Saved> {
   try {
@@ -37,7 +38,8 @@ export function rememberStep(guid: string | null, step: StepId, kind: "ok" | "wa
   try {
     const a = all();
     const s: Saved = { ...(a[guid] ?? {}) };
-    s[step] = { kind, text, at: noop ? (s[step]?.at ?? "") : new Date().toISOString() };
+    // no-op: işaretin parmak izi / ara hâlleri / yedeği korunur (timeline değişmedi; kısmi Ctrl+Z hâlâ tanınsın)
+    s[step] = { ...(noop ? s[step] : undefined), kind, text, at: noop ? (s[step]?.at ?? "") : new Date().toISOString() };
     if (noop) {
       /* düzen değişmedi → sonraki adımların ✓'ü geçerli kalır */
     } else if (step === "spread") {
@@ -70,6 +72,13 @@ export function setStepPrint(guid: string, step: StepId, fp: string, tp: string)
   const m = a[guid]?.[step];
   if (!m) return;
   a[guid] = { ...a[guid], [step]: { ...m, fp, tp } };
+  saveAll(a);
+}
+
+/** v1.2.1: bu sequence'ın işaretlerini verilenlerle değiştirir (records.ts: Ctrl+Y ile geri dönülünce geri yükleme). */
+export function setStepMarks(guid: string, marks: Saved): void {
+  const a = all();
+  a[guid] = { ...marks };
   saveAll(a);
 }
 

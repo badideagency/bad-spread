@@ -303,6 +303,22 @@ async function post(path: string, body: unknown, ms: number): Promise<Record<str
   return j;
 }
 
+/** v1.2.1: bu sequence'ın KES planının metni (dosya yoksa / başka sequence'ınsa null) — records.ts geri yükleme için saklar. */
+export function readLinkPlanText(guid: string): string | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require("os") as UxpOs;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs") as UxpFs;
+    const r = fs.readFileSync(helperPlanPath(os.platform(), os.homedir()), { encoding: "utf-8" }); // uxp.d.ts:L8985 fs.readFileSync, uxp.d.ts:L9198 OS.platform, uxp.d.ts:L9232 OS.homedir
+    const text = typeof r === "string" ? r : "";
+    const plan = JSON.parse(text) as { kind?: string; sequence?: { guid?: string } };
+    return plan.kind === "spread-link-plan" && plan.sequence?.guid === guid ? text : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * v1.2.1: bu sequence'ın ESKİ KES planını (link-plan.json) ve onun paneldeki bağlama sonucunu (link-result.json) siler — başka bir
  * sequence'ın planına dokunmaz. @param createdAt verilirse yalnız o plan. @returns silinen dosya sayısı (okunamazsa / yoksa 0)

@@ -19,11 +19,11 @@
 
 import { bindState, layoutState } from "./collect";
 import { askUser, digest, forgetStopped, setStopped, stoppedOf } from "./guard";
-import { dropLinkPlan, readPanelLinkResult } from "./linker";
+import { dropLinkPlan, readLinkPlanText, readPanelLinkResult, writeLinkPlan } from "./linker";
 import type { Snapshot } from "./model";
 import { fingerprint, trackPrint } from "./prints";
-import { forgetRecord, loadRecord, saveBindRecord } from "./settings";
-import { forgetSteps, stepMarks } from "./steps";
+import { forgetRecord, loadRecord, saveBindRecord, saveRecord, type CollectRecord } from "./settings";
+import { forgetSteps, setStepMarks, stepMarks, type StepMarks } from "./steps";
 import { log, type StepId } from "./ui";
 
 export const STEP_LABEL: Record<StepId, string> = { spread: "Dağıt", topla: "Topla", bagla: "Bağla" };
@@ -35,7 +35,7 @@ export { fingerprint, trackPrint } from "./prints";
 /** Bu sequence için hiç kayıt var mı (yoksa şekil izlemeye gerek yok). */
 export function hasRecords(guid: string): boolean {
   const m = stepMarks(guid);
-  return Object.keys(m).length > 0 || !!stoppedOf(guid) || !!loadRecord(guid);
+  return Object.keys(m).length > 0 || !!stoppedOf(guid) || !!loadRecord(guid) || guid in trashAll();
 }
 
 export const stale = (what: string) => `Timeline değişmiş (geri alma/elle düzenleme) — önceki ${what} kaydı unutuldu.`;
@@ -45,6 +45,45 @@ const GEN: Record<string, string> = { Dağıt: "Dağıt'ın", Topla: "Topla'nın
 const partialLine = (what: string, left: number, backup?: string | null) =>
   `Timeline, önceki ${GEN[what] ?? what} ara hâllerinden birinde (yarım geri alınmış; klipler eksik olabilir): tamamen geri almak için ` +
   `Ctrl+Z × ${left} daha${backup ? ` ya da yedek sequence "${backup}"` : ""}. Bir sonraki işlem sorar.`;
+
+// ------------------------------------------------------------------ unutulanlar (Ctrl+Z → Ctrl+Y)
+// reconcile bir şey unutunca, kayıtların EN SON geçerli olduğu timeline'ın parmak izi ile birlikte saklanır. Kullanıcı kısa bir
+// geri almadan sonra yinelerse (Ctrl+Y) timeline o hâle döner → kayıtlar (işaretler, TOPLA / BAĞLA verisi, KES planı) geri yüklenir.
+// Yeni bir işlem bittiğinde (index.ts) ya da ↻'da silinir.
+const TRASH_KEY = "spread.forgotten.v1";
+type Trash = { fp: string; marks: StepMarks; rec: CollectRecord | null; plan: string | null };
+
+function trashAll(): Record<string, Trash> {
+  try {
+    const raw = window.localStorage.getItem(TRASH_KEY);
+    const j: unknown = raw ? JSON.parse(raw) : {};
+    return j && typeof j === "object" ? (j as Record<string, Trash>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function trashSave(a: Record<string, Trash>): void {
+  try {
+    window.localStorage.setItem(TRASH_KEY, JSON.stringify(a));
+  } catch {
+    /* saklanamazsa geri yükleme yok */
+  }
+}
+
+/** Bu sequence'ın "unutulanlar"ını siler (yeni işlem bitti / ↻). */
+export function dropForgotten(guid: string): void {
+  const a = trashAll();
+  if (!(guid in a)) return;
+  delete a[guid];
+  trashSave(a);
+}
+
+/** İşaretlerin en son geçerli olduğu hâl: en son adımın (parmak izi olan) işaretinin fp'si. */
+function latestFp(m: StepMarks): string | null {
+  for (const id of [...ORDER].reverse()) if (m[id]) return m[id]!.fp ?? null;
+  return null;
+}
 
 /**
  * Bu sequence'ın kayıtlarını canlı timeline'la karşılaştırır; tutmayanları siler. @returns günlük satırları (bir şey değişmediyse boş)
@@ -63,6 +102,22 @@ export async function reconcile(guid: string, s: Snapshot): Promise<string[]> {
   const tp = trackPrint(s);
   const dg = digest(s);
 
+  // 0) Ctrl+Y: timeline, unutulan kayıtların geçerli olduğu hâle döndü (ve bugünkü kayıtlar bu hâli anlatmıyor) → geri yükle
+  const tr = trashAll()[guid];
+  if (tr && tr.fp === fp && latestFp(stepMarks(guid)) !== fp) {
+    setStepMarks(guid, tr.marks);
+    if (tr.rec) saveRecord(tr.rec);
+    if (tr.plan) await writeLinkPlan(tr.plan);
+    const st0 = stoppedOf(guid);
+    if (st0 && st0.digest !== dg) forgetStopped(guid); // ara hâl için yazılmış yarım iş kaydı artık geçersiz
+    dropForgotten(guid);
+    lines.push("Timeline, önceki işlemin bittiği hâle döndü (ör. Ctrl+Y) — unutulan kayıtlar geri yüklendi.");
+    return lines;
+  }
+  const before = { marks: stepMarks(guid), rec: loadRecord(guid), plan: readLinkPlanText(guid) };
+  const validFp = latestFp(before.marks);
+  let partialLogged = false;
+
   // 1) yarım iş koruması: DURDU anındaki timeline birebir duruyor mu; değilse durmuş işlemin ara hâllerinden birinde mi (kısmi geri alma)
   const st = stoppedOf(guid);
   if (st && st.digest !== dg) {
@@ -71,6 +126,7 @@ export async function reconcile(guid: string, s: Snapshot): Promise<string[]> {
     if (hit) {
       setStopped(guid, { ...st, digest: dg, left: hit.left });
       lines.push(partialLine(label, hit.left, st.backup));
+      partialLogged = true;
     } else {
       forgetStopped(guid);
       forget(null, stale(`${label} (yarım iş)`));
@@ -87,7 +143,7 @@ export async function reconcile(guid: string, s: Snapshot): Promise<string[]> {
     if (!x || !hit) continue;
     partial = id;
     if (stoppedOf(guid)?.digest !== dg) setStopped(guid, { op: id === "spread" ? "SPREAD" : "TOPLA", digest: dg, left: hit.left, backup: x.backup ?? null, mids: x.mid });
-    lines.push(partialLine(STEP_LABEL[id], hit.left, x.backup));
+    if (!partialLogged) lines.push(partialLine(STEP_LABEL[id], hit.left, x.backup));
     const drop = ORDER.slice(ORDER.indexOf(id));
     forgetSteps(guid, drop);
     for (const d of drop) said.add(d);
@@ -137,6 +193,13 @@ export async function reconcile(guid: string, s: Snapshot): Promise<string[]> {
     if (!said.has(id)) forget(id, m2[id]!.fp ? stale(STEP_LABEL[id]) : unprinted(STEP_LABEL[id]));
   }
   if (drop.length) forgetSteps(guid, drop);
+  // bir şey unutulduysa: geçerli olduğu hâlle birlikte sakla (Ctrl+Y ile o hâle dönülürse geri yüklensin)
+  const changed = JSON.stringify(stepMarks(guid)) !== JSON.stringify(before.marks) || JSON.stringify(loadRecord(guid)) !== JSON.stringify(before.rec);
+  if (changed && validFp && validFp !== fp) {
+    const a = trashAll();
+    a[guid] = { fp: validFp, marks: before.marks, rec: before.rec, plan: before.plan };
+    trashSave(a);
+  }
   return lines;
 }
 
@@ -208,10 +271,15 @@ export function pendingLink(guid: string): boolean {
   return !(pr && pr.ok && pr.planCreatedAt === b.at);
 }
 
-/** ↻ Yenile: bu sequence'ın BÜTÜN kayıtlarını siler (adım işaretleri, yarım iş, TOPLA / BAĞLA kaydı, eski KES planı). Kalibrasyon kalır. */
-export async function clearSequenceRecords(guid: string): Promise<void> {
+/**
+ * ↻ Yenile: bu sequence'ın BÜTÜN kayıtlarını siler (adım işaretleri, yarım iş, TOPLA / BAĞLA kaydı, eski KES planı). Kalibrasyon kalır.
+ * @param keepLink true → yalnız TOPLA / BAĞLA verisi ve KES planı kalır (Bağla kesimi bağlanmayı bekliyorken "Yalnız yenile")
+ */
+export async function clearSequenceRecords(guid: string, keepLink = false): Promise<void> {
   forgetSteps(guid);
   forgetStopped(guid);
+  dropForgotten(guid);
+  if (keepLink) return;
   forgetRecord(guid);
   await dropLinkPlan(guid);
 }

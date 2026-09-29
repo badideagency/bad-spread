@@ -139,7 +139,8 @@ export async function runCollect(): Promise<void> {
     const sAll = await snapshot(ctx);
     // v1.2.1: kayıt ipucudur, kilit değil — tutmayan kayıt silinir; tutan kayıtta yalnız soru
     await reconcileAndLog(ctx.guid, sAll);
-    const halfAsked = stoppedOf(ctx.guid)?.digest === digest(sAll); // yarım iş sorusu bu hâl için soruldu → kesim sorusu tekrar sorulmaz
+    const st0 = stoppedOf(ctx.guid);
+    const halfAsked = st0?.digest === digest(sAll) && !!st0.bindPartial; // "Bağla kısmen geri alınmış" soruldu → kesim sorusu tekrar sorulmaz
     if (!(await confirmNotStopped(ctx, sAll, "TOPLA"))) return log("İptal edildi — hiçbir şey değişmedi.", "warn");
     if (!(await confirmRedo(ctx.guid, sAll, "topla", "topla"))) return; // Bağla'dan sonraki hâl aşağıda kendi sorusuyla
     for (const w of sAll.warnings) throw new SpreadStop(`Okuma sorunu: ${w}. TOPLA BAŞLAMADI.`);

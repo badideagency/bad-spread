@@ -30,8 +30,9 @@ Yeniden başlat. Başlıkta **1.2.1** görünür.
 - Clip › Synchronize (klipleri yalnız zamanda kaydırır) Dağıt ✓'ünü silmez.
 - **↻** açık sequence'ın bütün kayıtlarını siler (adım işaretleri, yarım iş kaydı, Topla / Bağla kaydı, eski Bağla planı), sonra
   panelleri yeniden yükler: "Bu sequence'ın kayıtları temizlendi." Başka sequence'ların kayıtları ve kırpma ölçümü kalır. Tek istisna:
-  Bağla kesimi bağlanmayı bekliyorsa ↻ önce sorar ("Kayıtlar da temizlensin mi?" → Temizle ve yenile / Yalnız yenile), çünkü kayıt
-  silinirse o kesim artık bağlanamaz.
+  Bağla kesimi bağlanmayı bekliyorsa ↻ önce sorar ("Kayıtlar da temizlensin mi?" → Temizle ve yenile / Yalnız yenile), çünkü Topla /
+  Bağla kaydı silinirse o kesim artık bağlanamaz; "Yalnız yenile" adım işaretlerini ve yarım iş kaydını yine siler.
+- Ctrl+Z'den sonra Ctrl+Y ile işlemin bittiği hâle dönersen panel unuttuğu kayıtları geri yükler.
 - Ctrl+Z'nin bıraktığı boş track'ler Dağıt'ta yeniden kullanılır (önce onlar dolar, yeni track gerekirse sonra açılır).
 
 ## Emre için 5 adımlık sınama
@@ -47,7 +48,7 @@ Yeniden başlat. Başlıkta **1.2.1** görünür.
 
 ## Doğrulama
 
-- Mock: 102 → 117 senaryo (316 → 376 denetim). Yeniler: gerçek 12 kliplik veri (red yok, plan kurulur, 0 yeni track), gerçekten
+- Mock: 102 → 119 senaryo (316 → 379 denetim). Yeniler: gerçek 12 kliplik veri (red yok, plan kurulur, 0 yeni track), gerçekten
   kırpılmış klip (red sürer), overwrite ölçümü (birebir; sonu medya sonuna uzamış → ayrı SetOutPoint; bağlı ses izliyor / izlemiyor;
   baş kayması → DUR; ≥ 1 kare → DUR), Dağıt → Ctrl+Z → Dağıt, Dağıt → ↻ → Dağıt, Topla → Ctrl+Z → Topla, ↻ başka sequence'a dokunmaz,
   değişmemiş timeline → soru. 12 Eylül verisiyle çalışan senaryolar aynen geçer.

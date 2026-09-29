@@ -4546,8 +4546,9 @@ scenarios.reload_pending_link = async () => {
   const title = els["ask-title"].textContent;
   await no();
   await sleep(900);
-  if (title !== "Kayıtlar da temizlensin mi?" || !rec() || !fsReal.existsSync(planFile) || upd.uxpReloads !== 1) fail(`bekleyen bağlamada ↻: [${title}] kayıt=${rec()} plan=${fsReal.existsSync(planFile)} reload=${upd.uxpReloads}`);
-  else ok("Bağla kesimi bağlanmayı beklerken ↻ → 'Kayıtlar da temizlensin mi?'; Yalnız yenile → kayıt ve KES planı kaldı, paneller yenilendi");
+  if (title !== "Kayıtlar da temizlensin mi?" || !rec() || !fsReal.existsSync(planFile) || upd.uxpReloads !== 1 || Object.keys(stepsOf("guid-main-edit")).length)
+    fail(`bekleyen bağlamada ↻: [${title}] kayıt=${rec()} plan=${fsReal.existsSync(planFile)} reload=${upd.uxpReloads} işaretler=${JSON.stringify(stepsOf("guid-main-edit"))}`);
+  else ok("Bağla kesimi bağlanmayı beklerken ↻ → 'Kayıtlar da temizlensin mi?'; Yalnız yenile → adım işaretleri silindi, Topla / Bağla kaydı ve KES planı kaldı");
   await sleep(5300);
   upd.uxpReloads = 0;
   els["btn-reload"].click();
@@ -4592,6 +4593,52 @@ scenarios.a027_follow_mismatch = async () => {
   if (!/✗ SPREAD DURDU: Kuyruk düzeltme: ilk ölçümde bağlı ses videonun SetOutPoint'ini izlemişti, bu kez izlemedi/.test(out) || !/Ctrl\+Z'ye 5 kez bas/.test(out))
     fail("izleme tutarsızlığında durmadı:\n" + failLines(out));
   else ok("bağlı ses ilk kamerada izledi, sonrakilerde izlemedi → DURDU; Ctrl+Z × 5 (dağıt, ilk overwrite, ilk kuyruk, overwrite, kuyruk)");
+};
+
+scenarios.hint_noop_mids = async () => {
+  // inceleme #13 N1: "Zaten dağıtılmış" (no-op) Dağıt işaretinin ara hâllerini silmemeli → sonra kısmi Ctrl+Z yine tanınır
+  setupA027();
+  let out = await clickAndWait("btn-spread", yes);
+  if (!/✓ SPREAD tamam/.test(out)) return fail("Dağıt tamamlanmadı:\n" + failLines(out));
+  await sleep(150);
+  out = await clickAndWait("btn-spread", yes); // "zaten yapılmış" → Yine de → Zaten dağıtılmış
+  if (!/Zaten dağıtılmış/.test(out)) return fail("ikinci Dağıt no-op olmadı:\n" + failLines(out));
+  await sleep(150);
+  if (!(stepsOf("guid-a027").spread?.mid ?? []).length) fail("no-op Dağıt ara hâlleri sildi");
+  undoN(1);
+  mockGen++;
+  let q = "";
+  out = await clickAndWait("btn-spread", async (x) => ((q = q || x), no()));
+  if (!/^Bu sequence'ta önceki Dağıt yarım geri alınmış görünüyor: .*Ctrl\+Z'ye 2 kez daha bas/.test(q)) fail("no-op sonrası kısmi Ctrl+Z tanınmadı:\n" + q + "\n" + failLines(out));
+  else ok("no-op Dağıt ('Zaten dağıtılmış') ara hâlleri korudu → sonra kısmi Ctrl+Z yine 'Ctrl+Z'ye 2 kez daha' sorusu");
+};
+
+scenarios.hint_redo = async () => {
+  // inceleme #13 N2: Topla → Ctrl+Z × 1 → (kayıt yarım sayılıp unutuldu) → Ctrl+Y → kayıtlar geri yüklenir → Bağla çalışır
+  setupSync(smallSpec());
+  const o1 = await clickAndWait("btn-collect", yes, doneRe);
+  if (!/✓ TOPLA tamam/.test(o1)) return fail("TOPLA tamamlanmadı:\n" + failLines(o1));
+  await sleep(150);
+  const done = deepCopy();
+  undoN(1);
+  mockGen++;
+  markLog();
+  await revisit("guid-main-edit");
+  const l1 = newLog();
+  if (!/Timeline, önceki Topla'nın ara hâllerinden birinde/.test(l1) || lsStore.get("spread.collectRecord.v1")?.includes("guid-main-edit")) return fail("kısmi Ctrl+Z tanınmadı:\n" + l1);
+  restore(done); // Ctrl+Y
+  mockGen++;
+  markLog();
+  await revisit("guid-main-edit");
+  const l2 = newLog();
+  if (!/Timeline, önceki işlemin bittiği hâle döndü \(ör\. Ctrl\+Y\) — unutulan kayıtlar geri yüklendi\./.test(l2) || !lsStore.get("spread.collectRecord.v1")?.includes("guid-main-edit") || !stepsOf("guid-main-edit").topla || !shown("btn-bind"))
+    return fail("Ctrl+Y'den sonra kayıtlar geri yüklenmedi:\n" + l2);
+  ok("Topla → Ctrl+Z → (yarım sayıldı, kayıt unutuldu) → Ctrl+Y → 'unutulan kayıtlar geri yüklendi'; Topla ✓ ve sıradaki adım Bağla");
+  await startHelper();
+  const o2 = await clickAndWait("btn-bind", yes, doneRe);
+  if (!/✓ BAĞLA tamam/.test(o2) || /Önce TOPLA'ya bas|yarım/.test(o2)) fail("geri yüklenen kayıtla BAĞLA çalışmadı:\n" + failLines(o2));
+  else ok("geri yüklenen TOPLA kaydıyla BAĞLA normal çalıştı");
+  await stopHelper();
 };
 
 // ------------------------------------------------------------ çalıştır
