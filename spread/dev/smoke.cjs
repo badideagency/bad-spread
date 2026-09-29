@@ -5112,6 +5112,7 @@ scenarios.senkron_degisti = async () => {
   const s = setupSenkron();
   lsStore.set("spread.senkronApply.v1", "1");
   await startHelper();
+  await sleep(600); // önceki senaryo yardımcıyı durdurduysa: yeni token dosyası
   fsReal.rmSync(path.join(TMPHOME, "Library", "Application Support", "BadIdeaAgency", "Spread", "senkron-cache"), { recursive: true, force: true });
   process.env.FAKE_FFMPEG_SLOW_MS = "300";
   const qs = [];
@@ -5168,6 +5169,7 @@ scenarios.senkron_grup_once = async () => {
   }
   lsStore.set("spread.senkronApply.v1", "1");
   await startHelper();
+  await sleep(600);
   const out = await clickAndWait("btn-senkron", yes, senkronDoneRe);
   lsStore.delete("spread.senkronApply.v1");
   let rep = "";
