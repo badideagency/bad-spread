@@ -10,6 +10,9 @@
 //      (kontrol için; BAĞLA siler) → kamera kılavuz sesleri (cihaz sırasıyla, kanal kanal) → A PARK track'leri.
 //      v0.3.4: kılavuzlar BÜTÜN harici kanalların ("sil" dahil) ve korunan kamera sesinin ALTINDA → BAĞLA'nın boşalttığı track'ler
 //      ("sil" + kılavuz) çerçevenin en altında kalır. Eski kayıtların çerçevesi kayıttan okunur (guideBase / silTrack açık).
+//   ŞERİT (v1.3.0): kimliği kesin olmayan kaynağın (DJI: birden çok eşzamanlı mikrofon aynı "DJI" adı altında) bir oturumdaki
+//      dosyaları zamanda çakışıyorsa tek track'e sığmaz → kaynak k track kullanır: şerit 0 kullanıcının eşlediği track, ek
+//      şeritler eşlenen bloğun hemen ardına (eşleme aynen korunur); "sil" kaynaklarının şeritleri "sil" bloğunda yan yana.
 //   PARK: sahipsiz kayıtlar ve (kullanıcı onaylarsa) ayrılamayan kayıtlar — zamanı değişmeden, çakışmayacak biçimde.
 //   Bilinmeyen öğeler (grafik…) YERİNDE kalır; hedef yerle çakışırsa plan HATASI.
 // Taşıma (topla.ts): park (+P) → yerleştir (Δ − P, dikey). İlk oturum hem park'ta hem yerleştirmede TEK BAŞINA (ölçüm).
@@ -18,6 +21,7 @@ import { devicesOf, sourcesOf, where, type Classified, type DeviceInfo } from ".
 import { ceilTo } from "./guard";
 import { expOf, overlapsIn, type Exp, type OvItem } from "./layout";
 import { big, secOf, trackLabel, type ClipInfo, type Kind, type Snapshot } from "./model";
+import { vetoDevice } from "./health";
 import { linkItemKey, linkItemOf, type Analysis, type Recording, type Session } from "./sessions";
 import type { CollectRecord, LinkItemRec, Target } from "./settings";
 
@@ -39,6 +43,8 @@ export interface Frame {
   guideCount: number;
   vPark: number;
   aPark: number;
+  /** v1.3.0 şeritler: birden çok track kullanan kaynağın track'leri (şerit sırasıyla; [0] = srcTrack / silTrack). Tek şeritli kaynak yok. */
+  lanes: Map<string, number[]>;
 }
 
 /** Kılavuz seslerin kanal sırası: aynı kamera klibinin (aynı kaynak, aynı start/end) sesleri asıl track sırasıyla 0,1,… */
@@ -53,7 +59,45 @@ export function guideChannels(items: Classified[]): Map<ClipInfo, number> {
   return out;
 }
 
-export function makeFrame(items: Classified[], mapping: Map<string, Target>): Frame {
+/**
+ * v1.3.0 ŞERİT ataması: oturumdaki harici klipler kaynak kaynak, başlangıç sırasıyla en küçük boş şeride (önceki klibi bitmiş). Oturumlar
+ * TOPLA'da zamanda ayrık dizildiği için atama oturum içinde (bloğun göreli konumlarıyla) yapılır. Oturumsuzlar (park) şerit almaz.
+ * @returns laneOf: şerit (0 = asıl track; 0 olanlar yazılmaz), width: kaynağın şerit sayısı (yalnız > 1 olanlar)
+ */
+export function sourceLanes(items: Classified[], a: Analysis): { laneOf: Map<ClipInfo, number>; width: Map<string, number> } {
+  const groups = new Map<string, Classified[]>();
+  for (const x of items) {
+    // yalnız kimliği kesin olmayan kaynaklar (DJI; veto dışı): kesin cihazın üst üste dosyası aynı oturumda olamaz (veto) → şerit
+    // verilmez, olursa eskisi gibi ÇAKIŞMA
+    if (x.role !== "external" || !x.ident || vetoDevice("audio", x.ident)) continue;
+    const rec = a.recordingOf.get(x.clip);
+    const ses = rec ? a.sessionOf.get(rec) : undefined;
+    if (!ses) continue;
+    const k = `${ses.id}\u0000${x.source}`;
+    groups.set(k, [...(groups.get(k) ?? []), x]);
+  }
+  const laneOf = new Map<ClipInfo, number>();
+  const width = new Map<string, number>();
+  for (const list of groups.values()) {
+    list.sort((p, q) => {
+      const d = big(p.clip.start) - big(q.clip.start) || big(p.clip.end) - big(q.clip.end);
+      return d < 0n ? -1 : d > 0n ? 1 : p.clip.track - q.clip.track;
+    });
+    const ends: bigint[] = [];
+    for (const x of list) {
+      let l = ends.findIndex((e) => e <= big(x.clip.start));
+      if (l < 0) l = ends.push(0n) - 1;
+      ends[l] = big(x.clip.end);
+      if (l) laneOf.set(x.clip, l);
+    }
+    const src = list[0].source!;
+    if (ends.length > 1) width.set(src, Math.max(width.get(src) ?? 1, ends.length));
+  }
+  return { laneOf, width };
+}
+
+/** @param width v1.3.0: şerit sayısı > 1 olan kaynaklar (sourceLanes) — yoksa her kaynak tek track */
+export function makeFrame(items: Classified[], mapping: Map<string, Target>, width: Map<string, number> = new Map()): Frame {
   const devices = devicesOf(items);
   const devTrack = new Map(devices.map((d, i) => [d.key, i]));
   const sources = sourcesOf(items);
@@ -64,15 +108,30 @@ export function makeFrame(items: Classified[], mapping: Map<string, Target>): Fr
     if (t === "sil") silSources.push(s);
     else srcTrack.set(s, t ?? 0);
   }
-  const mappedCount = srcTrack.size ? Math.max(...srcTrack.values()) + 1 : 0;
+  // ek şeritler eşlenen bloğun ardına (kaynak sırasıyla) → kullanıcının eşlemesi aynen kalır, sonraki bloklar kayar
+  const lanes = new Map<string, number[]>();
+  let mappedCount = srcTrack.size ? Math.max(...srcTrack.values()) + 1 : 0;
+  for (const [s, t] of srcTrack) {
+    const w = width.get(s) ?? 1;
+    if (w < 2) continue;
+    lanes.set(s, [t, ...Array.from({ length: w - 1 }, (_, j) => mappedCount + j)]);
+    mappedCount += w - 1;
+  }
   const ch = guideChannels(items);
   const guideCh = new Map<string, number>();
   for (const g of items.filter((x) => x.role === "guide")) guideCh.set(g.device!, Math.max(guideCh.get(g.device!) ?? 0, ch.get(g.clip)! + 1));
   const guideBase = new Map<string, number>();
   // korunan kamera sesi yalnız harici sesli grupta olur → eşlenen (silinmeyecek) harici kaynak yoksa track ayrılmaz
   const keptCount = srcTrack.size && guideCh.size ? Math.max(...guideCh.values()) : 0;
-  const silTrack = new Map(silSources.map((s, i) => [s, mappedCount + keptCount + i]));
-  const g0 = mappedCount + keptCount + silSources.length;
+  const silTrack = new Map<string, number>();
+  let silNext = mappedCount + keptCount;
+  for (const s of silSources) {
+    const w = width.get(s) ?? 1;
+    silTrack.set(s, silNext);
+    if (w > 1) lanes.set(s, Array.from({ length: w }, (_, j) => silNext + j));
+    silNext += w;
+  }
+  const g0 = silNext;
   let base = g0;
   for (const d of devices) {
     guideBase.set(d.key, base);
@@ -94,16 +153,30 @@ export function makeFrame(items: Classified[], mapping: Map<string, Target>): Fr
     guideCount,
     vPark: devices.length,
     aPark: base,
+    lanes,
   };
 }
 
-/** Klibin çerçevedeki yeri (bilinmeyen → null). */
-export function frameTrack(f: Frame, x: Classified, ch: Map<ClipInfo, number>): number | null {
+/** Klibin çerçevedeki yeri (bilinmeyen → null). @param laneOf v1.3.0 şerit ataması (sourceLanes; yoksa şerit 0) */
+export function frameTrack(f: Frame, x: Classified, ch: Map<ClipInfo, number>, laneOf?: Map<ClipInfo, number>): number | null {
   if (x.role === "camera") return f.devTrack.get(x.device!) ?? null;
   if (x.role === "guide") return (f.guideBase.get(x.device!) ?? 0) + (ch.get(x.clip) ?? 0);
-  if (x.role === "external") return f.srcTrack.get(x.source!) ?? f.silTrack.get(x.source!) ?? null;
+  if (x.role === "external") {
+    const lane = laneOf?.get(x.clip) ?? 0;
+    if (lane) return f.lanes.get(x.source!)?.[lane] ?? null;
+    return f.srcTrack.get(x.source!) ?? f.silTrack.get(x.source!) ?? null;
+  }
   return null;
 }
+
+/** Kaynağın bütün track'leri (şeritler dahil). */
+export const sourceTracks = (f: Frame, source: string): number[] => {
+  const t = f.srcTrack.get(source) ?? f.silTrack.get(source);
+  return f.lanes.get(source) ?? (t === undefined ? [] : [t]);
+};
+
+/** "sil" kaynaklarının bütün track'leri (şeritler dahil) — BAĞLA / yardımcı panelin çerçevesi. */
+export const silTracksOf = (f: Frame): number[] => f.silSources.flatMap((s) => sourceTracks(f, s));
 
 /** Klibin (zamanıyla) kimlik anahtarı — TOPLA kaydındaki park listesi için (track'ten bağımsız). */
 export const clipKey = (c: ClipInfo): string => [c.kind, c.projId, c.start, c.end, c.inPt, c.outPt].join("|");
@@ -121,6 +194,7 @@ export function frameToRecord(f: Frame): CollectRecord["frame"] {
     guideCount: f.guideCount,
     vPark: f.vPark,
     aPark: f.aPark,
+    ...(f.lanes.size ? { lanes: [...f.lanes] } : {}),
   };
 }
 
@@ -141,6 +215,7 @@ export function frameFromRecord(r: CollectRecord["frame"]): Frame {
     guideCount: r.guideCount,
     vPark: r.vPark,
     aPark: r.aPark,
+    lanes: new Map(r.lanes ?? []), // v1.2.1 ve öncesi kayıt: şerit yok
   };
 }
 
@@ -153,7 +228,10 @@ export function parkedFromRecord(items: Classified[], rec: CollectRecord | null)
 /** Kayıtlı çerçeveye göre yerinde OLMAYAN sınıflı klipler (park'takiler ve bilinmeyenler hariç). */
 export function misplacedAgainst(f: Frame, items: Classified[], parked: Set<ClipInfo>): Classified[] {
   const ch = guideChannels(items);
-  return items.filter((x) => x.role !== "unknown" && !parked.has(x.clip) && frameTrack(f, x, ch) !== x.clip.track);
+  // harici ses: kaynağının herhangi bir şeridinde olması yeter (v1.3.0; şerit TOPLA'da oturum içinde atanır)
+  return items.filter(
+    (x) => x.role !== "unknown" && !parked.has(x.clip) && (x.role === "external" ? !sourceTracks(f, x.source!).includes(x.clip.track) : frameTrack(f, x, ch) !== x.clip.track)
+  );
 }
 
 /** Yardımcının arama anahtarı (tür, track, start, end, kaynak adı) — tek tanım sessions.ts'te (yardımcı panelle ortak). */
@@ -263,7 +341,7 @@ export function makeCollectPlan(
   items: Classified[],
   a: Analysis,
   frame: Frame,
-  opts: { gap: bigint; frameTicks: bigint | null; parkedRecs: Recording[]; keepInPlace: Set<ClipInfo> }
+  opts: { gap: bigint; frameTicks: bigint | null; parkedRecs: Recording[]; keepInPlace: Set<ClipInfo>; laneOf?: Map<ClipInfo, number> }
 ): CollectPlan {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -306,7 +384,7 @@ export function makeCollectPlan(
       placeLater.push(x); // sahipsiz
       continue;
     }
-    const t = frameTrack(frame, x, ch);
+    const t = frameTrack(frame, x, ch, opts.laneOf);
     if (t === null) {
       errors.push(`hedef track'i belirlenemedi: ${where(x.clip)}`);
       continue;
@@ -432,9 +510,13 @@ export function describeFrame(f: Frame): string {
   const range = (a: number, n: number) => (n > 1 ? `${A(a)}–${A(a + n - 1)}` : A(a));
   const dev = f.devices.map((d) => `${d.key} → ${trackLabel("V", f.devTrack.get(d.key)!)}`).join(", ");
   const parts: [number, string][] = [];
-  for (const [s, t] of f.srcTrack) parts.push([t, `${s} → ${A(t)}`]);
+  const lanesText = (s: string) => {
+    const l = f.lanes.get(s);
+    return l ? ` (+ ${l.slice(1).map(A).join(", ")}: eşzamanlı dosyalar, ${l.length} şerit)` : "";
+  };
+  for (const [s, t] of f.srcTrack) parts.push([t, `${s} → ${A(t)}${lanesText(s)}`]);
   if (f.keptCount) parts.push([f.keptBase, `korunan kamera sesi (BAĞLA'da, harici sesin olmadığı aralıklar) → ${range(f.keptBase, f.keptCount)}`]);
-  for (const [s, t] of f.silTrack) parts.push([t, `${s} → ${A(t)} (sil)`]);
+  for (const [s, t] of f.silTrack) parts.push([t, `${s} → ${f.lanes.has(s) ? range(t, f.lanes.get(s)!.length) : A(t)} (sil)`]);
   const gb = [...f.guideBase.values()];
   if (f.guideCount && gb.length) parts.push([Math.min(...gb), `kılavuz sesler → ${range(Math.min(...gb), f.guideCount)}`]);
   else parts.push([Number.MAX_SAFE_INTEGER, "kılavuz ses yok"]);

@@ -33,7 +33,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "1.2.1";
+  var VERSION = "1.3.0";
   var PORT = 47731;
   var MAX_BODY = 1024 * 1024;
   /** Köprü komutları (v1.2.0: + güncelleme, yeniden başlatma, ↻ yeniden yükleme). */

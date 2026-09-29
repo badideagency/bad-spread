@@ -23,6 +23,7 @@ import {
   makeFrame,
   parkedExp,
   parkedFromRecord,
+  sourceLanes,
   verifyRelative,
   type CollectPlan,
   type Placement,
@@ -48,7 +49,7 @@ import {
 } from "./guard";
 import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
 import { fmtClip, relocate, secOf, settle, snapshot, ticks, trackLabel, TICKS_PER_SECOND, type ClipInfo, type Snapshot } from "./model";
-import { analyze, describeLinks, duplicateSets, partlyParked, suspiciousMembers, type Analysis, type DuplicateSet, type Recording } from "./sessions";
+import { analyze, describeLinks, duplicateSets, healthSummary, partlyParked, suspiciousMembers, type Analysis, type DuplicateSet, type Recording } from "./sessions";
 import { dropLinkPlan } from "./linker";
 import { Trail } from "./prints";
 import { confirmRedo, reconcileAndLog, stale } from "./records";
@@ -58,6 +59,8 @@ import { getGapSec, getThreshold, loadRecord, mappingFor, saveBindRecord, saveMa
 import { done, log, progress } from "./ui";
 
 export const CHECK_MSG = "Kontrol et, sonra BAĞLA'ya bas.";
+/** v1.3.0: senkronu bozuk klipler için ne yapılacağı (TOPLA sorusu, günlük, Durum raporu). */
+export const HEALTH_ADVICE = "Bunlar oturuma alınmadı; park track'ine gider (zamanı değişmez, silinmez). → Elle düzelt ya da yeniden senkronla.";
 
 export function printAnalysis(a: Analysis): void {
   for (const d of a.duplicates) log(`ÇİFT KOPYA: ${d}`, "err");
@@ -65,6 +68,10 @@ export function printAnalysis(a: Analysis): void {
   for (const o of a.orphans) log(`  sahipsiz: ${o.label} [${secOf(o.start)}s–${secOf(o.end)}s] (güçlü bağı yok)`, "dim");
   for (const v of a.vetoDecisions) log(`  ${v}`, "warn");
   for (const u of a.unresolved) for (const l of u.lines) log(`  AYRILAMADI: ${l}`, "err");
+  // v1.3.0 SENKRON SAĞLIĞI: Premiere senkronunun yanlış yere koyduğu kayıtlar (oturuma girmez, park'a)
+  const h = healthSummary(a);
+  if (h.head) log(`SENKRON SAĞLIĞI: ${h.head} ${HEALTH_ADVICE}`, "err");
+  for (const l of h.lines) log(`  ${l}`, "warn");
   if (a.orderIssue) for (const l of a.orderIssue.lines) log(`  SIRA: ${l}`, "err");
   for (const w of a.warnings) log(`uyarı: ${w}`, "warn");
 }
@@ -162,7 +169,6 @@ export async function runCollect(): Promise<void> {
       log(`ÇİFT KOPYA: ${d.line} → ${d.drop.map((c) => trackLabel(c.kind, c.track)).join(", ")} silinecek (ilk adım), ${trackLabel(d.keep.kind, d.keep.track)} kalır`, "warn");
     const items = classify(s0);
     const mapping = mappingFor(sourcesOf(items));
-    const frame = makeFrame(items, mapping);
     // önceki TOPLA'nın park ettikleri (kayıttan; track sırasından tahmin YOK) → analize girmez, yerinde kalır
     let rec = loadRecord(ctx.guid);
     // BAĞLA kesimi yapılmışsa harici sesler çapalara bölünmüştür → senkron kanıtı (tam kayıtlar) yok, oturumlar güvenle yeniden
@@ -249,7 +255,8 @@ export async function runCollect(): Promise<void> {
       }
     }
     const exclude = new Set(keep);
-    let a = analyze(s0, items, { threshold: getThreshold(), exclude });
+    const seqFr = await frameTicks(ctx); // v1.3.0: senkron sağlığında "≥ 1 kare çakışma"
+    let a = analyze(s0, items, { threshold: getThreshold(), exclude, frameTicks: seqFr });
     log(`Okundu: V ${s0.vCount}, A ${s0.aCount}, ${s0.clips.length} klip; ${a.recordings.length} kayıt, ${a.links.length} güçlü bağ (eşik %${Math.round(getThreshold() * 100)}).`, "dim");
     if (keep.size) log(`   önceki TOPLA'dan park'ta ${keep.size} klip (kayıttan) — analize girmez, zamanı değişmez`, "dim");
     for (const l of describeLinks(a, 60)) log(`   bağ: ${l}`, "dim");
@@ -282,7 +289,7 @@ export async function runCollect(): Promise<void> {
           exclude.delete(c);
           keep.delete(c);
         }
-      a = analyze(s0, items, { threshold: getThreshold(), exclude });
+      a = analyze(s0, items, { threshold: getThreshold(), exclude, frameTicks: seqFr });
       printAnalysis(a);
       if (a.errors.length) throw new SpreadStop("Senkron sonucunda tutarsızlık var — TOPLA BAŞLAMADI, hiçbir şey değişmedi.", a.errors);
     }
@@ -307,13 +314,14 @@ export async function runCollect(): Promise<void> {
       );
       if (ans === "Evet") {
         for (const x of sus) for (const c of x.rec.clips) exclude.add(c);
-        a = analyze(s0, items, { threshold: getThreshold(), exclude });
+        a = analyze(s0, items, { threshold: getThreshold(), exclude, frameTicks: seqFr });
         printAnalysis(a);
       } else for (const x of sus) kept.add(x.rec.id);
     }
     const userParked = [...exclude].filter((c) => !keep.has(c));
 
-    const parkedRecs: Recording[] = [...a.orphans];
+    // v1.3.0: senkronu bozuk (şüpheli / belirsiz) kayıtlar da park'a (oturumsuz; zamanı aynı, silinmez)
+    const parkedRecs: Recording[] = [...a.orphans, ...a.suspects.map((x) => x.rec)];
     for (const u of a.unresolved) {
       const ans = await askUser(
         `AYRILAMAYAN OTURUM — tek anlamlı çözüm yok, TAHMİN EDİLMEDİ:\n${u.lines.map((l) => "  • " + l).join("\n")}\n` +
@@ -354,10 +362,15 @@ export async function runCollect(): Promise<void> {
       }
     }
 
-    const fr = await frameTicks(ctx);
+    const fr = seqFr;
     const gap = ceilTo(BigInt(Math.round(getGapSec() * 1000)) * (TICKS_PER_SECOND / 1000n), fr);
     // kullanıcının park'a gönderdiği şüpheli üyeler analizden çıkarıldı → kaydı olmayan klip olarak plan onları park track'lerine koyar
-    const plan = makeCollectPlan(s0, items, a, frame, { gap, frameTicks: fr, parkedRecs, keepInPlace: keep });
+    // v1.3.0: aynı kaynağın bir oturumda çakışan dosyaları (ör. eşzamanlı DJI mikrofonları) → kaynak birden çok track (şerit)
+    const lanes = sourceLanes(items, a);
+    const frame = makeFrame(items, mapping, lanes.width);
+    for (const [src, w] of lanes.width)
+      log(`   ${src}: bir oturumda ${w} dosya aynı anda kayıtta (kimliği kesin değil: eşzamanlı mikrofonlar olabilir) → ${w} şerit (track)`, "dim");
+    const plan = makeCollectPlan(s0, items, a, frame, { gap, frameTicks: fr, parkedRecs, keepInPlace: keep, laneOf: lanes.laneOf });
     const record = (bind: CollectRecord["bind"]): CollectRecord => ({
       v: 1,
       guid: ctx!.guid,
@@ -387,7 +400,14 @@ export async function runCollect(): Promise<void> {
     }
     const newV = Math.max(0, plan.neededV - s0.vCount);
     const newA = Math.max(0, plan.neededA - s0.aCount);
+    const health = healthSummary(a);
     const extra: string[] = dups.length ? [dupText(dups)] : [];
+    if (health.head)
+      extra.unshift(
+        `SENKRON SAĞLIĞI: ${health.head} ${HEALTH_ADVICE}`,
+        ...health.lines.map((l) => `  • ${l}`),
+        "  Önce düzeltmek istersen Vazgeç (hiçbir şey değişmez); düzeltip Topla'ya yeniden bas."
+      );
     const unknown = items.filter((x) => x.role === "unknown");
     if (unknown.length) extra.push(`Dokunulmayan öğeler (yerinde kalır): ${unknown.map((x) => where(x.clip)).join(", ")}`);
     if (keep.size) extra.push(`Önceki TOPLA'dan park'ta: ${keep.size} klip (oturumlara karışmaz; zamanı değişmez, çerçeve büyüdüyse park track'i değişir).`);
@@ -395,12 +415,14 @@ export async function runCollect(): Promise<void> {
     if (bs === "applied" || bs === "thinned") extra.push("DİKKAT: bu sequence BAĞLA'dan geçti (kesimsiz) — taşınan kliplerin bağları çözülür (clone); TOPLA'dan sonra BAĞLA'ya tekrar bas.");
     // onay penceresinin özeti (yalnız görünüm; tam metin "Ayrıntı ▸" altında)
     const nS = plan.layouts.length;
+    const nOrphan = plan.parkedRecs.length - a.suspects.length;
     const notes = [
-      plan.parkedRecs.length ? `${plan.parkedRecs.length} sahipsiz kayıt park track'ine (zamanı değişmez)` : "",
+      nOrphan > 0 ? `${nOrphan} sahipsiz kayıt park track'ine (zamanı değişmez)` : "",
       userParked.length ? `ŞÜPHELİ üye, senin kararınla park'a: ${userParked.length} klip` : "",
     ].filter(Boolean);
     const summary: string[] = plan.moves.length
       ? [
+          ...(health.head ? [`${health.head} Bunlar oturuma alınmadı; park'a gider, silinmez → elle düzelt ya da yeniden senkronla (önce düzeltmek için: Vazgeç).`] : []),
           `${nS} oturum çekim sırasıyla sequence başından dizilecek; ${plan.moves.length} klip taşınacak (oturum içi konumlar korunur).`,
           ...(dups.length ? [`ÇİFT KOPYA: ${drop.length} fazla kopya ilk adımda silinecek (hangileri: günlükte).`] : []),
           ...(a.vetoDecisions.length ? [`${a.vetoDecisions[0]}${a.vetoDecisions.length > 1 ? ` (+${a.vetoDecisions.length - 1} VETO daha)` : ""}`] : []),
@@ -574,11 +596,17 @@ export async function runCollect(): Promise<void> {
     saveMapping(mapping);
     log(CHECK_MSG, "head");
     log(`Beğenmezsen: timeline'a tıkla, Ctrl+Z'ye ${executed.length} kez bas — ya da yedek sequence "${backupName}"i kullan.`, "dim");
+    const nAmb = a.suspects.filter((x) => x.ambiguous).length;
+    const nSus = a.suspects.length - nAmb;
+    const hText = [nSus ? `${nSus} şüpheli` : "", nAmb ? `${nAmb} belirsiz` : ""].filter(Boolean).join(" + ");
+    if (a.suspects.length) log(`SENKRON SAĞLIĞI: senkronu bozuk görünen ${hText} klip park track'inde (zamanı aynı) — elle düzelt ya da yeniden senkronla.`, "warn");
     done(
       "topla",
-      "ok",
-      `${nS} oturum toplandı${drop.length ? `, ${drop.length} çift kopya silindi` : ""}.`,
-      `Şimdi timeline'ı gözle kontrol et, sonra Bağla. Beğenmezsen Ctrl+Z × ${executed.length} ya da yedek sequence "${backupName}".`
+      a.suspects.length ? "warn" : "ok",
+      `${nS} oturum toplandı${drop.length ? `, ${drop.length} çift kopya silindi` : ""}` + (a.suspects.length ? `; senkronu bozuk görünen ${hText} klip park'ta.` : "."),
+      a.suspects.length
+        ? `Park'taki klipleri elle düzelt ya da yeniden senkronla (Topla'yı tekrar çalıştırabilirsin). Beğenmezsen Ctrl+Z × ${executed.length} ya da yedek sequence "${backupName}".`
+        : `Şimdi timeline'ı gözle kontrol et, sonra Bağla. Beğenmezsen Ctrl+Z × ${executed.length} ya da yedek sequence "${backupName}".`
     );
     setStepMids(ctx.guid, "topla", trail.between(executed.length), backupName);
   } catch (e) {

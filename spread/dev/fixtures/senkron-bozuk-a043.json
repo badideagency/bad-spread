@@ -1,0 +1,153 @@
+{
+  "kaynak": "Kullanıcının 2026-09-29 tarifi (tick değerleri raporda yok → SENTETİK, tarifin şekli): tek kamera A043C001…C015 (29.97 fps, 15 klip), üç DJI mikrofonu eşzamanlı kayıt (8 WAV). Dağıt'tan sonra Premiere Clip › Synchronize: C001 ve C010–C015 doğru yerde; C002–C009 rastgele, C001 / C013 ile çakışıyor.",
+  "not": "Saniye. 'dogru' = çekimdeki gerçek yer (yalnız belge; timeline'a 'premiere' konur). Kamera süreleri 29.97 fps kareye yuvarlanır; WAV'lar ms hizalı. DJI adları identity.ts deseninde (DJI_<n>_<tarih>_<saat>): cihaz kimliği KESİN DEĞİL (aynı / farklı mikrofon ayırt edilemez). 'premiere': C001'in altına düşen C002 / C003 / C006 / C008 birbirinin de üstünde (Premiere başarısız klipleri aynı yere yığar). 'premiere_sirali': ilk sürüm — C002 ve C003 C001'in altında KENDİ aralarında sıralı ve üst üste değil → düz kural (en uzun zincir: C002, C003, C010–C015) ile sığma kuralı (C001, C010–C015) ayrışır → C001–C003 BELİRSİZ (health_a043_ayrisma).",
+  "kamera": [
+    {
+      "ad": "A043C001_260925XX.MP4",
+      "sure": 230,
+      "dogru": 60,
+      "premiere": 60,
+      "premiere_sirali": 60
+    },
+    {
+      "ad": "A043C002_260925XX.MP4",
+      "sure": 80,
+      "dogru": 330,
+      "premiere": 70,
+      "premiere_sirali": 100
+    },
+    {
+      "ad": "A043C003_260925XX.MP4",
+      "sure": 160,
+      "dogru": 450,
+      "premiere": 90,
+      "premiere_sirali": 200
+    },
+    {
+      "ad": "A043C004_260925XX.MP4",
+      "sure": 50,
+      "dogru": 650,
+      "premiere": 2250,
+      "premiere_sirali": 2250
+    },
+    {
+      "ad": "A043C005_260925XX.MP4",
+      "sure": 140,
+      "dogru": 760,
+      "premiere": 2400,
+      "premiere_sirali": 2400
+    },
+    {
+      "ad": "A043C006_260925XX.MP4",
+      "sure": 130,
+      "dogru": 950,
+      "premiere": 30,
+      "premiere_sirali": 30
+    },
+    {
+      "ad": "A043C007_260925XX.MP4",
+      "sure": 70,
+      "dogru": 1120,
+      "premiere": 2210,
+      "premiere_sirali": 2210
+    },
+    {
+      "ad": "A043C008_260925XX.MP4",
+      "sure": 120,
+      "dogru": 1300,
+      "premiere": 140,
+      "premiere_sirali": 150
+    },
+    {
+      "ad": "A043C009_260925XX.MP4",
+      "sure": 100,
+      "dogru": 1460,
+      "premiere": 2300,
+      "premiere_sirali": 2300
+    },
+    {
+      "ad": "A043C010_260925XX.MP4",
+      "sure": 180,
+      "dogru": 1620,
+      "premiere": 1620,
+      "premiere_sirali": 1620
+    },
+    {
+      "ad": "A043C011_260925XX.MP4",
+      "sure": 140,
+      "dogru": 1850,
+      "premiere": 1850,
+      "premiere_sirali": 1850
+    },
+    {
+      "ad": "A043C012_260925XX.MP4",
+      "sure": 110,
+      "dogru": 2040,
+      "premiere": 2040,
+      "premiere_sirali": 2040
+    },
+    {
+      "ad": "A043C013_260925XX.MP4",
+      "sure": 280,
+      "dogru": 2200,
+      "premiere": 2200,
+      "premiere_sirali": 2200
+    },
+    {
+      "ad": "A043C014_260925XX.MP4",
+      "sure": 170,
+      "dogru": 2530,
+      "premiere": 2530,
+      "premiere_sirali": 2530
+    },
+    {
+      "ad": "A043C015_260925XX.MP4",
+      "sure": 190,
+      "dogru": 2760,
+      "premiere": 2760,
+      "premiere_sirali": 2760
+    }
+  ],
+  "dji": [
+    {
+      "ad": "DJI_01_20260925_101000.WAV",
+      "start": 0,
+      "sure": 1210
+    },
+    {
+      "ad": "DJI_01_20260925_103100.WAV",
+      "start": 1260,
+      "sure": 1240
+    },
+    {
+      "ad": "DJI_01_20260925_105200.WAV",
+      "start": 2540,
+      "sure": 560
+    },
+    {
+      "ad": "DJI_02_20260925_101002.WAV",
+      "start": 2,
+      "sure": 1498
+    },
+    {
+      "ad": "DJI_02_20260925_103600.WAV",
+      "start": 1560,
+      "sure": 1490
+    },
+    {
+      "ad": "DJI_03_20260925_101005.WAV",
+      "start": 5,
+      "sure": 1595
+    },
+    {
+      "ad": "DJI_03_20260925_103800.WAV",
+      "start": 1640,
+      "sure": 1350
+    },
+    {
+      "ad": "DJI_03_20260925_110000.WAV",
+      "start": 2995,
+      "sure": 150
+    }
+  ]
+}

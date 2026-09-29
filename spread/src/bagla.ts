@@ -49,7 +49,7 @@ import {
   runTx,
   SpreadStop,
 } from "./guard";
-import { bindState, frameFromRecord, itemKey, itemOf, layoutState, misplacedAgainst, parkedFromRecord } from "./collect";
+import { bindState, frameFromRecord, itemKey, itemOf, layoutState, misplacedAgainst, parkedFromRecord, silTracksOf } from "./collect";
 import { analyze, compareLinkGroups, groupsFromLayout, partlyParked, reduceToPresent, type LayoutFrame } from "./sessions";
 import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
 import { dropLinkPlan, getLinker, HELPER_VERSION, readPanelLinkResult, writeLinkPlan, type LinkGroupResult, type PingResult } from "./linker";
@@ -191,7 +191,7 @@ const layoutFrameOf = (rec: CollectRecord): LayoutFrame => {
   return {
     vPark: f.vPark,
     aPark: f.aPark,
-    silTracks: [...f.silTrack.values()],
+    silTracks: silTracksOf(f), // v1.3.0: şeritler dahil
     keptTracks: Array.from({ length: f.keptCount }, (_, j) => f.keptBase + j),
   };
 };
@@ -623,8 +623,9 @@ export async function runBind(): Promise<void> {
       throw new SpreadStop("Ayar TOPLA'dan sonra değişti — TOPLA'ya tekrar bas (oturumlar ve track'ler yeni ayarla yeniden kurulur). BAĞLA BAŞLAMADI, hiçbir şey değişmedi.", drift);
     const frame = frameFromRecord(rec.frame);
     const parked = parkedFromRecord(items, rec);
-    const a = analyze(s0, items, { threshold: rec.thresholdPct / 100, exclude: parked });
-    const plan = makeBindPlan(a, mapping, { base: frame.keptBase, count: frame.keptCount }, await frameTicks(ctx));
+    const seqFr = await frameTicks(ctx);
+    const a = analyze(s0, items, { threshold: rec.thresholdPct / 100, exclude: parked, frameTicks: seqFr });
+    const plan = makeBindPlan(a, mapping, { base: frame.keptBase, count: frame.keptCount }, seqFr);
     // Ön koşullar (hepsi plan hatası → hiçbir şey değişmez):
     //  - TOPLA düzeni (dikey, KAYITLI çerçeveye göre): TOPLA taşıdığı kamera/kılavuz çiftlerini clone ile AYIRIR; kılavuzu hâlâ
     //    kamerasına bağlı bir düzende kılavuz silmek bağlı kamerayı da silebilir (kanıtlanmadı). Park'takiler analize girmez.
@@ -646,6 +647,8 @@ export async function runBind(): Promise<void> {
     for (const d of a.duplicates) pre.push(`çift kopya: ${d} — önce TOPLA'ya bas (harici ses çiftini ilk adımında siler; kamera çiftini elle sil)`);
     for (const e of a.errors) pre.push(e);
     for (const o of a.orphans) pre.push(`oturumsuz kayıt park dışında: ${o.label} [${secOf(o.start)}s–${secOf(o.end)}s] — TOPLA'dan sonra değişmiş; önce TOPLA'ya bas`);
+    // v1.3.0: senkronu bozuk kayıt park dışında (TOPLA onu park'a alırdı) → önce TOPLA
+    for (const x of a.suspects) pre.push(`senkronu bozuk kayıt park dışında: ${x.rec.label} [${secOf(x.rec.start)}s–${secOf(x.rec.end)}s] — önce TOPLA'ya bas (park'a alır)`);
     for (const u of a.unresolved) pre.push(`ayrılamayan kayıtlar (önce TOPLA): ${u.lines[0]}`);
     for (let i = 0; i < a.sessions.length; i++)
       for (let j = i + 1; j < a.sessions.length; j++) {

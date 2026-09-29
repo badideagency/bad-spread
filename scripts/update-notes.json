@@ -7,5 +7,9 @@
   "1.2.1": [
     "Tek kamera / 29.97 fps çekimlerde yanlış 'kırpılmış klip' uyarısı düzeltildi",
     "Ctrl+Z sonrası tekrar Dağıt/Topla yapılabiliyor; ↻ bu sequence'ın kayıtlarını temizler"
+  ],
+  "1.3.0": [
+    "Premiere senkronu bozuksa Topla artık fark ediyor ve bozuk klipleri ayırıyor",
+    "Aynı anda kayıt yapan birden çok DJI mikrofonu artık Topla'yı durdurmuyor (dosyalar yan yana track'lere)"
   ]
 }
