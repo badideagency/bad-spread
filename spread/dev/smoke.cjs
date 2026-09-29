@@ -5106,6 +5106,86 @@ scenarios.senkron_yok = async () => {
   await stopHelper();
 };
 
+scenarios.senkron_degisti = async () => {
+  // inceleme #15 M2: (a) eşleştirme sürerken timeline değişirse Uygula başlamaz; (b) taşınacak dosyanın track'inde yolu okunamayan
+  // başka bir dosyanın klibi varsa (ör. çevrimdışı müzik) Dağıt düzeni sayılmaz — yalnız okunan dosyalara bakmak yetmez
+  const s = setupSenkron();
+  lsStore.set("spread.senkronApply.v1", "1");
+  await startHelper();
+  fsReal.rmSync(path.join(TMPHOME, "Library", "Application Support", "BadIdeaAgency", "Spread", "senkron-cache"), { recursive: true, force: true });
+  process.env.FAKE_FFMPEG_SLOW_MS = "300";
+  const qs = [];
+  const run = clickAndWait("btn-senkron", async (x) => (qs.push(x), yes()), senkronDoneRe);
+  let moved = false;
+  for (let i = 0; i < 500 && !moved; i++) {
+    await sleep(20);
+    if (/ses okunuyor/.test(els["progress-text"]?.textContent ?? "")) {
+      const c = s.a.flat().find((x) => /^DJI_02/.test(x.name));
+      c.start += sec(1);
+      c.end += sec(1);
+      moved = true;
+    }
+  }
+  let out = await run;
+  delete process.env.FAKE_FFMPEG_SLOW_MS;
+  if (!moved || !/✗ SENKRON DURDU: Eşleştirme sürerken timeline değişti/.test(out) || counters.txNames.length || qs.length)
+    fail(`eşleştirme sırasında değişen timeline: ${moved} ${counters.txNames.join(", ")} ${qs.join(" | ")}\n` + failLines(out));
+  else ok("eşleştirme sürerken klip kaydırıldı → Uygula başlamadı (soru yok, transaction yok, yedek yok)");
+  lsStore.delete("spread.senkronApply.v1");
+  const s2 = setupSenkron();
+  lsStore.set("spread.senkronApply.v1", "1");
+  const stray = pi("MUZIK_ALTYAPI.WAV", sec(30), { video: false }); // mediaPath yok → yolu okunamaz
+  const i2 = s2.a.findIndex((tr) => tr.some((c) => /^DJI_02/.test(c.name)));
+  s2.a[i2].push(mkClip("A", stray, sec(400), sec(430)));
+  out = await clickAndWait("btn-senkron", yes, senkronDoneRe);
+  lsStore.delete("spread.senkronApply.v1");
+  // track adı kullanıcının gördüğü gibi (1'den): dizin i2 → "A{i2 + 1}"
+  if (!new RegExp(`Uygula yalnız Dağıt düzeninde çalışır .*: A${i2 + 1}\\.`).test(out) || counters.txNames.length) fail("okunamayan klip aynı track'te:\n" + failLines(out));
+  else ok(`DJI_02'nin track'inde (A${i2 + 1}) yolu okunamayan başka bir klip → Uygula başlamadı, hiçbir şey değişmedi`);
+};
+
+scenarios.senkron_grup_once = async () => {
+  // iki ayrı çekim (iki grup; Grup 1 = eşleşmesi en güçlü dosyanın grubu = B çekimi); dosya adındaki saate göre Grup 2 (A, 16:00),
+  // Grup 1'den (B, 17:00) 1 saat ÖNCE → Uygula önce onu koyar, Grup 1'i saat farkı kadar sonra (inceleme #15: eski kod saat sırasında
+  // ilk gelen grubu "Grup 1'in başı" sanıyordu → Grup 1 saatten kopup boşlukla hemen ardına gidiyordu)
+  const A = SYN.scene(70, 4321);
+  const B = SYN.scene(70, 8765);
+  const media = path.join(TMPHOME, "medya2");
+  fsReal.mkdirSync(media, { recursive: true });
+  const spec = [
+    { name: "A081C001_260925XX.MP4", cam: true, start: 0n, dur: sec(40), sc: A, t: 10, mic: SYN.MIC.cam },
+    { name: "A081C002_260925XX.MP4", cam: true, start: sec(50), dur: sec(40), sc: B, t: 5, mic: SYN.MIC.cam },
+    { name: "DJI_01_20260925_160000.WAV", cam: false, start: 0n, dur: sec(60), sc: A, t: 0, mic: SYN.MIC.lav1 },
+    { name: "DJI_02_20260925_170000.WAV", cam: false, start: 0n, dur: sec(60), sc: B, t: 0, mic: SYN.MIC.lav2 },
+  ];
+  setupSync({ cams: spec.filter((x) => x.cam), wavs: spec.filter((x) => !x.cam), others: [] });
+  let seed = 50;
+  for (const x of spec) {
+    const file = path.join(media, x.name);
+    projItems[x.name].mediaPath = file;
+    fsReal.writeFileSync(file, "sahte medya " + x.name);
+    fsReal.writeFileSync(file + ".pcm", Buffer.from(SYN.record(x.sc, x.t, Number(x.dur / TPS), x.mic, seed++).buffer));
+  }
+  lsStore.set("spread.senkronApply.v1", "1");
+  await startHelper();
+  const out = await clickAndWait("btn-senkron", yes, senkronDoneRe);
+  lsStore.delete("spread.senkronApply.v1");
+  let rep = "";
+  try {
+    rep = fsReal.readFileSync(reportFile(), "utf8");
+  } catch {}
+  const st = (n) => mediaStartOf(n);
+  const got = spec.map((x) => `${x.name.slice(0, 8)} ${st(x.name) === null ? "?" : (Number(st(x.name)) / Number(TPS)).toFixed(3)}`).join(", ");
+  const before = /Grup 2: 2 dosya.*Grup 1'den 3600\.000 sn ÖNCE/.test(rep);
+  const exact =
+    st("DJI_01_20260925_160000.WAV") === 0n &&
+    st("A081C001_260925XX.MP4") === sec(10) &&
+    st("DJI_02_20260925_170000.WAV") === sec(3600) &&
+    st("A081C002_260925XX.MP4") === sec(3605);
+  if (!/✓ SENKRON UYGULANDI/.test(out) || !before || !exact) fail(`saatle önce gelen grup: ${got}\n` + rep.split("\n").filter((l) => /Grup \d/.test(l)).join("\n") + "\n" + failLines(out));
+  else ok(`Grup 2 saat ipucuna göre Grup 1'den 3600 sn ÖNCE → önce o (DJI_01 0 sn, C001 10 sn), Grup 1 saat farkıyla 3600 sn'de (DJI_02 3600, C002 3605)`);
+};
+
 // ------------------------------------------------------------ çalıştır
 (async () => {
   setupReal({ nCams: 2, nWavSessions: 1 });

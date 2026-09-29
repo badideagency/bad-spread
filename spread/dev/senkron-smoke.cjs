@@ -399,6 +399,62 @@ scenarios.yardimci_ffmpeg = async () => {
   if (/sha256'sı tutmuyor .*hiçbir şey yazılmadı/.test(e1) && !wrote && /ffmpeg indirilemedi: .*ENOTFOUND.*başka bir yoldan indirip/.test(e2) && /yalnız Windows/.test(e3))
     ok("ffmpeg: sha256 tutmayan zip → hiçbir şey yazılmadı; indirilemezse açık hata + elle koyma yolu; Windows dışında açık hata");
   else fail(`ffmpeg hataları: ${e1} | ${wrote} | ${e2} | ${e3}`);
+  // ffmpegState: boyutu doğru ama içeriği bozuk kurulum "kurulu" sayılmaz; aynı dosyalar ikinci kez okunmaz (her durum sorgusunda değil)
+  let reads = 0;
+  const byName = new Map(SK.FFMPEG.entries.map((e) => [e.out, e]));
+  const fakeFs = {
+    ...fs,
+    statSync: (p) => (byName.has(path.basename(p)) ? { size: byName.get(path.basename(p)).size, mtimeMs: 1 } : fs.statSync(p)),
+    readFileSync: (p, ...r) => (byName.has(path.basename(p)) ? (reads++, Buffer.from("bozuk")) : fs.readFileSync(p, ...r)),
+  };
+  const sk5 = SK.createSenkron({ fs: fakeFs, path, os, crypto, zlib, childProcess: cp, core: CORE, dataDir: dir, platform: "win32" });
+  const st1 = sk5.ffmpegState();
+  const st2 = sk5.ffmpegState();
+  if (!st1.installed && !st2.installed && st1.supported && reads === 1) ok("ffmpeg durumu: boyu tutan ama sha256'sı tutmayan kurulum 'kurulu' sayılmaz → indirme sorulur; ikinci sorguda yeniden okunmaz");
+  else fail(`ffmpeg durumu: ${JSON.stringify([st1, st2])} okuma ${reads}`);
+  // indirme sürerken İptal: istek kesilir, iş 'cancelled', hiçbir şey yazılmaz
+  const EE = require("events");
+  let destroyed = 0;
+  const fakeHttps = {
+    get: (url, opts, cb) => {
+      const req = new EE();
+      const res = new EE();
+      Object.assign(res, { statusCode: 200, headers: {}, complete: false, resume() {} });
+      let timer = null;
+      req.setTimeout = () => {};
+      req.destroy = (err) => {
+        destroyed++;
+        clearInterval(timer);
+        setImmediate(() => {
+          req.emit("error", err || new Error("socket hang up"));
+          res.emit("close");
+        });
+      };
+      setImmediate(() => {
+        cb(res);
+        timer = setInterval(() => res.emit("data", Buffer.alloc(1 << 20)), 5);
+      });
+      return req;
+    },
+  };
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "senkron-"));
+  const sk6 = SK.createSenkron({ fs, path, os, https: fakeHttps, crypto, zlib, childProcess: cp, core: CORE, dataDir: dir2, platform: "win32" });
+  sk6.start({ files: [{ id: "a", path: "C:\\medya\\a.wav", name: "a.wav", kind: "audio", device: "DJI", recording: "a", certain: false, order: null }] });
+  let s6 = sk6.status();
+  for (let i = 0; i < 400 && !/indiriliyor \d+%/.test((s6.progress && s6.progress.text) || ""); i++) {
+    await new Promise((r) => setTimeout(r, 5));
+    s6 = sk6.status();
+  }
+  const seenPct = s6.progress.text;
+  sk6.cancel();
+  for (let i = 0; i < 200 && s6.state === "running"; i++) {
+    await new Promise((r) => setTimeout(r, 10));
+    s6 = sk6.status();
+  }
+  const wrote2 = fs.existsSync(path.join(dir2, "ffmpeg"));
+  fs.rmSync(dir2, { recursive: true, force: true });
+  if (/indiriliyor \d+%/.test(seenPct) && s6.state === "cancelled" && destroyed >= 1 && !wrote2) ok(`indirme sırasında İptal (${seenPct}) → istek kesildi, iş 'cancelled', hiçbir şey yazılmadı`);
+  else fail(`indirme iptali: ${seenPct} / ${s6.state} ${s6.error || ""} / kesilen ${destroyed} / yazıldı ${wrote2}`);
   if (SK.FFMPEG.url === "https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip" && /^[0-9a-f]{64}$/.test(SK.FFMPEG.sha256))
     ok(`sabit ffmpeg: ${SK.FFMPEG.version}, zip sha256 ${SK.FFMPEG.sha256.slice(0, 16)}…`);
   else fail("sabit ffmpeg tanımı");
@@ -423,6 +479,10 @@ scenarios.yardimci_is = async () => {
     fs.writeFileSync(p + ".pcm", Buffer.from(pcm.buffer));
     return { id: "p" + i, path: p, name, kind, device, recording: name.replace(/\..*$/, ""), certain, order };
   });
+  // C002'nin ses akışı videodan 0.25 sn sonra başlıyor (lead): dosya başı = 150.125 − 0.25; DJI_02'de 7 sn → kullanılmaz (not)
+  // (akışın start_time'ı 0.229: AAC ön-dolgusu; ilk çözülen kare 0.25 — lead ilk kareden)
+  fs.writeFileSync(files[3].path + ".meta.json", JSON.stringify({ videoStart: 0, audioStart: 0.229, audioFrame: 0.25 }));
+  fs.writeFileSync(files[1].path + ".meta.json", JSON.stringify({ audioStart: 7 }));
   const fake = path.join(__dirname, "fake-ffmpeg.cjs");
   const tools = { ffmpeg: path.join(dir, "ffmpeg"), ffprobe: path.join(dir, "ffprobe") };
   for (const [k, mode] of [["ffmpeg", "ffmpeg"], ["ffprobe", "ffprobe"]]) {
@@ -444,9 +504,16 @@ scenarios.yardimci_is = async () => {
   const a = await run(mk());
   const out = a.s.out;
   const pos = (n) => out && out.result.placed.find((p) => p.name === n).pos;
-  const good = out && Math.abs(pos("A060C002_260925XX.MP4") - pos("A060C001_260925XX.MP4") - (150.125 - 20.5)) < 0.001 && Math.abs(pos("DJI_02_20260925_140003.WAV") - pos("DJI_01_20260925_140000.WAV") - 3.25) < 0.001;
+  const fl = (n) => out && out.files.find((f) => f.name === n);
+  const good =
+    out &&
+    Math.abs(pos("A060C002_260925XX.MP4") - pos("A060C001_260925XX.MP4") - (150.125 - 0.25 - 20.5)) < 0.001 &&
+    Math.abs(pos("DJI_02_20260925_140003.WAV") - pos("DJI_01_20260925_140000.WAV") - 3.25) < 0.001 &&
+    fl("A060C002_260925XX.MP4").lead === 0.25 &&
+    fl("DJI_02_20260925_140003.WAV").lead === 0 &&
+    /> 5 sn\) — kullanılmadı/.test(fl("DJI_02_20260925_140003.WAV").note);
   if (a.s.state === "done" && good && [...a.seen].some((t) => /ses okunuyor/.test(t)) && out.files.every((f) => f.ok && !f.cached))
-    ok(`iş: 4 dosya sahte ffmpeg'le çözüldü (ilerleme: ${[...a.seen].slice(0, 3).join(" → ")} …), konumlar ≤ 1 ms`);
+    ok(`iş: 4 dosya sahte ffmpeg'le çözüldü (ilerleme: ${[...a.seen].slice(0, 3).join(" → ")} …), konumlar ≤ 1 ms; ses akışı 0.25 sn geç başlayan klip dosya başına göre yerleşti, 7 sn'lik kayma kullanılmadı (not)`);
   else fail(`iş: ${a.s.state} ${a.s.error || ""} ${JSON.stringify(out && out.files)}`);
   const b = await run(mk());
   if (b.s.state === "done" && b.s.out.files.every((f) => f.cached)) ok("ikinci iş: 4 dosya önbellekten (yol + boyut + değişme zamanı), ffmpeg çalışmadı");

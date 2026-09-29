@@ -13,7 +13,7 @@ satırı ve **Senkron** düğmesi çıkar (Ayarlar › DENEYSEL › "Senkron · 
   bulunan konum, güven, hangi dosyayla eşleştiği, dosya adındaki / kayıttaki saatin beklediği konum ve fark, timeline'daki yerine göre
   fark; grup (oturum) özeti; "emin değil" listesi.
 - **Uygula** (deneysel, varsayılan KAPALI): Ayarlar › DENEYSEL › "SENKRON uygula: Açık" → Dene'den sonra sorar. Yalnız Dağıt düzeninde;
-  önce yedek sequence; klipleri yalnız **zamanda** taşır (track'ler aynı, Clip › Synchronize'ın çıktısıyla aynı biçim); ilk dosya tek
+  eşleştirme sürerken timeline değiştiyse başlamaz; önce yedek sequence; klipleri yalnız **zamanda** taşır (track'ler aynı, Clip › Synchronize'ın çıktısıyla aynı biçim); ilk dosya tek
   başına taşınıp ölçülür, her adım doğrulanır. Emin olunmayan dosyalar en sona, tek tek konur (Topla onları park eder).
 - Hesap **Spread Helper**'da yapılır (açık olmalı); Premiere donmaz, ilerleme ("ses okunuyor 3/23", "eşleştiriliyor …") görünür,
   **İptal** düğmesi işi durdurur.
@@ -23,7 +23,9 @@ satırı ve **Senkron** düğmesi çıkar (Ayarlar › DENEYSEL › "Senkron · 
 - Eşleştirme: önce ses zarfıyla kaba arama (bütün kaymalar), sonra 8 kHz sinyalde ±1 sn içinde ince ayar (GCC-PHAT) → milisaniyenin
   altında. Güven: dalga biçimi uyumu (tepe) ve birinci / ikinci aday oranı; eşik altı → "emin değil" (tahmin yok). Aynı kamera
   kendisiyle üst üste olamaz, dosya sırası korunur; çelişen eşleşme düşer. Hiçbir sesle eşleşmeyen / sessiz klip "emin değil".
-  Birbirine bağlanmayan kümeler ayrı grup (oturum); aralarındaki mesafe dosya adındaki saatten, yoksa boşluk.
+  Tekrarlayan içerikte (müzik döngüsü, aynı jingle) tek ve dar bir eşleşmeye güvenilmez; kameranın saatiyle (dosya adı) çok çelişen
+  yerleşim "emin değil". Birbirine bağlanmayan kümeler ayrı grup (oturum); aralarındaki mesafe dosya adındaki saatten, yoksa boşluk.
+  Ses akışı videodan geç başlayan dosyada konum dosyanın başına göre verilir.
 - Topla'nın senkron sağlığı uyarısı artık "→ SENKRON (Spread) ile yeniden hizala ya da elle düzelt" der.
 
 ## Emre için sınama
@@ -36,12 +38,14 @@ satırı ve **Senkron** düğmesi çıkar (Ayarlar › DENEYSEL › "Senkron · 
 
 ## Doğrulama
 
-- Sentetik sınama (`spread/dev/senkron-smoke.cjs`, 8 senaryo): 1 kamera + 3 eşzamanlı mikrofon (10/10, en büyük hata 0.029 ms);
+- Sentetik sınama (`spread/dev/senkron-smoke.cjs`, 9 senaryo): 1 kamera + 3 eşzamanlı mikrofon (10/10, en büyük hata 0.029 ms);
   hiçbir harici sesle örtüşmeyen klip ve sessiz klip → "emin değil"; 2 kamera + Zoom, iki çekim (~128 dk ses, 19/19, en büyük hata
-  0.008 ms, ~45 sn); uzun kayda karşı 12 kısa ilişkisiz klip → hepsi "emin değil"; yanlış yerleşim 0. Yardımcı: istek denetimi, zip,
-  sha256, iş / ilerleme / önbellek / iptal.
+  0.008 ms, ~52 sn); uzun kayda karşı 12 kısa ilişkisiz klip → hepsi "emin değil"; tekrarlayan içerik (döngü, jingle, çelişen eşleşme,
+  saat çelişkisi, tekrar eden bölüm, DC kayması); yanlış yerleşim 0. Yardımcı: istek denetimi, zip, sha256, bozuk kurulum, indirme
+  sırasında İptal, iş / ilerleme / önbellek / iptal, geç başlayan ses akışı.
 - Gerçek ffmpeg (Wine, `scripts/test-senkron-wine.sh`): sabit derleme indirilir + sha256 + çıkarma; WAV (48 kHz stereo), MP4 (H.264 +
-  AAC), MOV (PCM) çözülür; bilinen ofsetler ≤ 0.02 ms.
+  AAC), MOV (PCM) ve sesi 0.5 sn geç başlayan MP4 çözülür; bilinen ofsetler ≤ 0.02 ms (geç başlayan seste 0.66 ms — dosyanın kendi
+  1 ms'lik zaman ölçeği).
 - Panel (mock Premiere, `spread/dev/smoke.cjs`): Dene timeline'a dokunmaz, rapor dosyası ve Sorun bildir bölümü; Uygula (yedek → ölçüm
-  → park → yerleştir, tick düzeyinde) ve ardından Topla tek oturum; İptal; yardımcı yok / Dağıt düzeni değil / ffmpeg indirilemedi →
-  açık hata.
+  → park → yerleştir, tick düzeyinde) ve ardından Topla tek oturum; İptal; yardımcı yok / Dağıt düzeni değil (okunamayan bir klip
+  aynı track'te dahil) / eşleştirme sürerken timeline değişti / ffmpeg indirilemedi → açık hata; saate göre önce gelen grup önce.

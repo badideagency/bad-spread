@@ -98,7 +98,8 @@ export interface UpdateOutcome {
 /** v1.4.0 SENKRON: yardımcının iş sonucu (cep-helper/js/senkron.js → out; result = spread/src/senkron.ts SenkronResult). */
 export interface SenkronOut {
   ffmpeg: string | null;
-  files: { id: string; name: string; ok: boolean; why: string; cached: boolean; seconds: number | null; clock: number | null; clockSrc: string | null }[];
+  /** lead: ses akışının dosya başına göre kayması (sn; konumlara işlendi); note: kullanılmayan kayma vb. */
+  files: { id: string; name: string; ok: boolean; why: string; note?: string; cached: boolean; seconds: number | null; lead?: number; clock: number | null; clockSrc: string | null }[];
   result: import("./senkron").SenkronResult;
 }
 

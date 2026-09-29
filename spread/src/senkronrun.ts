@@ -18,10 +18,12 @@ import { certainDevice, counterUsable } from "./health";
 import {
   askUser,
   ceilTo,
+  confirmNotStopped,
   expectState,
   forgetStopped,
   frameTicks,
   makeBackup,
+  multisetEqual,
   parkBase,
   PARK_GAP,
   rememberStopped,
@@ -32,9 +34,10 @@ import {
 import { spreadDataPath } from "./journal";
 import { compareLayout, expOf, findExp, snapshotOverlaps, type Exp } from "./layout";
 import { getLinker, type SenkronOut } from "./linker";
-import { big, errText, fmtClip, relocate, secOf, settle, snapshot, ticks, TICKS_PER_SECOND, type ClipInfo, type Snapshot } from "./model";
+import { big, errText, fmtClip, relocate, secOf, settle, snapshot, ticks, TICKS_PER_SECOND, trackLabel, type ClipInfo, type Snapshot } from "./model";
 import { ppro } from "./ppro";
 import { Trail } from "./prints";
+import { reconcileAndLog } from "./records";
 import { requireActive, type SeqContext } from "./session";
 import { getGapSec, getSenkronApply } from "./settings";
 import { SPREAD_VERSION } from "./version";
@@ -104,7 +107,8 @@ async function readFiles(s: Snapshot, items: Classified[]): Promise<{ files: Fil
       recording: ident.recording,
       certain: certainDevice(cam ? "camera" : "audio", ident),
       order: null,
-      clips: list.map((x) => x.clip),
+      // dosyanın timeline'daki BÜTÜN klipleri (sınıflandırılamayan parçaları da — Uygula hepsini birlikte taşır)
+      clips: s.clips.filter((c) => c.projId === projId),
     });
   }
   // sayaç: cihazın bütün dosyaları güvenli desende ve tekilse (health.ts ile aynı kural)
@@ -140,7 +144,11 @@ function buildReport(ctx: SeqContext, files: FileRow[], unreadable: string[], ou
   for (const g of r.groups)
     L.push(
       `  Grup ${g.n}: ${g.ids.length} dosya, kapsam ${g.start.toFixed(3)}–${g.end.toFixed(3)} sn` +
-        (g.n === 1 ? "" : g.clockFrom1 !== null ? `; saat ipucuna göre Grup 1'den ${fmtS(g.clockFrom1)} sonra` : "; saat ipucu yok (aralarına boşluk konur)")
+        (g.n === 1
+          ? ""
+          : g.clockFrom1 !== null
+            ? `; saat ipucuna göre Grup 1'den ${Math.abs(g.clockFrom1).toFixed(3)} sn ${g.clockFrom1 >= 0 ? "sonra" : "ÖNCE"}`
+            : "; saat ipucu yok (aralarına boşluk konur)")
     );
   L.push("");
   L.push("DOSYALAR (grup · konum · güven · eşleştiği dosya · saat ipucunun beklediği konum ve fark · timeline'daki yerine göre fark)");
@@ -167,7 +175,7 @@ function buildReport(ctx: SeqContext, files: FileRow[], unreadable: string[], ou
   L.push("");
   L.push("CİHAZ SAATİ (dosya adı / timecode / creation_time — yalnız aramayı daraltır)");
   if (!r.deviceClock.length) L.push("  (saat ipucu yok)");
-  for (const d of r.deviceClock) L.push(`  ${d.device}: ${d.n} dosyadan (konum − saat) medyanı`);
+  for (const d of r.deviceClock) L.push(`  ${d.device}: ${d.n} dosyadan (konum − saat) medyanı ${d.offset.toFixed(3)} sn, sapma medyanı ${d.spread.toFixed(3)} sn`);
   for (const f of out.files.filter((x) => x.clockSrc)) L.push(`  "${f.name}": saat kaynağı ${f.clockSrc}`);
   L.push("");
   L.push("EŞLEŞMELER (ham; s = b'nin a'ya göre başlangıcı; tepe = GCC-PHAT; oran = sonraki adaya; artık = sonuçla fark)");
@@ -179,7 +187,11 @@ function buildReport(ctx: SeqContext, files: FileRow[], unreadable: string[], ou
   for (const n of r.notes) L.push(`not: ${n}`);
   L.push("");
   L.push("OKUNAN DOSYALAR");
-  for (const f of out.files) L.push(`  "${f.name}" ${f.ok ? `${(f.seconds ?? 0).toFixed(3)} sn${f.cached ? " (önbellek)" : ""}` : `OKUNAMADI: ${f.why}`}  ${byId.get(f.id)?.path ?? ""}`);
+  for (const f of out.files)
+    L.push(
+      `  "${f.name}" ${f.ok ? `${(f.seconds ?? 0).toFixed(3)} sn${f.cached ? " (önbellek)" : ""}` : `OKUNAMADI: ${f.why}`}` +
+        `${f.lead ? ` · ses akışı dosya başından ${fmtS(f.lead)} (konuma işlendi)` : ""}${f.note ? ` · not: ${f.note}` : ""}  ${byId.get(f.id)?.path ?? ""}`
+    );
   return L.join("\n");
 }
 
@@ -224,6 +236,7 @@ export async function runSenkron(): Promise<void> {
     if (!ping.ok) throw Object.assign(new SpreadStop("SENKRON Spread Helper'la çalışır (ses çözme ve eşleştirme orada) — yardımcıya ulaşılamadı.", [ping.detail, ...linker.installHint()]), { restored: true });
     const st0 = await linker.senkron({ op: "status" });
     if (st0.state === "running") throw new SpreadStop("Spread Helper'da bir SENKRON işi zaten sürüyor; bitmesini bekle ya da İptal.");
+    if (st0.ffmpeg && !st0.ffmpeg.supported) throw new SpreadStop("SENKRON şimdilik yalnız Windows'ta (sabit ffmpeg derlemesi Windows için). Timeline'a dokunulmadı.");
     if (st0.ffmpeg && !st0.ffmpeg.installed) {
       const ans = await askUser(
         `SENKRON ilk kullanımda ffmpeg'i indirir: resmî Windows derlemesi (${st0.ffmpeg.version}, ~88 MB, GPL v3), sabit adresten; sha256 doğrulanır, ` +
@@ -285,6 +298,9 @@ export async function runSenkron(): Promise<void> {
   }
 }
 
+/** Aynı klipler, aynı yerlerde, aynı track sayısıyla. */
+const sameTimeline = (a: Snapshot, b: Snapshot) => multisetEqual(a, b) && a.vCount === b.vCount && a.aCount === b.aCount;
+
 interface Move {
   c: ClipInfo;
   delta: bigint;
@@ -302,10 +318,21 @@ async function apply(
   trail: Trail,
   setBackup: (n: string) => void
 ): Promise<void> {
-  // Dağıt düzeni: her track'te tek dosyanın klipleri; her dosyanın klipleri aynı medya başlangıcında
-  const byTrack = new Map<string, Set<string>>();
-  for (const f of files) for (const c of f.clips) byTrack.set(`${c.kind}${c.track}`, new Set([...(byTrack.get(`${c.kind}${c.track}`) ?? []), f.id]));
-  const shared = [...byTrack].filter(([, ids]) => ids.size > 1).map(([t]) => t);
+  // eşleştirme dakikalar sürebilir: timeline bu arada değiştiyse sonuç eski okumaya göre → hiçbir şey yapılmaz
+  const sF = await snapshot(ctx);
+  for (const w of sF.warnings) throw new SpreadStop(`Okuma sorunu: ${w}. Uygula başlamadı.`);
+  if (!sameTimeline(s0, sF)) throw new SpreadStop("Eşleştirme sürerken timeline değişti — Uygula başlamadı (hiçbir şey yapılmadı). SENKRON'u yeniden çalıştır.");
+  await reconcileAndLog(ctx.guid, sF);
+  if (!(await confirmNotStopped(ctx, sF, "SENKRON"))) return void (log("Uygula iptal edildi — timeline değişmedi (rapor duruyor).", "warn"), opEnd("cancel", "Uygulanmadı; timeline değişmedi."));
+  // Dağıt düzeni: taşınacak her dosyanın track'lerinde YALNIZ o dosyanın klipleri (timeline'daki BÜTÜN kliplere bakılır: okunamayan /
+  // sınıflandırılamayan klipler de); her dosyanın klipleri aynı medya başlangıcında
+  const mine = new Set(files.map((f) => f.id));
+  const byTrack = new Map<string, Set<string>>(); // "A3" (kullanıcının gördüğü track adı) → dosyalar
+  for (const c of s0.clips) {
+    const k = trackLabel(c.kind, c.track);
+    byTrack.set(k, new Set([...(byTrack.get(k) ?? []), c.projId]));
+  }
+  const shared = [...byTrack].filter(([, ids]) => ids.size > 1 && [...ids].some((id) => mine.has(id))).map(([t]) => t);
   if (shared.length) throw new SpreadStop(`Uygula yalnız Dağıt düzeninde çalışır (her dosya kendi track'inde); şu track'lerde birden çok dosya var: ${shared.join(", ")}. Önce Dağıt.`);
   const bad = files.filter((f) => mediaStart(f) === null);
   if (bad.length) throw new SpreadStop("Aynı dosyanın klipleri farklı senkron konumunda; Uygula başlamadı.", bad.map((f) => f.name));
@@ -317,13 +344,14 @@ async function apply(
   const target = new Map<string, bigint>();
   const rounding: string[] = [];
   let cursor = 0n;
-  const groups = r.groups.slice().sort((a, b) => (a.clockFrom1 ?? a.n * 1e9) - (b.clockFrom1 ?? b.n * 1e9));
-  let g1Origin: bigint | null = null;
+  // saatli gruplar saat sırasıyla (Grup 1'den ÖNCE olan da olabilir: clockFrom1 < 0), saatsizler sonra
+  const groups = r.groups.slice().sort((a, b) => (a.clockFrom1 ?? 1e9 + a.n) - (b.clockFrom1 ?? 1e9 + b.n));
+  let zero: bigint | null = null; // saat ipucu koordinatında Grup 1'in başı (ilk saatli grubun yerinden)
   for (const g of groups) {
     const mem = r.placed.filter((p) => p.status === "ok" && p.group === g.n);
-    const clock = g.clockFrom1 !== null && g1Origin !== null ? g1Origin + secToTicks(g.clockFrom1) : null;
+    const clock = g.clockFrom1 !== null && zero !== null ? zero + secToTicks(g.clockFrom1) : null;
     const origin = ceilTo(clock !== null && clock >= cursor ? clock : cursor, frame);
-    if (g1Origin === null) g1Origin = origin;
+    if (zero === null && g.clockFrom1 !== null) zero = origin - secToTicks(g.clockFrom1);
     let end = origin;
     for (const p of mem) {
       const f = byId.get(p.id)!;
@@ -365,10 +393,12 @@ async function apply(
   );
   if (ans !== "Evet") return void (log("Uygula iptal edildi — timeline değişmedi (rapor duruyor).", "warn"), opEnd("cancel", "Uygulanmadı; timeline değişmedi."));
   for (const l of rounding) log(`  ${l}`, "dim");
+  if (!sameTimeline(s0, await snapshot(ctx))) throw new SpreadStop("Onay beklerken timeline değişti. Güvenlik için durduruldu (hiçbir şey yapılmadı).");
   progress(0.1, "Yedek sequence alınıyor…");
   const backup = await makeBackup(ctx, "SENKRON");
   setBackup(backup.name);
   let prev = await snapshot(ctx);
+  if (!sameTimeline(s0, prev)) throw new SpreadStop("Yedek alınırken asıl sequence'ın klipleri değişti. Durduruldu.");
   let beforeLast: Snapshot | null = null;
   const lastEnd = s0.clips.reduce((m, c) => (big(c.end) > m ? big(c.end) : m), 0n);
   const pb = await parkBase(ctx, prev);

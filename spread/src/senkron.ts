@@ -2,7 +2,7 @@
 // dosyaları ffmpeg ile mono 8 kHz'e çözer ve buraya verir; sonuç yalnız veri (hangi dosya nerede, ne kadar emin). UXP (Spread)
 // sonucu okur, raporlar ("Dene") ya da — Ayarlar'daki deneysel anahtar açıksa — timeline'a uygular ("Uygula").
 //
-// 1) ZARF (kaba arama için, 100 Hz): 10 ms'lik blokların enerjisi → log (kazanç farkı toplamsal sabite döner) → ±0.5 sn hareketli
+// 1) ZARF (kaba arama için, 100 Hz): sinyalin ortalaması (DC kayması) çıkarılır; 10 ms'lik blokların enerjisi → log (kazanç farkı toplamsal sabite döner) → ±0.5 sn hareketli
 //    ortalaması çıkarılır (hece ritmi kalır, mikrofonun rengi / gürültü tabanı gider). Sessiz ya da ayırt edici sesi olmayan dosya
 //    ("sessiz") eşleşmeye girmez → "emin değil".
 // 2) KABA: iki zarfın bütün kaydırmalarda NORMALİZE çapraz korelasyonu (FFT + önek toplamlarıyla yerel normalizasyon; yalnız en az
@@ -23,7 +23,9 @@
 //        > clockTolSec uyuşmayan dosyası "emin değil" (saat ipucuyla çelişiyor) ve çözüm onsuz yeniden kurulur.
 // 5) SAAT İPUÇLARI (dosya adı tarih_saat, ffprobe creation_time / timecode) YALNIZ aramayı daraltır ve raporlanır: cihaz başına saat
 //    kayması, o cihazın güvenle yerleşmiş dosyalarının (konum − saat) medyanı. İpucuyla daraltılmış ikinci turda da eşikler aynı.
-// Bütün konumlar saniye (Number); tick'e çeviri UXP'de (1 sn = 254016000000 tick; 1 ms ≪ 1 kare).
+// Bütün konumlar saniye (Number); tick'e çeviri UXP'de (1 sn = 254016000000 tick; 1 ms ≪ 1 kare). Rapordaki konumlar DOSYA BAŞINA
+// göre (Premiere klibi dosyanın zaman sıfırına koyar): PCM'in ilk örneği dosya başından `lead` sn sonraysa (ses akışı geç başlıyor;
+// yardımcı ffprobe'dan bulur) konum = PCM başı − lead.
 
 export const SR = 8000;
 export const ENV_RATE = 100;

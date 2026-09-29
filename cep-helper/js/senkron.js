@@ -178,12 +178,13 @@
     var job = null;
     var seq = 0;
     var verified = null; // bu oturumda doğrulanmış ikililer
+    var badSig = null; // sha256'sı tutmayan kurulumun (boyut:zaman) imzası
 
     function sha256(buf) {
       return deps.crypto.createHash("sha256").update(buf).digest("hex");
     }
 
-    /** https GET → Buffer; yalnız izinli alan adları, en çok 5 yönlendirme, boyut ve süre sınırlı; ilerleme (bayt). */
+    /** https GET → Buffer; yalnız izinli alan adları, en çok 5 yönlendirme, boyut ve süre sınırlı; ilerleme (bayt); iptalde kesilir. */
     function get(url, maxBytes, hops, onBytes) {
       return new Promise(function (resolve, reject) {
         var u;
@@ -208,7 +209,10 @@
           var size = 0;
           res.on("data", function (c) {
             size += c.length;
-            if (size > maxBytes) {
+            if (job && job.cancel) {
+              req.destroy();
+              reject(fail("iptal", "iptal edildi"));
+            } else if (size > maxBytes) {
               req.destroy();
               reject(fail("ffmpeg", "dosya beklenenden büyük"));
             } else {
@@ -218,6 +222,9 @@
           });
           res.on("end", function () {
             resolve(Buffer.concat(chunks));
+          });
+          res.on("close", function () {
+            if (!res.complete) reject(job && job.cancel ? fail("iptal", "iptal edildi") : fail("ffmpeg", "indirme yarıda kesildi"));
           });
           res.on("error", function (e) {
             reject(fail("ffmpeg", "indirme kesildi: " + e.message));
@@ -229,6 +236,7 @@
         req.on("error", function (e) {
           reject(e && e.stage ? e : fail("ffmpeg", "bağlantı hatası: " + ((e && e.message) || e)));
         });
+        if (job) job.request = req;
       });
     }
 
@@ -236,18 +244,29 @@
       return { ffmpeg: deps.path.join(ffDir, "ffmpeg.exe"), ffprobe: deps.path.join(ffDir, "ffprobe.exe") };
     }
 
-    /** Kurulu ikililer sabit sha256'larla tutuyor mu (bu oturumda bir kez). */
+    /** Kurulu ikililer sabit sha256'larla tutuyor mu (bu oturumda bir kez; tutmayan kurulum, dosyalar değişene dek yeniden okunmaz). */
     function installedOk() {
       if (verified) return true;
+      var sig = "";
       try {
+        var sts = FFMPEG.entries.map(function (e) {
+          var st = deps.fs.statSync(deps.path.join(ffDir, e.out));
+          if (st.size !== e.size) throw new Error("boyut");
+          return st;
+        });
+        sig = sts
+          .map(function (st) {
+            return st.size + ":" + st.mtimeMs;
+          })
+          .join("|");
+        if (sig === badSig) return false;
         FFMPEG.entries.forEach(function (e) {
-          var p = deps.path.join(ffDir, e.out);
-          var st = deps.fs.statSync(p);
-          if (st.size !== e.size || sha256(deps.fs.readFileSync(p)) !== e.sha256) throw new Error("tutmuyor");
+          if (sha256(deps.fs.readFileSync(deps.path.join(ffDir, e.out))) !== e.sha256) throw new Error("tutmuyor");
         });
         verified = exePaths();
         return true;
       } catch (e) {
+        if (sig) badSig = sig;
         return false;
       }
     }
@@ -293,21 +312,40 @@
             var d = got[e.name];
             if (d.length !== e.size || sha256(d) !== e.sha256) throw fail("ffmpeg", e.out + " sha256 tutmuyor — hiçbir şey yazılmadı");
           });
-          deps.fs.mkdirSync(ffDir, { recursive: true });
-          FFMPEG.entries.forEach(function (e) {
-            var p = deps.path.join(ffDir, e.out);
-            deps.fs.writeFileSync(p + ".new", got[e.name]);
-            deps.fs.renameSync(p + ".new", p);
-          });
-          deps.fs.writeFileSync(
-            deps.path.join(ffDir, "KAYNAK.txt"),
-            "ffmpeg " + FFMPEG.version + "\r\n" + FFMPEG.url + "\r\nzip sha256 " + FFMPEG.sha256 + "\r\nLisans: GPL v3 (LICENSE.txt). Spread SENKRON için indirildi; silinebilir (gerekirse yeniden iner).\r\n"
-          );
+          if (job && job.cancel) throw fail("iptal", "iptal edildi");
+          // önce hepsi ".new" olarak yazılır, sonra yeniden adlandırılır; hata → ".new"ler silinir, açık mesaj (yarım kurulum doğrulamadan geçmez)
+          var news = [];
+          try {
+            deps.fs.mkdirSync(ffDir, { recursive: true });
+            FFMPEG.entries.forEach(function (e) {
+              var p = deps.path.join(ffDir, e.out);
+              news.push(p + ".new");
+              deps.fs.writeFileSync(p + ".new", got[e.name]);
+            });
+            FFMPEG.entries.forEach(function (e) {
+              var p = deps.path.join(ffDir, e.out);
+              deps.fs.renameSync(p + ".new", p);
+            });
+            deps.fs.writeFileSync(
+              deps.path.join(ffDir, "KAYNAK.txt"),
+              "ffmpeg " + FFMPEG.version + "\r\n" + FFMPEG.url + "\r\nzip sha256 " + FFMPEG.sha256 + "\r\nLisans: GPL v3 (LICENSE.txt). Spread SENKRON için indirildi; silinebilir (gerekirse yeniden iner).\r\n"
+            );
+          } catch (we) {
+            news.forEach(function (n) {
+              try {
+                deps.fs.unlinkSync(n);
+              } catch (ue) {
+                /* yok */
+              }
+            });
+            throw fail("ffmpeg", "ffmpeg klasörüne yazılamadı (" + ffDir + "): " + ((we && we.message) || we) + ". Disk dolu ya da dosya kullanımda olabilir (açık bir ffmpeg / virüs tarayıcı); yeniden dene.");
+          }
           verified = exePaths();
           log("senkron: ffmpeg kuruldu ve doğrulandı (" + src + ", sha256 " + FFMPEG.sha256 + ")");
           return { ffmpeg: verified.ffmpeg, ffprobe: verified.ffprobe, how: (fromDisk ? "elle konan zip'ten" : "indirildi") + ", sha256 doğrulandı" };
         },
         function (e) {
+          if ((e && e.stage === "iptal") || (job && job.cancel)) throw fail("iptal", "iptal edildi");
           throw fail(
             "ffmpeg",
             "ffmpeg indirilemedi: " +
@@ -359,7 +397,33 @@
       });
     }
 
-    /** ffprobe: süre, ses akışı var mı, creation_time / timecode. */
+    /**
+     * ffprobe: süre, ses akışı var mı, creation_time / timecode, ses başlangıç kayması.
+     * lead = ilk ses akışının (ffmpeg "-map 0:a:0" ile AYNI akış) ÇÖZÜLEN ilk karesinin zamanı − dosyanın zaman sıfırı (ilk video akışının
+     * start_time'ı, yoksa format start_time). Çözülen PCM o kareyle başlar; Premiere klibi dosyanın zaman sıfırına göre yerleştirir →
+     * motor konumları bununla düzeltir. Akışın start_time'ı yetmez: AAC'de kodlayıcı ön-dolgusu (ör. 1024 örnek) çözülürken atılır ve
+     * ilk karenin zamanı o kadar ileri kayar (Wine sınaması: sesi 0.5 sn geç başlayan MP4'te start_time 0.478, ilk kare 0.5).
+     * Kare okunamazsa akışın start_time'ı; o da yoksa lead yok.
+     */
+    function firstAudioFrame(tools, file) {
+      var args = ["-v", "error", "-select_streams", "a:0", "-read_intervals", "%+#16", "-show_entries", "frame=pts_time,best_effort_timestamp_time", "-print_format", "json", file.path];
+      return run(tools.ffprobe, args, 1024 * 1024).then(
+        function (b) {
+          var j = JSON.parse(b.toString("utf8") || "{}");
+          var fr = Array.isArray(j.frames) ? j.frames : [];
+          for (var i = 0; i < fr.length; i++) {
+            var t = Number(fr[i].best_effort_timestamp_time !== undefined ? fr[i].best_effort_timestamp_time : fr[i].pts_time);
+            if (fr[i].best_effort_timestamp_time !== undefined || fr[i].pts_time !== undefined) if (isFinite(t)) return t;
+          }
+          return null;
+        },
+        function (e) {
+          if ((e && e.stage === "iptal") || (job && job.cancel)) throw e;
+          return null;
+        }
+      );
+    }
+
     function probe(tools, file) {
       return run(tools.ffprobe, ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", file.path], 4 * 1024 * 1024).then(function (b) {
         var j = JSON.parse(b.toString("utf8") || "{}");
@@ -374,14 +438,39 @@
           for (var i = 0; i < tags.length; i++) if (tags[i] && tags[i][k]) return String(tags[i][k]);
           return null;
         };
-        return {
+        var num = function (v) {
+          var n = typeof v === "string" || typeof v === "number" ? Number(v) : NaN;
+          return isFinite(n) ? n : null;
+        };
+        var aud = streams.filter(function (s) {
+          return s.codec_type === "audio";
+        })[0];
+        var vid = streams.filter(function (s) {
+          return s.codec_type === "video" && !(s.disposition && s.disposition.attached_pic);
+        })[0];
+        var aStart = aud ? num(aud.start_time) : null;
+        var ref = vid && num(vid.start_time) !== null ? num(vid.start_time) : num(fmt.start_time);
+        var res = {
           duration: Number(fmt.duration) || null,
-          audio: streams.some(function (s) {
-            return s.codec_type === "audio";
-          }),
+          audio: !!aud,
           creation: pick("creation_time"),
           timecode: pick("timecode"),
+          lead: null,
+          leadSrc: null,
         };
+        if (!aud || ref === null) return res;
+        return firstAudioFrame(tools, file).then(function (t) {
+          if (t !== null) {
+            res.lead = t - ref;
+            res.leadSrc = "ilk ses karesi";
+          } else if (aStart !== null) {
+            res.lead = aStart - ref;
+            res.leadSrc = "akış start_time";
+          }
+          // 1 µs altı: yuvarlama gürültüsü
+          if (res.lead !== null && Math.abs(res.lead) < 1e-6) res.lead = 0;
+          return res;
+        });
       });
     }
 
@@ -465,7 +554,7 @@
             chain = chain.then(function () {
               if (job.cancel) throw fail("iptal", "iptal edildi");
               progress("ses okunuyor " + (i + 1) + "/" + req.files.length + ": " + f.name, 0.06 + 0.34 * (i / req.files.length));
-              var row = { id: f.id, name: f.name, path: f.path, ok: false, why: "", cached: false, seconds: null, clock: null, clockSrc: null, probe: null };
+              var row = { id: f.id, name: f.name, path: f.path, ok: false, why: "", note: "", cached: false, seconds: null, clock: null, clockSrc: null, lead: 0, probe: null };
               info.push(row);
               var pr = null;
               return probe(tools, f)
@@ -474,7 +563,8 @@
                     pr = x;
                     row.probe = x;
                   },
-                  function () {
+                  function (e) {
+                    if ((e && e.stage === "iptal") || job.cancel) throw fail("iptal", "iptal edildi");
                     pr = null;
                   }
                 )
@@ -499,7 +589,12 @@
                       row.clock = Date.parse(pr.creation) / 1000;
                       row.clockSrc = "creation_time";
                     }
-                    inputs.push({ id: f.id, name: f.name, kind: f.kind, device: f.device, recording: f.recording, certain: f.certain, order: f.order, pcm: d.pcm, clock: row.clock, clockSrc: row.clockSrc });
+                    // ses akışı dosya başından kaymışsa (ör. MP4'te AAC ön-dolgusu, kamerada sesin geç başlaması)
+                    if (pr && pr.lead !== null) {
+                      if (Math.abs(pr.lead) <= 5) row.lead = pr.lead;
+                      else row.note = "ses akışı dosya başından " + pr.lead.toFixed(3) + " sn kaymış görünüyor (> 5 sn) — kullanılmadı";
+                    }
+                    inputs.push({ id: f.id, name: f.name, kind: f.kind, device: f.device, recording: f.recording, certain: f.certain, order: f.order, pcm: d.pcm, clock: row.clock, clockSrc: row.clockSrc, lead: row.lead });
                   },
                   function (e) {
                     if (e && e.stage === "iptal") throw e;
@@ -548,24 +643,16 @@
               var x = inputs.filter(function (q) {
                 return q.id === r.id;
               })[0];
-              return { id: r.id, name: r.name, ok: r.ok, why: r.why, cached: r.cached, seconds: r.seconds, clock: x ? x.clock : null, clockSrc: x ? x.clockSrc : null };
+              return { id: r.id, name: r.name, ok: r.ok, why: r.why, note: r.note, cached: r.cached, seconds: r.seconds, lead: r.lead, clock: x ? x.clock : null, clockSrc: x ? x.clockSrc : null };
             }),
             result: res,
           };
         });
     }
 
-    /** Hızlı durum (sha256 yok, yalnız dosya boyları): UXP ilk kullanımda indirme onayı sorsun. */
+    /** Durum: UXP ilk kullanımda indirme onayı sorsun. Kurulu sayılması için sha256'lar tutmalı (oturumda bir kez okunur, ~175 MB). */
     function ffmpegState() {
-      var installed = !!deps.tools || !!verified;
-      if (!installed)
-        try {
-          installed = FFMPEG.entries.every(function (e) {
-            return deps.fs.statSync(deps.path.join(ffDir, e.out)).size === e.size;
-          });
-        } catch (e) {
-          installed = false;
-        }
+      var installed = !!deps.tools || (/^win/i.test(platform) && installedOk());
       return { installed: installed, version: FFMPEG.version, dir: ffDir, supported: !!deps.tools || /^win/i.test(platform) };
     }
 
@@ -579,7 +666,7 @@
         if (!deps.core || typeof deps.core.senkronSolve !== "function") throw fail("istek", "spread-core.js'de SENKRON yok (yardımcı eski sürüm)");
         var req = cleanStart(body, deps.path, platform);
         seq++;
-        job = { id: seq, state: "running", progress: { text: "başlıyor…", frac: 0 }, started: new Date().toISOString(), cancel: false, child: null, out: null, error: null, ffmpeg: null };
+        job = { id: seq, state: "running", progress: { text: "başlıyor…", frac: 0 }, started: new Date().toISOString(), cancel: false, child: null, request: null, out: null, error: null, ffmpeg: null };
         var mine = job;
         log("senkron: iş " + mine.id + " — " + req.files.length + " dosya");
         work(req).then(
@@ -608,6 +695,12 @@
       cancel: function () {
         if (!job || job.state !== "running") return { ok: true, state: job ? job.state : "idle" };
         job.cancel = true;
+        if (job.request)
+          try {
+            job.request.destroy();
+          } catch (e) {
+            /* zaten bitmiş */
+          }
         if (job.child)
           try {
             job.child.kill();

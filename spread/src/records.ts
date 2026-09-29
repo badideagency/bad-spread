@@ -29,6 +29,8 @@ import { log, type StepId } from "./ui";
 export const STEP_LABEL: Record<StepId, string> = { spread: "Dağıt", topla: "Topla", bagla: "Bağla" };
 const ORDER: StepId[] = ["spread", "topla", "bagla"];
 const OP_STEP: Record<string, StepId> = { SPREAD: "spread", Spread: "spread", TOPLA: "topla", BAĞLA: "bagla" };
+/** adım olmayan işlemler (işaret bırakmaz; yarım iş kaydı yine tutulur) */
+const OP_NAME: Record<string, string> = { SENKRON: "Senkron" };
 
 export { fingerprint, trackPrint } from "./prints";
 
@@ -41,7 +43,7 @@ export function hasRecords(guid: string): boolean {
 export const stale = (what: string) => `Timeline değişmiş (geri alma/elle düzenleme) — önceki ${what} kaydı unutuldu.`;
 const unprinted = (what: string) =>
   `Önceki ${what} kaydı timeline'la doğrulanamıyor (parmak izi yok: eski sürümün ya da işlem sonunda okunamamış bir kayıt) — unutuldu.`;
-const GEN: Record<string, string> = { Dağıt: "Dağıt'ın", Topla: "Topla'nın", Bağla: "Bağla'nın" };
+const GEN: Record<string, string> = { Dağıt: "Dağıt'ın", Topla: "Topla'nın", Bağla: "Bağla'nın", Senkron: "Senkron'un" };
 const partialLine = (what: string, left: number, backup?: string | null) =>
   `Timeline, önceki ${GEN[what] ?? what} ara hâllerinden birinde (yarım geri alınmış; klipler eksik olabilir): tamamen geri almak için ` +
   `Ctrl+Z × ${left} daha${backup ? ` ya da yedek sequence "${backup}"` : ""}. Bir sonraki işlem sorar.`;
@@ -121,7 +123,7 @@ export async function reconcile(guid: string, s: Snapshot): Promise<string[]> {
   // 1) yarım iş koruması: DURDU anındaki timeline birebir duruyor mu; değilse durmuş işlemin ara hâllerinden birinde mi (kısmi geri alma)
   const st = stoppedOf(guid);
   if (st && st.digest !== dg) {
-    const label = STEP_LABEL[OP_STEP[st.op ?? ""] ?? "spread"] ?? st.op ?? "işlem";
+    const label = OP_NAME[st.op ?? ""] ?? STEP_LABEL[OP_STEP[st.op ?? ""] ?? "spread"] ?? st.op ?? "işlem";
     const hit = st.mids?.find((x) => x.fp === fp);
     if (hit) {
       setStopped(guid, { ...st, digest: dg, left: hit.left });

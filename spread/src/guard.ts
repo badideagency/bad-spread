@@ -224,9 +224,9 @@ export async function prepareTracks(
 // ------------------------------------------------------------------ DUR raporu
 /** @param op "SPREAD" / "TOPLA" / "BAĞLA" */
 /** v1.1.0 ana ekrandaki adım adları (günlükte işlem adları aynı: SPREAD / TOPLA / BAĞLA). */
-const STEP_NAME: Record<string, string> = { SPREAD: "Dağıt", Spread: "Dağıt", TOPLA: "Topla", BAĞLA: "Bağla" };
-const GEN: Record<string, string> = { Dağıt: "Dağıt'ın", Topla: "Topla'nın", Bağla: "Bağla'nın" };
-const ACC: Record<string, string> = { Dağıt: "Dağıt'ı", Topla: "Topla'yı", Bağla: "Bağla'yı" };
+const STEP_NAME: Record<string, string> = { SPREAD: "Dağıt", Spread: "Dağıt", TOPLA: "Topla", BAĞLA: "Bağla", SENKRON: "Senkron" };
+const GEN: Record<string, string> = { Dağıt: "Dağıt'ın", Topla: "Topla'nın", Bağla: "Bağla'nın", Senkron: "Senkron'un" };
+const ACC: Record<string, string> = { Dağıt: "Dağıt'ı", Topla: "Topla'yı", Bağla: "Bağla'yı", Senkron: "Senkron'u" };
 
 export function reportStop(op: string, e: unknown, executed: string[], backupName: string | null, extra: string[] = []): void {
   const stop = e instanceof SpreadStop ? e : null;

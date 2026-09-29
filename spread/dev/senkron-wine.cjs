@@ -122,19 +122,24 @@ function wav(file, M, sr, start, dur, gain, noise, seed) {
   };
   addWav("DJI_01_20260925_150000.WAV", 0, 230, 1, 0.003, 1);
   addWav("DJI_02_20260925_150002.WAV", 2.3456, 225, 0.5, 0.004, 2);
-  const cam = (name, start, dur, codec, seed) => {
+  // aoff: ses akışı videodan aoff sn sonra başlar (dosya başı = start − aoff; yardımcı ffprobe start_time'larından "lead" bulur)
+  const cam = (name, start, dur, codec, seed, aoff = 0) => {
     const src = path.join(work, name + ".src.wav");
     wav(src, M, SR, start, dur, 0.4, 0.02, seed);
     const p = path.join(media, name);
     const ac = codec === "aac" ? ["-c:a", "aac", "-b:a", "192k"] : ["-c:a", "pcm_s16le"];
-    runWin(tools.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", `testsrc=size=160x120:rate=25:duration=${dur}`, "-i", src, "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", ...ac, "-shortest", p]);
-    truth[name] = start;
+    const off = aoff ? ["-itsoffset", String(aoff)] : [];
+    runWin(tools.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", `testsrc=size=160x120:rate=25:duration=${dur + aoff}`, ...off, "-i", src, "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", ...ac, p]);
+    truth[name] = start - aoff;
     files.push({ id: name, path: p, name, kind: "camera", device: "A", recording: name.replace(/\..*$/, ""), certain: true, order: [70, files.length] });
   };
   cam("A070C001_260925XX.MP4", 20.25, 40, "aac", 11);
   cam("A070C002_260925XX.MOV", 90.0625, 50, "pcm", 12);
   cam("A070C003_260925XX.MP4", 160.5, 45, "aac", 13);
-  ok(`medya üretildi: 2 WAV (48 kHz stereo), 2 MP4 (H.264 + AAC), 1 MOV (PCM) — "${path.basename(media)}" (boşluklu klasör)`);
+  cam("A070C004_260925XX.MP4", 211.25, 15, "aac", 14, 0.5);
+  const pr4 = JSON.parse(runWin(tools.ffprobe, ["-v", "error", "-print_format", "json", "-show_streams", path.join(media, "A070C004_260925XX.MP4")]).toString());
+  const starts = pr4.streams.map((x) => `${x.codec_type} ${x.start_time}`).join(", ");
+  ok(`medya üretildi: 2 WAV (48 kHz stereo), 3 MP4 (H.264 + AAC; biri sesi 0.5 sn geç başlayan: ${starts}), 1 MOV (PCM) — "${path.basename(media)}" (boşluklu klasör)`);
   sk2.start({ files, opts: { frameSec: 1 / 25 } });
   let s = sk2.status();
   for (let i = 0; i < 2400 && s.state === "running"; i++) {
@@ -158,10 +163,11 @@ function wav(file, M, sr, start, dur, gain, noise, seed) {
     worst = Math.max(worst, Math.abs(e));
     rows.push(`${p.name} ${e >= 0 ? "+" : ""}${e.toFixed(3)} ms`);
   }
-  const probe = s.out.files.map((f) => `${f.name}: ${f.seconds && f.seconds.toFixed(3)} sn${f.clockSrc ? ` (saat: ${f.clockSrc})` : ""}`);
+  const probe = s.out.files.map((f) => `${f.name}: ${f.seconds && f.seconds.toFixed(3)} sn${f.lead ? `, lead ${f.lead.toFixed(4)} sn` : ""}${f.clockSrc ? ` (saat: ${f.clockSrc})` : ""}`);
   console.log("    çözülen: " + probe.join("; "));
   console.log("    hata: " + rows.join("; "));
-  if (worst <= 1) ok(`gerçek ffmpeg ile 5 dosya çözüldü ve eşleşti; en büyük hata ${worst.toFixed(3)} ms (≤ 1 ms; AAC'nin baştaki gecikmesi ffmpeg'in edit list'iyle düşülüyor)`);
+  if (worst <= 1 && rows.length === files.length)
+    ok(`gerçek ffmpeg ile ${rows.length} dosya çözüldü ve eşleşti; en büyük hata ${worst.toFixed(3)} ms (≤ 1 ms; AAC'nin baştaki gecikmesi ffmpeg'in edit list'iyle düşülüyor; geç başlayan ses akışı dosya başına göre — onun kalan ~0.67 ms'si dosyanın kendisinde: kap 0.5 − 1024/48000 = 0.4787 sn'yi 1 ms'lik ölçekte 0.478 yazıyor)`);
   else fail(`en büyük hata ${worst.toFixed(3)} ms > 1 ms`);
   console.log(fails ? `\nSENKRON WINE FAIL (${fails})` : "\nSENKRON WINE OK");
   process.exit(fails ? 1 : 0);
