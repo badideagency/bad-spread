@@ -1,4 +1,4 @@
-SPREAD 1.2.0 — Premiere Pro için çok kameralı çekim düzenleyici
+SPREAD 1.2.1 — Premiere Pro için çok kameralı çekim düzenleyici
 ================================================================
 
 KURULUM (bir kez)
@@ -22,6 +22,8 @@ GÜNLÜK KULLANIM (her çekim için; sıra hep aynı)
 
   - Panelde yalnız SIRADAKİ adımın düğmesi görünür. Biten adımda ✓ var; yeniden yapmak için adın üstüne tıkla → "Yeniden çalıştır".
     Adım işaretleri yanlışsa: Ayarlar > "Adımı elle çalıştır".
+  - Panelin kayıtları yalnız ipucudur, kilit değil (1.2.1): Ctrl+Z ile geri aldıysan panel bunu timeline'dan görür, eski ✓ silinir
+    ve Dağıt / Topla yeniden yapılabilir. Timeline hiç değişmemişse yalnız "zaten yapılmış görünüyor, yine de çalıştırılsın mı?" diye sorar.
   - Her işlem önce kısa bir onay gösterir (en çok 3 satır). Okumadan "Devam" deme.
   - Her işlem önce yedek sequence alır.
   - Panel bir şey beklendiği gibi olmazsa DURUR: kırmızı tek satır + "Ne yapmalıyım?".
@@ -44,6 +46,8 @@ GÜNCELLEME (1.2.0 son elle kurulum; bundan sonrakiler panelden gelir)
 
 YENİLE (↻)
   - Spread'in başlığındaki ↻: Spread Helper'ı ve Spread'i yeniden yükler, timeline'ı baştan okur (panel takılırsa).
+    Açık sequence'ın panel kayıtlarını da temizler (adım işaretleri, yarım iş kaydı, Topla / Bağla kaydı, eski Bağla planı);
+    başka sequence'ların kayıtları ve kırpma ölçümü kalır.
   - Spread Helper'daki ↻ yalnız onu yeniden yükler.
 
 BİR ŞEY TERS GİDERSE

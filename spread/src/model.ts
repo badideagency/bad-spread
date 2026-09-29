@@ -4,9 +4,10 @@
 //     referans yalnızca aldığı kuşakta kullanılabilir (useRef); klipler (tür, track, start, end, kaynak adı) ile yeniden bulunur.
 
 import { ppro } from "./ppro";
-import type { ProjectItem, TickTime, TrackItem } from "./ppro";
+import type { ProjectItem, Sequence, TickTime, TrackItem } from "./ppro";
 import type { SeqContext } from "./session";
 import { secOf, trackLabel } from "./core";
+import { fpsToFrameTicks } from "./trimstate";
 
 export type Kind = "V" | "A";
 
@@ -29,6 +30,8 @@ export interface ClipInfo {
   projType: number | null;
   /** Kaynağın (medyanın) toplam süresi, tick — okunamazsa null. */
   mediaDur: string | null;
+  /** v1.2.1: proje öğesinin (footage) kare süresi, tick — okunamazsa null (kırpma kuralı sequence timebase'ine düşer; trimstate.ts). */
+  frameTicks: string | null;
   selected: boolean;
   /** Probe'da sınanmamış, isteğe bağlı okumaların hataları (ayar katmanı, proje öğesi türü, medya süresi) — engel değil. */
   optErrors: string[];
@@ -140,12 +143,18 @@ async function readClip(item: TrackItem, kind: Kind, loopTrack: number, gen: num
   const rawType = proj ? await safe("ProjectItem.type", () => proj.type, null, opt) : null; // d.ts:L2860 ProjectItem.type
   const projType = typeof rawType === "number" ? rawType : null;
   let mediaDur: string | null = null;
+  let frameTicks: string | null = null;
   if (media && proj) {
     const clipItem = await safe("ClipProjectItem.cast", () => ppro.ClipProjectItem.cast(proj), null, opt); // d.ts:L788 ClipProjectItemStatic.cast
     const m = clipItem ? await safe("getMedia", () => clipItem.getMedia(), null, opt) : null; // d.ts:L1029 ClipProjectItem.getMedia
     const d = m ? await safe("Media.getDuration", () => m.getDuration(), null, opt) : null; // d.ts:L2087 Media.getDuration
     const dt = d ? tt(d).ticks : "?";
     mediaDur = /^\d+$/.test(dt) ? dt : null;
+    // v1.2.1 kırpma kuralının "1 kare"si (Probe'da sınanmadı → okunamazsa sequence timebase'i)
+    const fi = clipItem ? await safe("getFootageInterpretation", () => clipItem.getFootageInterpretation(), null, opt) : null; // d.ts:L880 ClipProjectItem.getFootageInterpretation
+    const fps: unknown = fi ? await safe("FootageInterpretation.getFrameRate", () => fi.getFrameRate(), null, opt) : null; // d.ts:L1598 FootageInterpretation.getFrameRate
+    const ft = fpsToFrameTicks(fps);
+    frameTicks = ft ? ft.toString() : null;
   }
   return {
     kind,
@@ -165,6 +174,7 @@ async function readClip(item: TrackItem, kind: Kind, loopTrack: number, gen: num
     projName,
     projType,
     mediaDur,
+    frameTicks,
     selected,
     optErrors: opt,
     ref: item,
@@ -207,6 +217,37 @@ export async function snapshot(ctx: SeqContext, opts: { media?: boolean } = {}):
   }
   if (gen !== refGen) warnings.push("okuma sırasında kuşak değişti (eşzamanlı transaction?)");
   return { vCount, aCount, clips, warnings, gen };
+}
+
+// ---------- v1.2.1: şekil (hafif okuma) ----------
+
+function shapeText(v: number, a: number, per: Map<string, number>): string {
+  const parts = [...per.entries()].filter(([, n]) => n > 0).map(([k, n]) => `${k}:${n}`);
+  return `${v}/${a}|${parts.sort().join(",")}`;
+}
+
+/** Timeline'ın şekli: track sayıları + track başına klip sayısı. Değişirse kayıtlar tam parmak iziyle yeniden karşılaştırılır. */
+export function shapeOf(s: Snapshot): string {
+  const per = new Map<string, number>();
+  for (const c of s.clips) per.set(`${c.kind}${c.track}`, (per.get(`${c.kind}${c.track}`) ?? 0) + 1);
+  return shapeText(s.vCount, s.aCount, per);
+}
+
+/** shapeOf ile AYNI dizge, ama klip okumadan (track başına yalnız getTrackItems uzunluğu; referans tutulmaz). */
+export async function readShape(seq: Sequence): Promise<string> {
+  const v = await seq.getVideoTrackCount(); // d.ts:L3243 Sequence.getVideoTrackCount
+  const a = await seq.getAudioTrackCount(); // d.ts:L3164 Sequence.getAudioTrackCount
+  const CLIP = ppro.Constants.TrackItemType.CLIP; // d.ts:L4804 Constants.TrackItemType
+  const per = new Map<string, number>();
+  for (let i = 0; i < v; i++) {
+    const t = await seq.getVideoTrack(i); // d.ts:L3238 Sequence.getVideoTrack
+    per.set(`V${i}`, t ? (t.getTrackItems(CLIP, false) ?? []).length : 0); // d.ts:L4392 VideoTrack.getTrackItems
+  }
+  for (let i = 0; i < a; i++) {
+    const t = await seq.getAudioTrack(i); // d.ts:L3159 Sequence.getAudioTrack
+    per.set(`A${i}`, t ? (t.getTrackItems(CLIP, false) ?? []).length : 0); // d.ts:L672 AudioTrack.getTrackItems
+  }
+  return shapeText(v, a, per);
 }
 
 // ---------- anahtarlar ----------

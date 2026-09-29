@@ -296,6 +296,14 @@ export function saveRecord(rec: CollectRecord): void {
   write(REC_KEY, JSON.stringify(all));
 }
 
+/** v1.2.1: bu sequence'ın TOPLA / BAĞLA kaydını siler (başka sequence'larınkine dokunmaz). */
+export function forgetRecord(guid: string): void {
+  const all = allRecords();
+  if (!(guid in all)) return;
+  delete all[guid];
+  write(REC_KEY, JSON.stringify(all));
+}
+
 /** BAĞLA aşamasını kayda yazar (null: temizle). Kayıt yoksa bir şey yapmaz. */
 export function saveBindRecord(guid: string, bind: BindRecord | null): void {
   const r = loadRecord(guid);

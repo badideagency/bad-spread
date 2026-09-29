@@ -32,7 +32,11 @@ const frames = (n) => BigInt(n) * FRAME25;
 const secOf = (t) => (Number(t) / Number(TPS)).toFixed(3);
 
 // ------------------------------------------------------------ mock ayarları (senaryo başına)
-const M0 = { broken: false, nonseq: false, nobackup: false, backupActive: false, falseTx: null, badBackup: false, noType: false, undoAfterTx: null, setSem: "real", linkFailName: null, linkedSemantics: "link", cloneTimeBroken: false, planWriteFails: false, fetchError: null, hostVersion: "26.5.1", chType: null, linkRejectMixed: false, channelApi: true };
+const M0 = { broken: false, nonseq: false, nobackup: false, backupActive: false, falseTx: null, badBackup: false, noType: false, undoAfterTx: null, setSem: "real", linkFailName: null, linkedSemantics: "link", cloneTimeBroken: false, planWriteFails: false, fetchError: null, hostVersion: "26.5.1", chType: null, linkRejectMixed: false, channelApi: true, timebase: FRAME25, noFootage: false, owMode: "clip", owShift: 0n, owExtra: 0n, linkTrimFollow: false };
+// v1.2.1 overwrite modları: M.owMode "clip" (varsayılan: proje öğesinin klip süresi = p.clipDur ?? p.dur → aslıyla birebir), "media"
+// (kuyruk medya sonuna uzar: p.dur); M.owShift: video + ses start'ı bu kadar kayık (baş kayması); M.owExtra: kuyruk bu kadar uzun.
+// M.linkTrimFollow: bağlı videoya SetOutPoint → bağlı sesler de aynı farkla değişir (gerçek Premiere'de ölçülmedi; SPREAD ölçer).
+// M.timebase: sequence kare süresi (null → getTimebase hata); M.noFootage: getFootageInterpretation hata (p.fps yoksa 25 fps).
 // v1.1.0 kanal tipi (ExtendScript AudioChannelMapping.audioChannelsType): M.chType(ad) → tip; null = hepsi mono (0) — eski senaryolar
 // aynen. M.linkRejectMixed: gerçek Premiere 26.5.1'deki gibi mono + stereo karışık seçimde linkSelection() false döner.
 const chTypeOf = (name) => (M.chType ? M.chType(name) : 0);
@@ -138,6 +142,8 @@ function wrapItem(id) {
           const d = v - c0[field];
           if (name === "end" || name === "out") (f.c.end += d), (f.c.outPt += d); // kuyruk kenarı
           else (f.c.start += d), (f.c.inPt += d); // baş kenarı
+          if (M.linkTrimFollow && name === "out" && f.c.linkId) // bağlı partnerler aynı farkla (yalnız bu kipte)
+            for (const grp of [f.s.v, f.s.a]) for (const tr of grp) for (const x of tr) if (x.id !== id && x.linkId === f.c.linkId) (x.end += d), (x.outPt += d);
         } else fn(f, BigInt(t.ticks));
         // en kötü durum: set sonrası aynı track'te çakışan klip EZİLİR (Premiere'in davranışı ölçülmedi)
         f.grp[f.t] = f.grp[f.t].filter((x) => x.id === id || x.end <= f.c.start || x.start >= f.c.end);
@@ -202,7 +208,10 @@ function wrapSequence(guid) {
       return s().v.length;
     },
     getAudioTrackCount: async () => s().a.length,
-    getTimebase: async () => String(FRAME25), // kare başına tick (25 fps)
+    getTimebase: async () => {
+      if (M.timebase === null) throw new Error("mock: getTimebase yok");
+      return String(M.timebase); // kare başına tick (varsayılan 25 fps)
+    },
     getVideoTrack: async (i) => wrapTrack(guid, "V", i),
     getAudioTrack: async (i) => wrapTrack(guid, "A", i),
     getEndTime: async () => {
@@ -270,13 +279,14 @@ const editorFor = (seqW) => {
         const k = p.channels;
         if ((p.hasVideo && vIdx >= S.v.length) || (k && aIdx + k - 1 >= S.a.length))
           throw new Error(`mock: overwrite olmayan track'e (V${vIdx + 1}/A${aIdx + 1}) — KANITLANMADI`);
-        const st = BigInt(time.ticks);
+        const st = BigInt(time.ticks) + M.owShift;
+        const len = (M.owMode === "media" ? p.dur : p.clipDur ?? p.dur) + M.owExtra;
         const L = "L" + nextId++;
         if (p.hasVideo) {
           const vs = M.broken ? st + FRAME25 : st; // bozuk overwrite: video 1 kare kayık
-          place(S.v, vIdx, mkClip("V", p, vs, vs + p.dur, L));
+          place(S.v, vIdx, mkClip("V", p, vs, vs + len, L));
         }
-        for (let c = 0; c < k; c++) place(S.a, aIdx + c, mkClip("A", p, st, st + p.dur, L));
+        for (let c = 0; c < k; c++) place(S.a, aIdx + c, mkClip("A", p, st, st + len, L));
         counters.overwrites++;
       },
     }),
@@ -292,7 +302,13 @@ const ppro = {
   ClipProjectItem: {
     cast: (p) => {
       if (M.noType) throw new Error("mock: ClipProjectItem.cast yok");
-      return { getMedia: async () => ({ getDuration: () => mkTT(p.dur) }) };
+      return {
+        getMedia: async () => ({ getDuration: () => mkTT(p.dur) }),
+        getFootageInterpretation: async () => {
+          if (M.noFootage) throw new Error("mock: getFootageInterpretation yok");
+          return { getFrameRate: () => p.fps ?? 25 };
+        },
+      };
     },
   },
   TickTime: { TIME_ZERO: mkTT(0n), createWithTicks: (t) => mkTT(BigInt(t)) },
@@ -420,6 +436,7 @@ Module._load = ((orig) =>
           return String(d).length;
         },
         mkdir: (p, o) => fsReal.promises.mkdir(p, o),
+        unlink: (p) => fsReal.promises.unlink(p).then(() => 0),
       };
     return orig.apply(this, arguments);
   })(Module._load);
@@ -580,9 +597,11 @@ scenarios.real = async () => {
   if (!/✓ SPREAD tamam/.test(out)) fail("SPREAD tamamlanmadı:\n" + out.split("\n").filter((l) => /DURDU|•|HATA/.test(l)).join("\n"));
   const S = seqByGuid("guid-main-edit");
   checkLayout(S, exp, "gerçek düzen (22 kamera + 12 WAV)");
-  if (counters.txNames.join(",") !== "Spread: yedek sequence,Spread: track hazırlığı,Spread: dağıt")
+  // v1.2.1: dağıt = clone + sil; kameralar ayrı: ilki tek başına (ölçüm), sonra kalanlar (hepsi birebir → SetOutPoint yok)
+  if (counters.txNames.join(",") !== "Spread: yedek sequence,Spread: track hazırlığı,Spread: dağıt,Spread: ilk overwrite (ölçüm),Spread: overwrite")
     fail(`transaction'lar: ${counters.txNames.join(", ")}`);
-  else ok("transaction'lar: yedek → track hazırlığı → dağıt (kırpılmış klip yok → eşitleme adımı yok)");
+  else ok("transaction'lar: yedek → track hazırlığı → dağıt → ilk overwrite (ölçüm) → overwrite (birebir → kuyruk düzeltme yok)");
+  if (!/Ctrl\+Z'ye 4 kez bas/.test(out)) fail("geri alma talimatı Ctrl+Z × 4 değil");
   if (counters.setActions.size) fail(`kırpılmamış kliplere set action çalıştı: ${counters.setActions.size}`);
   else ok("kırpılmamış kliplere hiç set action çalışmadı");
   const backup = state.sequences.find((x) => x.name === "Ana Kurgu Copy");
@@ -592,12 +611,11 @@ scenarios.real = async () => {
   if (S.sel.size !== exp.length) fail(`son seçim ${S.sel.size}/${exp.length}`);
   else ok(`son adımda ${S.sel.size} klip programla seçildi`);
   if (!/Clip > Synchronize/.test(out)) fail("Synchronize talimatı yok");
-  // Ctrl+Z × 2 (dağıt + track hazırlığı) → asıl düzene döner
-  undo();
-  undo();
+  // Ctrl+Z × 4 (overwrite + ilk overwrite + dağıt + track hazırlığı) → asıl düzene döner
+  for (let i = 0; i < 4; i++) undo();
   const back = seqByGuid("guid-main-edit");
-  if (ser(back.v) === beforeV && ser(back.a) === beforeA) ok("Ctrl+Z × 2 → asıl düzen birebir geri geldi");
-  else fail("Ctrl+Z × 2 aslına döndürmedi");
+  if (ser(back.v) === beforeV && ser(back.a) === beforeA) ok("Ctrl+Z × 4 → asıl düzen birebir geri geldi");
+  else fail("Ctrl+Z × 4 aslına döndürmedi");
 };
 
 scenarios.trim = async () => {
@@ -620,14 +638,17 @@ scenarios.broken = async () => {
   const s = setupReal({ nCams: 6, nWavSessions: 2 });
   M.broken = true;
   const out = await clickAndWait("btn-spread", yes);
-  if (!/✗ SPREAD DURDU: Taşıma doğrulaması tutmadı/.test(out)) fail("bozuk overwrite yakalanmadı:\n" + out);
-  else ok("bozuk overwrite (video 1 kare kayık) doğrulamada yakalandı → DURDU");
-  if (!/start: asıl=\d+ şimdi=\d+ \(fark 10160640000 tick\)/.test(out)) fail("fark tick olarak raporlanmadı");
-  else ok("fark raporda: 10160640000 tick (1 kare)");
+  // v1.2.1: ilk kamera tek başına overwrite edilip ölçülür → bozukluk İLK overwrite'ta yakalanır, kalan kameralara dokunulmaz
+  if (!/✗ SPREAD DURDU: İLK OVERWRITE TUTMADI \(ölçüm, "C0101\.MP4"\)/.test(out)) fail("bozuk overwrite yakalanmadı:\n" + out);
+  else ok("bozuk overwrite (video 1 kare kayık) ilk overwrite ölçümünde yakalandı → DURDU");
+  if (!/start: asıl=\d+ şimdi=\d+ \(fark 10160640000 tick\)/.test(out) || !/start \+10160640000 tick = \+40\.000 ms = \+1\.000 kare/.test(out)) fail("fark tick / ms / kare olarak raporlanmadı");
+  else ok("fark raporda: 10160640000 tick = 40 ms = 1 kare");
   if (counters.txNames.includes("Spread: kırpma eşitlemesi") || counters.setActions.size) fail("panel kendi başına düzeltmeye çalıştı (set action)!");
   else ok("panel kendi başına düzeltme yapmadı");
-  if (!/Ctrl\+Z'ye 2 kez bas — ya da yedek sequence "Ana Kurgu Copy"/.test(out)) fail("geri alma talimatı eksik");
-  else ok("talimat: Ctrl+Z × 2 ya da yedek sequence");
+  if (counters.overwrites !== 1) fail(`ölçüm tutmadıktan sonra ${counters.overwrites - 1} kamera daha overwrite edildi`);
+  else ok("kalan kameralara dokunulmadı (yalnız ilk kamera overwrite edildi)");
+  if (!/Ctrl\+Z'ye 3 kez bas — ya da yedek sequence "Ana Kurgu Copy"/.test(out)) fail("geri alma talimatı eksik");
+  else ok("talimat: Ctrl+Z × 3 (track hazırlığı, dağıt, ilk overwrite) ya da yedek sequence");
 };
 
 scenarios.nonseq = async () => {
@@ -1755,7 +1776,8 @@ scenarios.linkonly_thinned = async () => {
 
 scenarios.partial_undo = async () => {
   // inceleme #9 B1: kesimden sonra Ctrl+Z (parçaları TEK transaction yerleştirir → geri alınınca HEPSİ gider) "elle silinmiş" SAYILMAZ:
-  // Spread de yardımcı panel de hiçbir şey bağlamadan DURMALI (×1 ve ×3)
+  // Spread de yardımcı panel de hiçbir şey bağlamamalı (×1 ve ×3). v1.2.1: BAĞLA kaydı bu düzenle tutmuyor → bayat: unutulur (eski KES
+  // planı da silinir); BAĞLA planını canlı timeline'dan kurar → ön koşullar tutmaz → hiçbir şey değişmez; yardımcı panelde plan yok
   await collectThen(smallSpec());
   await stopHelper();
   const o1 = await clickAndWait("btn-bind", yes, doneRe);
@@ -1763,21 +1785,27 @@ scenarios.partial_undo = async () => {
   for (const k of [1, 3]) {
     const snap = deepCopy();
     const stack = undoStack.slice();
+    const ls = new Map(lsStore); // v1.2.1: kayıtlar da her turda KES sonrası hâline döner (bayat kayıt her turda yeniden unutulur)
+    const planFile = path.join(TMPHOME, "Library", "Application Support", "BadIdeaAgency", "SpreadHelper", "link-plan.json");
+    const planText = fsReal.existsSync(planFile) ? fsReal.readFileSync(planFile, "utf8") : null;
     for (let i = 0; i < k; i++) undo();
     const h = await startHelper();
     const n0 = counters.links;
     const tx0 = counters.txNames.length;
     const o2 = await clickAndWait("btn-bind", yes, doneRe);
     const r = await h.bindFromPlan({});
-    if (!/✗ BAĞLA DURDU: BAĞLA'dan sonra düzen değişmiş/.test(o2) || counters.links !== n0 || counters.txNames.length !== tx0)
+    if (!/Timeline değişmiş \(geri alma\/elle düzenleme\) — önceki Bağla kaydı unutuldu/.test(o2) || !/✗ BAĞLA DURDU: Plan kurulamadı .*hiçbir şey değişmedi/.test(o2) || counters.links !== n0 || counters.txNames.length !== tx0)
       fail(`Ctrl+Z × ${k} sonrası Spread BAĞLA durmadı:\n${failLines(o2)}`);
-    else ok(`Ctrl+Z × ${k} (kesim geri alındı) → Spread BAĞLA hiçbir şey yapmadan DURDU ("düzen değişmiş")`);
-    if (r.ok || !/Kesilen parçaların hiçbiri timeline'da yok/.test(r.summary) || counters.links !== n0) fail(`Ctrl+Z × ${k} sonrası yardımcı panel: ${r.summary}`);
-    else ok(`Ctrl+Z × ${k} → yardımcı paneldeki Bağla da DURDU ("kesilen parçaların hiçbiri yok"), hiçbir şey bağlanmadı`);
+    else ok(`Ctrl+Z × ${k} (kesim geri alındı) → bayat BAĞLA kaydı unutuldu; BAĞLA canlı timeline'dan plan kuramadı, hiçbir şey değişmedi`);
+    if (r.ok || !/KES planı okunamadı/.test(r.summary) || counters.links !== n0) fail(`Ctrl+Z × ${k} sonrası yardımcı panel: ${r.summary}`);
+    else ok(`Ctrl+Z × ${k} → eski KES planı silindi; yardımcı paneldeki Bağla planı bulamadı, hiçbir şey bağlanmadı`);
     await stopHelper();
     restore(snap);
     undoStack.length = 0;
     undoStack.push(...stack);
+    lsStore.clear();
+    for (const [key, v] of ls) lsStore.set(key, v);
+    if (planText !== null) fsReal.writeFileSync(planFile, planText);
     mockGen++;
   }
 };
@@ -1801,9 +1829,11 @@ scenarios.stop_per_guid = async () => {
   state.activeGuid = "guid-main-edit";
   mockGen++;
   const n = counters.txNames.length;
-  const o4 = await clickAndWait("btn-bind", yes, doneRe);
-  if (!/YARIM hâlde/.test(o4) || counters.txNames.length !== n) fail("yedekteki başarılı işlemler aslın yarım iş kaydını sildi:\n" + failLines(o4));
-  else ok("yedekte Topla + Bağla başarılı; asıl hâlâ 'YARIM hâlde' diye korunuyor (kayıt sequence GUID'ine bağlı)");
+  // v1.2.1: yarım iş kaydı kilit değil SORU; Vazgeç → hiçbir şey
+  let title = "";
+  const o4 = await clickAndWait("btn-bind", async (x) => ((title = els["ask-title"].textContent), no()), doneRe);
+  if (!/YARIM hâlde/.test(o4) || title !== "Bağla yine de çalıştırılsın mı?" || counters.txNames.length !== n) fail("yedekteki başarılı işlemler aslın yarım iş kaydını sildi:\n" + title + "\n" + failLines(o4));
+  else ok("yedekte Topla + Bağla başarılı; asılda hâlâ 'YARIM hâlde' sorusu (kayıt sequence GUID'ine bağlı); Vazgeç → hiçbir şey");
 };
 
 scenarios.backup_copy = async () => {
@@ -2423,17 +2453,19 @@ scenarios.adv_camonly = async () => {
 };
 
 scenarios.adv_after = async () => {
-  // (a) KESİMLİ BAĞLA'dan sonra: TOPLA başlamaz (senkron kanıtı kesildi); BAĞLA yalnız bağlar; BAĞLA geri alınınca her şey normal
+  // (a) KESİMLİ BAĞLA'dan sonra: TOPLA SORAR (v1.2.1: kilit değil; senkron kanıtı kesildi) → Vazgeç = hiçbir şey; BAĞLA geri
+  //     alınınca her şey normal
   const collected = await collectThen(smallSpec());
   await startHelper();
   const o1 = await clickAndWait("btn-bind", yes, doneRe);
   if (!/✓ BAĞLA tamam/.test(o1)) return fail("BAĞLA tamamlanmadı:\n" + failLines(o1));
   const bound = JSON.stringify(state.sequences, repl);
   const n = counters.txNames.length;
-  const o2 = await clickAndWait("btn-collect", yes, doneRe);
-  if (!/✗ TOPLA DURDU: Bu sequence BAĞLA'dan geçti/.test(o2) || JSON.stringify(state.sequences, repl) !== bound || counters.txNames.length !== n)
-    fail("kesimli BAĞLA'dan sonra TOPLA durmadı:\n" + o2.split("\n").slice(-4).join("\n"));
-  else ok("kesimli BAĞLA'dan sonra TOPLA → DURDU (oturumlar kesilmiş düzenden tahmin edilmez), hiçbir şey değişmedi");
+  let tq = "";
+  const o2 = await clickAndWait("btn-collect", async (x) => ((tq = els["ask-title"].textContent + " | " + x), no()), doneRe);
+  if (!/^Topla yine de çalıştırılsın mı\? \| Bu sequence'ta Bağla zaten yapılmış görünüyor: sesler kesildi/.test(tq) || !/İptal edildi/.test(o2) || JSON.stringify(state.sequences, repl) !== bound || counters.txNames.length !== n)
+    fail("kesimli BAĞLA'dan sonra TOPLA sormadı / değiştirdi:\n" + tq + "\n" + o2.split("\n").slice(-4).join("\n"));
+  else ok("kesimli BAĞLA'dan sonra TOPLA → kilit değil SORU ('Bağla zaten yapılmış görünüyor'); Vazgeç → hiçbir şey değişmedi");
   for (let i = 0; i < 4; i++) undo();
   const o3 = await clickAndWait("btn-collect", yes, doneRe);
   if (!/Zaten toplanmış/.test(o3)) fail("BAĞLA geri alınınca TOPLA 'zaten toplanmış' demedi:\n" + o3.split("\n").slice(-4).join("\n"));
@@ -2683,7 +2715,8 @@ scenarios.adv_undone_park = async () => {
   const qs = [];
   const o2 = await clickAndWait("btn-collect", async (x) => (qs.push(x), yes()), doneRe);
   const conf = qs.find((x) => /^TOPLA — /.test(x)) ?? "";
-  if (qs.some((x) => /PARK KAYDI/.test(x)) || !/geri alınmış .*park kaydı .*kullanılmıyor/.test(o2) || !/O1 .*DJI_09/.test(conf) || !/✓ TOPLA tamam: 1 oturum/.test(o2))
+  // v1.2.1: TOPLA tamamen geri alınınca kaydı (park listesi dahil) bayat → işlemden önce unutulur
+  if (qs.some((x) => /PARK KAYDI/.test(x)) || !/Timeline değişmiş \(geri alma\/elle düzenleme\) — önceki Topla kaydı unutuldu/.test(o2) || !/O1 .*DJI_09/.test(conf) || !/✓ TOPLA tamam: 1 oturum/.test(o2))
     fail("TOPLA geri alınmışken eski park kaydı kullanıldı:\n" + qs.join("\n---\n") + "\n" + failLines(o2));
   else ok("TOPLA tamamen geri alındı → park kaydı bırakıldı (sorulmadan, kanıtla); %80 eşikte DJI senkron sonucundan O1'e katıldı");
   thr.value = "90";
@@ -3296,9 +3329,11 @@ scenarios.stale = async () => {
   if (/"guid-main-edit"/.test(lsStore.get("spread.trimCal.v1") ?? "")) fail("tutmayan kalibrasyon kaydı silinmedi");
   if (!/Ctrl\+Z'ye 9 kez bas/.test(o1)) fail("geri alma talimatı yanlış (7 kalibrasyon + kesim hazırlığı + ilk parça = 9)");
   const n = counters.txNames.length;
-  const out = await clickAndWait("btn-bind", yes, doneRe);
-  if (!/YARIM hâlde/.test(out) || counters.txNames.length !== n) fail("yarım düzende BAĞLA yeniden başladı:\n" + out);
-  else ok("geri alınmamış yarım düzende BAĞLA BAŞLAMADI");
+  // v1.2.1: kilit değil SORU ("yarım kalmış görünüyor. … yine de çalıştırılsın mı?"); Vazgeç → hiçbir şey
+  let q = "";
+  const out = await clickAndWait("btn-bind", async (x) => ((q = x), no()), doneRe);
+  if (!/^Bu sequence'ta önceki Bağla yarım kalmış görünüyor: .*YARIM hâlde/.test(q) || !/İptal edildi/.test(out) || counters.txNames.length !== n) fail("yarım düzende BAĞLA sormadı / yeniden başladı:\n" + q + "\n" + out);
+  else ok("geri alınmamış yarım düzende BAĞLA → kilit değil soru ('yarım kalmış görünüyor'); Vazgeç → BAŞLAMADI");
   for (let i = 0; i < 9; i++) undo();
   if (mainTracks() !== afterCollect) fail("Ctrl+Z × 9 geri getirmedi");
   const out2 = await clickAndWait("btn-bind", yes, doneRe);
@@ -3527,6 +3562,9 @@ function fakeHttps() {
     },
   };
 }
+// v1.2.1: yüklü sürüm = paketin sürümü; "yeni sürüm" bir yama yukarısı (sürüm her yükseldiğinde senaryolar aynen çalışsın)
+const CUR_VER = JSON.parse(fsReal.readFileSync(path.join(__dirname, "..", "public", "manifest.json"), "utf8")).version;
+const NEXT_VER = CUR_VER.replace(/\d+$/, (n) => String(Number(n) + 1));
 function fakeChild() {
   return {
     spawn(cmd, args, opts) {
@@ -3548,7 +3586,7 @@ function fakeChild() {
         }, 5);
       if (cmd === U_UPIA && args[0] === "/list")
         setTimeout(() => {
-          const v = upd.listShows === false ? "1.2.0" : upd.installed ?? "1.2.0";
+          const v = upd.listShows === false ? CUR_VER : upd.installed ?? CUR_VER;
           cp.stdout.emit("data", `2 extension installed for Premiere Pro (ver 26.5.1)\r\n  Status   Extension Name   Version\r\n  Enabled  Spread           ${v}\r\n  Enabled  Başka Eklenti    3.1.0\r\n`);
           cp.emit("close", 0);
         }, 5);
@@ -3634,10 +3672,10 @@ scenarios.update_same = async () => {
   setupSync(smallSpec());
   updReset();
   await startUpdHelper();
-  publish("1.2.0");
+  publish(CUR_VER);
   await checkNow();
   if (stripText() !== "(gizli)") fail(`aynı sürümde şerit göründü: ${stripText()}`);
-  else ok("latest.json = yüklü sürüm (1.2.0) → şerit YOK");
+  else ok(`latest.json = yüklü sürüm (${CUR_VER}) → şerit YOK`);
   publish("1.1.9");
   await checkNow();
   if (stripText() !== "(gizli)") fail("eski sürümde şerit göründü");
@@ -3663,14 +3701,14 @@ scenarios.update_new = async () => {
   setupSync(smallSpec());
   updReset();
   await startUpdHelper();
-  const { zip } = publish("1.2.1");
+  const { zip } = publish(NEXT_VER);
   const before = readTree(U_EXT);
   await checkNow();
-  if (stripText() !== "Yeni sürüm 1.2.1 · Güncelle") return fail(`şerit: ${stripText()}`);
-  ok("yeni sürüm → üstte şerit 'Yeni sürüm 1.2.1 · Güncelle'");
+  if (stripText() !== `Yeni sürüm ${NEXT_VER} · Güncelle`) return fail(`şerit: ${stripText()}`);
+  ok(`yeni sürüm → üstte şerit 'Yeni sürüm ${NEXT_VER} · Güncelle'`);
   const { asked } = await runStrip(["Evet", "Hayır"]);
   const a1 = asked[0], a2 = asked[1];
-  if (!a1 || a1.title !== "Yeni sürüm 1.2.1" || a1.yes !== "Güncelle" || a1.no !== "Şimdi değil" || a1.summary.join("|") !== "Daha hızlı bağlama.|Yeni görünüm.")
+  if (!a1 || a1.title !== `Yeni sürüm ${NEXT_VER}` || a1.yes !== "Güncelle" || a1.no !== "Şimdi değil" || a1.summary.join("|") !== "Daha hızlı bağlama.|Yeni görünüm.")
     fail(`güncelleme sorusu: ${JSON.stringify(a1)}`);
   else ok("şeride bas → notlar (1–3 madde) + [Şimdi değil] [Güncelle]");
   if (!a2 || a2.title !== "Projeyi kaydedip Premiere'i yeniden başlatayım mı?" || a2.yes !== "Yeniden başlat" || a2.no !== "Sonra") fail(`yeniden başlatma sorusu: ${JSON.stringify(a2)}`);
@@ -3682,17 +3720,17 @@ scenarios.update_new = async () => {
   const bdirs = fsReal.existsSync(yedek) ? fsReal.readdirSync(yedek) : [];
   const backup = bdirs.length === 1 ? readTree(path.join(yedek, bdirs[0])) : {};
   if (!wrote || JSON.stringify(backup) !== JSON.stringify(before)) fail(`yardımcı dosyaları / yedek: yazıldı=${wrote}, yedek=${bdirs.length}`);
-  else ok(`yardımcı: önce klasörün TAMAMI yedeklendi (${Object.keys(before).length} dosya), sonra 1.2.1 dosyaları yazıldı`);
+  else ok(`yardımcı: önce klasörün TAMAMI yedeklendi (${Object.keys(before).length} dosya), sonra ${NEXT_VER} dosyaları yazıldı`);
   const upia = upd.spawns.filter((x) => x.cmd === U_UPIA);
   const ccx = upia[0] && fsReal.readFileSync(upia[0].args[1]);
   const kitCcx = UPD.readZip(require("zlib"), zip).find((e) => e.name === "spread.ccx").data;
   if (upia.length !== 2 || upia[0].args[0] !== "/install" || upia[1].args.join(" ") !== "/list all" || !ccx || !ccx.equals(kitCcx) || upd.spawns.length !== 2)
     fail(`UPIA çağrısı: ${JSON.stringify(upd.spawns.map((x) => [x.cmd, x.args]))}`);
-  else ok("panel: UnifiedPluginInstallerAgent /install <indirilen spread.ccx> (KUR.cmd ile aynı), sonra /list all'da 'Spread 1.2.1' doğrulandı");
-  if (!/1\.2\.1 kuruldu; Premiere'i yeniden başlatınca açılır/.test(resultHead()) || hostile.quit || counters.saves) fail(`sonuç: ${resultHead()} quit=${hostile.quit}`);
-  else ok("'Sonra' → Premiere'e dokunulmadı; tek satır '1.2.1 kuruldu; Premiere'i yeniden başlatınca açılır.'");
+  else ok(`panel: UnifiedPluginInstallerAgent /install <indirilen spread.ccx> (KUR.cmd ile aynı), sonra /list all'da 'Spread ${NEXT_VER}' doğrulandı`);
+  if (!resultHead().includes(`${NEXT_VER} kuruldu; Premiere'i yeniden başlatınca açılır`) || hostile.quit || counters.saves) fail(`sonuç: ${resultHead()} quit=${hostile.quit}`);
+  else ok(`'Sonra' → Premiere'e dokunulmadı; tek satır '${NEXT_VER} kuruldu; Premiere'i yeniden başlatınca açılır.'`);
   const ulog = fsReal.readFileSync(path.join(updDataDir(), "update.log"), "utf8");
-  if (!/sha256 doğru/.test(ulog) || !/paket denetimi tamam/.test(ulog) || !/UPIA \/list all: doğrulandı — Enabled Spread 1\.2\.1/.test(ulog) || !/bitti: yardımcı kuruldu, panel kuruldu/.test(ulog)) fail(`update.log: ${ulog}`);
+  if (!/sha256 doğru/.test(ulog) || !/paket denetimi tamam/.test(ulog) || !ulog.includes(`UPIA /list all: doğrulandı — Enabled Spread ${NEXT_VER}`) || !/bitti: yardımcı kuruldu, panel kuruldu/.test(ulog)) fail(`update.log: ${ulog}`);
   else ok("güncelleme günlüğü (update.log): sha256 → paket denetimi → yedek → yazma → UPIA → bitti");
   copied = null;
   els["btn-issue"].click();
@@ -3706,7 +3744,7 @@ scenarios.update_badsha = async () => {
   setupSync(smallSpec());
   updReset();
   await startUpdHelper();
-  publish("1.2.1", { badSha: true });
+  publish(NEXT_VER, { badSha: true });
   const before = readTree(U_EXT);
   await checkNow();
   await runStrip(["Evet"]);
@@ -3726,10 +3764,10 @@ scenarios.update_helper_closed = async () => {
   await stopHelper();
   els["btn-helper"].click();
   await sleep(300);
-  publish("1.2.1");
+  publish(NEXT_VER);
   await checkNow();
-  if (stripText() !== "Yeni sürüm 1.2.1 · Güncellemek için Spread Helper açık olmalı" || els["update-strip"].className !== "wait") return fail(`yardımcı kapalı şerit: ${stripText()}`);
-  ok("yardımcı kapalı → şerit 'Yeni sürüm 1.2.1 · Güncellemek için Spread Helper açık olmalı' (vurgusuz)");
+  if (stripText() !== `Yeni sürüm ${NEXT_VER} · Güncellemek için Spread Helper açık olmalı` || els["update-strip"].className !== "wait") return fail(`yardımcı kapalı şerit: ${stripText()}`);
+  ok(`yardımcı kapalı → şerit 'Yeni sürüm ${NEXT_VER} · Güncellemek için Spread Helper açık olmalı' (vurgusuz)`);
   els["update-strip"].click();
   await sleep(200);
   if (els.ask.style.display === "block" || upd.spawns.length) fail("yardımcı kapalıyken güncelleme başladı");
@@ -3744,11 +3782,11 @@ scenarios.update_install_fail = async () => {
     setupSync(smallSpec());
     updReset(over);
     await startUpdHelper();
-    publish("1.2.1");
+    publish(NEXT_VER);
     await checkNow();
     const { asked } = await runStrip(["Evet", "Hayır"]);
     const ex = upd.spawns.find((x) => x.args[2] === 'start "" "%SPREAD_CCX%"');
-    if (!ex || !/spread-1\.2\.1\.ccx$/.test(ex.opts.env.SPREAD_CCX) || !ex.opts.windowsVerbatimArguments || !asked[1] || !/Install'a bas/.test(asked[1].summary[0]))
+    if (!ex || !ex.opts.env.SPREAD_CCX.endsWith(`spread-${NEXT_VER}.ccx`) || !ex.opts.windowsVerbatimArguments || !asked[1] || !/Install'a bas/.test(asked[1].summary[0]))
       fail(`${label}: ${JSON.stringify(upd.spawns.map((x) => [x.cmd, x.args]))} ${JSON.stringify(asked[1])}`);
     else ok(`${label} → spread.ccx Creative Cloud'la açıldı (start ""); soru 'açılan Creative Cloud penceresinde Install'a bas'`);
     if (!/Önce Creative Cloud penceresinde Install'a bas/.test(els["result-hint"].textContent)) fail(`ipucu: ${els["result-hint"].textContent}`);
@@ -3765,7 +3803,7 @@ scenarios.update_write_fail = async () => {
     setupSync(smallSpec());
     updReset(over);
     await startUpdHelper(extra);
-    publish("1.2.1");
+    publish(NEXT_VER);
     const before = readTree(U_EXT);
     await checkNow();
     await runStrip(["Evet"]);
@@ -3786,7 +3824,7 @@ scenarios.update_restart = async () => {
   fsReal.utimesSync(proj, t0, t0);
   mockProjects.push({ name: "Çekim 12 Eylül", path: proj, id: "doc-1" });
   await startUpdHelper();
-  publish("1.2.1");
+  publish(NEXT_VER);
   await checkNow();
   await runStrip(["Evet", "Evet"]);
   await sleep(1100); // yardımcı yanıttan 800 ms sonra app.quit
@@ -3834,7 +3872,7 @@ scenarios.update_restart_unsaved = async () => {
     updReset();
     setup();
     await startUpdHelper();
-    publish("1.2.1");
+    publish(NEXT_VER);
     await checkNow();
     await runStrip(["Evet", "Evet"]);
     await sleep(1100);
@@ -3859,16 +3897,15 @@ scenarios.reload = async () => {
   await sleep(5300);
   if (!/↻ Panel yeniden yüklenmedi/.test(newLog())) fail("yeniden yüklenmeyen panel 5 sn sonra açılmadı");
   else ok("yeniden yükleme olmazsa panel 5 sn sonra kilidi açar (kilitli kalmaz)");
-  // yarım kalmış işlem varsa önce uyarır
+  // v1.2.1: ↻ soru sormaz; bu sequence'ın kayıtlarını siler (başka sequence'ınkini ve kalibrasyonu değil) — ayrıntı: reload_scope
   lsStore.set("spread.stoppedState.v2", JSON.stringify({ "guid-main-edit": { op: "BAĞLA", digest: "x" } }));
   upd.reloads = upd.uxpReloads = 0;
   els["btn-reload"].click();
-  await sleep(200);
-  const title = els["ask-title"].textContent;
-  await no();
-  await sleep(800);
-  if (title !== "Yine de yenilensin mi?" || upd.reloads || upd.uxpReloads) fail(`yarım işte ↻: ${title} ${upd.reloads}/${upd.uxpReloads}`);
-  else ok("yarım kalmış işlem varken ↻ → önce 'Yine de yenilensin mi?'; Vazgeç → hiçbir şey yeniden yüklenmedi");
+  await sleep(1000);
+  if (els.ask?.style.display === "block" || upd.reloads !== 1 || upd.uxpReloads !== 1 || /guid-main-edit/.test(lsStore.get("spread.stoppedState.v2") ?? ""))
+    fail(`yarım işte ↻: soru ${els.ask?.style.display}, yardımcı ${upd.reloads}, panel ${upd.uxpReloads}, kayıt ${lsStore.get("spread.stoppedState.v2")}`);
+  else ok("yarım iş kaydı varken ↻ → soru yok; kayıt silindi, iki panel yenilendi");
+  await sleep(5300);
   lsStore.delete("spread.stoppedState.v2");
   // yardımcı meşgulken (güncelleme / bağlama) yardımcı yeniden YÜKLENMEZ; Spread yalnız kendini yeniler
   upd.forceBusy = true;
@@ -4037,7 +4074,7 @@ if (SCREENS)
     // v1.2.0: güncelleme şeridi → notlar [Şimdi değil] [Güncelle] → kurulunca [Sonra] [Yeniden başlat]
     updReset();
     await startUpdHelper();
-    publish("1.2.1", { notes: ["Güncellemeler artık panelden gelir.", "↻ Yenile: iki panel tek tıkla yeniden yüklenir.", "Bağla onayında daha kısa özet."] });
+    publish(NEXT_VER, { notes: ["Güncellemeler artık panelden gelir.", "↻ Yenile: iki panel tek tıkla yeniden yüklenir.", "Bağla onayında daha kısa özet."] });
     els["btn-settings"].click();
     els["btn-check-update"].click();
     await sleep(200);
@@ -4061,6 +4098,400 @@ if (SCREENS)
     shot("17-guncellendi");
     await stopHelper();
   };
+
+// ============================================================ v1.2.1 HATA 1: yanlış "kırpılmış kamera klibi" reddi
+// Gerçek rapor (2026-09-29, A027C012_260803UH): 29.97 fps tek kamera, 12 dokunulmamış klip V9 / A9'da; out TAM KARE, medya süresi
+// milisaniye hizalı → medya − out 0.026…0.940 kare. 1.2.0 hepsini "kırpılmış" saydı. Değerler fixtures/rapor-260929-a027.json.
+const A027 = JSON.parse(fsReal.readFileSync(path.join(__dirname, "fixtures", "rapor-260929-a027.json"), "utf8"));
+const FRAME2997 = BigInt(A027.frameTicks);
+/** @param inOf klip index → in (tick) @param outOf klip index → out (tick) — gerçekten kırpılmış klip üretmek için */
+function setupA027({ inOf = {}, outOf = {} } = {}) {
+  setupSync({ cams: [], wavs: [], others: [] }); // tam sıfırlama (sayaçlar, bayraklar, localStorage)
+  for (const k of Object.keys(projItems)) delete projItems[k];
+  const T = A027.tracks;
+  const s = mkSequence("A027C012_260803UH", "guid-a027", T.V, T.A);
+  let t = 0n;
+  A027.clips.forEach((c, i) => {
+    const p = pi(c.name, BigInt(c.media), { channels: 1 });
+    p.clipDur = BigInt(c.out); // overwrite "clip" kipinde yerleşen süre (Premiere'in tam kare sayısı)
+    p.fps = 30000 / 1001;
+    const inPt = inOf[i] ?? 0n;
+    const d = (outOf[i] ?? BigInt(c.out)) - inPt;
+    const L = "La" + i;
+    s.v[T.camV - 1].push(mkClip("V", p, t, t + d, L, inPt));
+    s.a[T.camA - 1].push(mkClip("A", p, t, t + d, L, inPt));
+    t += d;
+  });
+  const wd = (t / 4n / 254016000n) * 254016000n; // 4 DJI WAV, ms hizalı, A4'te arka arkaya (sentetik süre)
+  for (let k = 0; k < 4; k++) {
+    const p = pi(`DJI_0${k + 1}.WAV`, wd, { video: false });
+    s.a[T.wavA - 1].push(mkClip("A", p, wd * BigInt(k), wd * BigInt(k + 1)));
+  }
+  state.sequences = [s, state.sequences.find((x) => x.guid === "guid-other")];
+  state.activeGuid = s.guid;
+  M.timebase = FRAME2997;
+  mockGen++;
+  return s;
+}
+const a027Before = () => {
+  const q = seqByGuid("guid-a027");
+  return `${q.v.length}/${q.a.length}|${ser(q.v)}|${ser(q.a)}`; // id'ler ve seçim hariç
+};
+const undoN = (n) => {
+  for (let i = 0; i < n; i++) undo();
+};
+
+scenarios.trimstate_unit = async () => {
+  const T = require(path.join(DIST, "src", "trimstate.js"));
+  const F = { ticks: FRAME2997, src: "footage" };
+  const c = (inPt, outPt, mediaDur, frameTicks = String(FRAME2997)) => ({ inPt, outPt, mediaDur, frameTicks });
+  const all = A027.clips.map((x) => T.trimState(c("0", x.out, x.media), null));
+  if (all.some((x) => x.state !== "full")) fail(`A027: ${all.filter((x) => x.state !== "full").length} klip kırpılmış sayıldı`);
+  else ok("A027'nin 12 klibi (medya − out 0.026…0.940 kare) → hepsi kırpılmamış");
+  const f = FRAME2997;
+  const cases = [
+    ["medya − out = 1 kare − 1 tick", T.trimState(c("0", "1000000000000", String(1000000000000n + f - 1n)), null).state, "full"],
+    ["medya − out = 1 kare", T.trimState(c("0", "1000000000000", String(1000000000000n + f)), null).state, "trimmed"],
+    ["medya − out = 0", T.trimState(c("0", "1000000000000", "1000000000000"), null).state, "full"],
+    ["medya − out = −1 tick (out medyayı aşıyor)", T.trimState(c("0", "1000000000001", "1000000000000"), null).state, "trimmed"],
+    ["in = 1 tick", T.trimState(c("1", "1000000000000", "1000000000000"), null).state, "trimmed"],
+    ["in = 1 tick, medya okunamıyor", T.trimState(c("1", "1000000000000", null), null).state, "trimmed"],
+    ["in = 0, medya okunamıyor", T.trimState(c("0", "1000000000000", null), null).state, "unknown"],
+  ];
+  const bad = cases.filter(([, got, want]) => got !== want);
+  if (bad.length) fail(`trimState sınırları: ${bad.map(([n, g, w]) => `${n}: ${g} (beklenen ${w})`).join("; ")}`);
+  else ok(`trimState sınırları: ${cases.map(([n, g]) => `${n} → ${g}`).join("; ")}`);
+  const fr = [
+    ["footage önce", T.frameOf(String(FRAME2997), FRAME25).src, "footage"],
+    ["footage yok → sequence", T.frameOf(null, FRAME25).src, "sequence"],
+    ["ikisi de yok → 23.976", String(T.frameOf(null, null).ticks), "10594584000"],
+    ["29.97 fps", String(T.fpsToFrameTicks(29.97)), "8475667200"],
+    ["30000/1001 fps", String(T.fpsToFrameTicks(30000 / 1001)), "8475667200"],
+    ["25 fps", String(T.fpsToFrameTicks(25)), "10160640000"],
+    ["23.976 fps", String(T.fpsToFrameTicks(23.976)), "10594584000"],
+    ["0 fps", String(T.fpsToFrameTicks(0)), "null"],
+  ];
+  const badF = fr.filter(([, g, w]) => g !== w);
+  if (badF.length) fail(`kare süresi: ${badF.map(([n, g, w]) => `${n}: ${g} (beklenen ${w})`).join("; ")}`);
+  else ok("kare süresi: footage → sequence timebase → 23.976; NTSC hızları tam değerine oturur (29.97 → 8475667200)");
+  const o = { start: "1000", end: "2000", inPt: "0", outPt: "1000" };
+  const w = (d) => ({ ...o, ...d });
+  const fits = [
+    ["birebir", T.overwriteFit(o, w({}), F), "exact"],
+    ["kuyruk +0.73 kare", T.overwriteFit(o, w({ end: String(2000n + 6214924800n), outPt: String(1000n + 6214924800n) }), F), "tail"],
+    ["kuyruk −0.5 kare", T.overwriteFit(o, w({ end: String(2000n - f / 2n), outPt: String(1000n - f / 2n) }), F), "tail"],
+    ["kuyruk +1 kare", T.overwriteFit(o, w({ end: String(2000n + f), outPt: String(1000n + f) }), F), "other"],
+    ["start kayması", T.overwriteFit(o, w({ start: "1001", end: "2001" }), F), "other"],
+    ["baş (in +1)", T.overwriteFit(o, w({ start: "1001", inPt: "1" }), F), "other"],
+    ["end ≠ out farkı", T.overwriteFit(o, w({ end: "2005", outPt: "1003" }), F), "other"],
+  ];
+  const badO = fits.filter(([, g, wnt]) => g !== wnt);
+  if (badO.length) fail(`overwriteFit: ${badO.map(([n, g, wnt]) => `${n}: ${g} (beklenen ${wnt})`).join("; ")}`);
+  else ok(`overwriteFit: ${fits.map(([n, g]) => `${n} → ${g}`).join("; ")}`);
+};
+
+scenarios.a027_spread = async () => {
+  // (a) 12 kliplik gerçek veri → red YOK, plan kurulur; boş V/A track'leri kullanılır (yeni track yok); ilk overwrite birebir
+  const s = setupA027();
+  const before = a027Before();
+  const exp = expectedLayout(s);
+  let q = "";
+  const out = await clickAndWait("btn-spread", async (x) => ((q = x), yes()));
+  if (/kırpılmış/.test(out)) fail("A027: hâlâ 'kırpılmış' diyor:\n" + out.split("\n").filter((l) => /kırpılmış/.test(l)).join("\n"));
+  else ok("A027: hiçbir kamera 'kırpılmış' sayılmadı (plan günlüğünde [kırpılmış] etiketi yok)");
+  if (!/12 kamera, 4 ses bulundu, 0 track açılacak \(V 0, A 0\)/.test(q) || !/Taşınacak: 11 kamera/.test(q) || !/yerinde kalan: 1\./.test(q)) fail(`A027 onay metni: ${q}`);
+  else ok("plan kuruldu: 12 kamera + 4 DJI WAV; 11 kamera taşınır, V9'daki yerinde kalır; 0 yeni track (V 12 / A 16'nın boşları kullanılır)");
+  if (!/✓ SPREAD tamam/.test(out)) return fail("A027 SPREAD tamamlanmadı:\n" + out.split("\n").filter((l) => /DURDU|•|HATA/.test(l)).join("\n"));
+  checkLayout(seqByGuid("guid-a027"), exp, "A027 (12 kamera + 4 DJI WAV)");
+  const tx = counters.txNames.join(",");
+  if (tx !== "Spread: yedek sequence,Spread: dağıt,Spread: ilk overwrite (ölçüm),Spread: overwrite") fail(`A027 transaction'lar: ${tx}`);
+  else ok("transaction'lar: yedek → dağıt → ilk overwrite (ölçüm, birebir) → overwrite; SetOutPoint yok");
+  if (!/ölçüm "A042C001_260925XX\.MP4": V1 birebir; A1 birebir/.test(out)) fail("ilk overwrite ölçümü günlükte yok");
+  else ok('ölçüm günlükte: "A042C001": V1 birebir; A1 birebir');
+  if (counters.setActions.size || counters.overwrites !== 11) fail(`set action ${counters.setActions.size}, overwrite ${counters.overwrites}`);
+  else ok("11 overwrite, hiç set action yok");
+  if (!/Ctrl\+Z'ye 3 kez bas/.test(out)) fail("Ctrl+Z sayısı 3 değil");
+  undoN(3);
+  if (a027Before() !== before) fail("Ctrl+Z × 3 aslına döndürmedi");
+  else ok("Ctrl+Z × 3 → asıl düzen birebir");
+};
+
+scenarios.a027_status = async () => {
+  // DURUM raporu aynı kuralı kullanır; kare kaynağı: footage → sequence timebase → 23.976
+  setupA027();
+  await clickAndWait("btn-status", yes, doneRe);
+  let rep = els.report.value;
+  const cams = rep.split("\n").filter((l) => /^  kamera V9 /.test(l));
+  if (cams.length !== 12 || cams.some((l) => /\[kırpılmış\]/.test(l)) || !cams.every((l) => /tam boy/.test(l) && /29\.97 fps, proje öğesinin kare hızı/.test(l)))
+    fail("DURUM: kamera kırpma satırları beklenen gibi değil:\n" + cams.join("\n"));
+  else ok("DURUM: 12 kameranın hiçbiri [kırpılmış] değil (medya − out < 1 kare, kare = proje öğesinin 29.97 fps'i)");
+  if (!/A042C007_260925XX\.MP4": tam boy \(medya − out = \+7967635200 tick = \+31\.367 ms = \+0\.940 kare < 1 kare/.test(rep)) fail("DURUM: fark tick + ms + kare olarak yazılmadı");
+  else ok("DURUM: fark tick + ms + kare (C007: +7967635200 tick = +31.367 ms = +0.940 kare)");
+  M.noFootage = true;
+  await clickAndWait("btn-status", yes, doneRe);
+  rep = els.report.value;
+  if (!/29\.97 fps, sequence timebase/.test(rep) || /\[kırpılmış\]/.test(rep)) fail("footage okunamazken sequence timebase'ine düşülmedi");
+  else ok("footage kare hızı okunamıyor → sequence timebase (29.97); yine kırpılmış yok");
+  M.timebase = null;
+  await clickAndWait("btn-status", yes, doneRe);
+  rep = els.report.value;
+  if (!/23\.976 fps, varsayılan 23\.976/.test(rep) || /\[kırpılmış\]/.test(rep)) fail("ikisi de okunamazken 23.976'ya düşülmedi");
+  else ok("ikisi de okunamıyor → 1/23.976 sn; yine kırpılmış yok");
+};
+
+scenarios.a027_trimmed = async () => {
+  // (b) gerçekten kırpılmış klip → red sürer; fark tick + ms + kare
+  setupA027({ inOf: { 2: FRAME2997 } });
+  let before = a027Before();
+  let out = await clickAndWait("btn-spread", yes);
+  if (!/✗ SPREAD DURDU: 1 kamera klibi kırpılmış .*Spread BAŞLAMADI/.test(out) || !/başı kırpılmış \(in = 8475667200 tick ≠ 0\) \(medya − out = \+2692569600 tick = \+10\.600 ms = \+0\.318 kare\)/.test(out))
+    fail("in > 0 kamera reddedilmedi ya da fark yazılmadı:\n" + out.split("\n").filter((l) => /DURDU|•/.test(l)).join("\n"));
+  else ok("in > 0 (1 kare baştan kırpık) → red sürer; satırda medya − out tick + ms + kare");
+  if (a027Before() !== before || counters.txNames.length) fail("red sırasında bir şey değişti");
+  const o4 = BigInt(A027.clips[4].out) - 2n * FRAME2997;
+  setupA027({ outOf: { 4: o4 } });
+  before = a027Before();
+  out = await clickAndWait("btn-spread", yes);
+  if (!/✗ SPREAD DURDU: 1 kamera klibi kırpılmış/.test(out) || !/kuyruğu kırpılmış \(medya − out = \+20473689600 tick = \+80\.6.. ms = \+2\.416 kare ≥ 1 kare\); 1 kare = 8475667200 tick \(29\.97 fps, proje öğesinin kare hızı\)/.test(out))
+    fail("medya − out ≥ 1 kare reddedilmedi ya da fark yazılmadı:\n" + out.split("\n").filter((l) => /DURDU|•/.test(l)).join("\n"));
+  else ok("medya − out = 2.416 kare (≥ 1) → red sürer; tick + ms + kare + kare kaynağı yazılı");
+  if (a027Before() !== before || counters.txNames.length) fail("red sırasında bir şey değişti");
+  else ok("reddedilince hiçbir şeye dokunulmadı (yedek bile alınmadı)");
+  setupA027({ outOf: { 5: BigInt(A027.clips[5].media) + 1n } });
+  out = await clickAndWait("btn-spread", yes);
+  if (!/out medya sonunu aşıyor \(medya − out = -1 tick/.test(out)) fail("out > medya reddedilmedi:\n" + out.split("\n").filter((l) => /DURDU|•/.test(l)).join("\n"));
+  else ok("out medya sonunu 1 tick aşıyor (negatif fark) → red");
+};
+
+async function a027Tail(follow) {
+  // (c) overwrite kuyruğu medya sonuna uzatıyor (+0.733 kare ilk kamerada) → ayrı transaction'da SetOutPoint, yeniden doğrulama
+  const s = setupA027();
+  const before = a027Before();
+  const exp = expectedLayout(s);
+  M.owMode = "media";
+  M.linkTrimFollow = follow;
+  const out = await clickAndWait("btn-spread", yes);
+  const tag = follow ? "bağlı ses izliyor" : "bağlı ses izlemiyor";
+  if (!/✓ SPREAD tamam/.test(out)) return fail(`kuyruk (${tag}): SPREAD tamamlanmadı:\n` + out.split("\n").filter((l) => /DURDU|•|ölçüm/.test(l)).join("\n"));
+  checkLayout(seqByGuid("guid-a027"), exp, `kuyruk medya sonuna uzadı → SetOutPoint (${tag})`);
+  if (!/ölçüm "A042C001_260925XX\.MP4": V1 yalnız kuyruk \+6214924800 tick = \+24\.467 ms = \+0\.733 kare; A1 yalnız kuyruk \+6214924800 tick/.test(out)) fail("ilk ölçüm kuyruk farkını yazmadı");
+  else ok("ilk ölçüm: V1 ve A1 yalnız kuyruk +6214924800 tick = +24.467 ms = +0.733 kare");
+  const want = follow
+    ? "Spread: yedek sequence,Spread: dağıt,Spread: ilk overwrite (ölçüm),Spread: ilk kuyruk düzeltme,Spread: overwrite,Spread: kuyruk düzeltme"
+    : "Spread: yedek sequence,Spread: dağıt,Spread: ilk overwrite (ölçüm),Spread: ilk kuyruk düzeltme,Spread: ilk kuyruk düzeltme (ses),Spread: overwrite,Spread: kuyruk düzeltme";
+  if (counters.txNames.join(",") !== want) fail(`transaction'lar: ${counters.txNames.join(", ")}`);
+  else ok(`transaction'lar: ${counters.txNames.slice(1).map((x) => x.replace("Spread: ", "")).join(" → ")} (SetOutPoint overwrite'tan AYRI)`);
+  const acts = [...counters.setActions.values()].flat();
+  const nOut = acts.filter((a) => a === "out").length;
+  if (acts.some((a) => a !== "out") || nOut !== (follow ? 11 : 22)) fail(`set action'lar: ${acts.join(",")}`);
+  else ok(`yalnız SetOutPoint (${nOut} klip, klip başına 1; End YOK)${follow ? " — sesler videoyu izledi, sese action yok" : ""}`);
+  if (!new RegExp(`bağlı ses videonun SetOutPoint'ini ${follow ? "İZLİYOR" : "izlemiyor"}`).test(out)) fail("izleme ölçümü günlükte yok");
+  const n = counters.txNames.length - 1;
+  if (!new RegExp(`Ctrl\\+Z'ye ${n} kez bas`).test(out)) fail(`Ctrl+Z sayısı ${n} değil`);
+  undoN(n);
+  if (a027Before() !== before) fail(`Ctrl+Z × ${n} aslına döndürmedi`);
+  else ok(`Ctrl+Z × ${n} → asıl düzen birebir`);
+}
+scenarios.a027_tail = () => a027Tail(false);
+scenarios.a027_tail_follow = () => a027Tail(true);
+
+scenarios.a027_head = async () => {
+  // (d) baş kayması (overwrite yarım kare geç) → ilk overwrite'ta DUR; kalan kameralara dokunulmaz; fark + Ctrl+Z + yedek adı
+  setupA027();
+  const before = a027Before();
+  M.owShift = FRAME2997 / 2n;
+  let out = await clickAndWait("btn-spread", yes);
+  if (!/✗ SPREAD DURDU: İLK OVERWRITE TUTMADI \(ölçüm, "A042C001_260925XX\.MP4"\)/.test(out) || !/start \+4237833600 tick = \+16\.683 ms = \+0\.500 kare; end \+4237833600 tick/.test(out))
+    fail("baş kayması ilk overwrite'ta yakalanmadı:\n" + out.split("\n").filter((l) => /DURDU|•|ölçüm/.test(l)).join("\n"));
+  else ok("baş kayması (+0.5 kare) → İLK OVERWRITE TUTMADI; ölçülen fark tick + ms + kare");
+  if (counters.overwrites !== 1 || counters.setActions.size) fail(`ölçümden sonra devam edildi (overwrite ${counters.overwrites}, set ${counters.setActions.size})`);
+  else ok("kalan 10 kameraya dokunulmadı, SetOutPoint denenmedi");
+  if (!/Ctrl\+Z'ye 2 kez bas — ya da yedek sequence "A027C012_260803UH Copy"/.test(out)) fail("Ctrl+Z sayısı / yedek adı yok");
+  else ok('talimat: Ctrl+Z × 2 (dağıt, ilk overwrite) ya da yedek "A027C012_260803UH Copy"');
+  undoN(2);
+  if (a027Before() !== before) fail("Ctrl+Z × 2 aslına döndürmedi");
+  else ok("Ctrl+Z × 2 → asıl düzen birebir");
+  // kuyruk ≥ 1 kare → da DUR (yalnız < 1 kare düzeltilir)
+  setupA027();
+  M.owMode = "media";
+  M.owExtra = FRAME2997;
+  out = await clickAndWait("btn-spread", yes);
+  if (!/İLK OVERWRITE TUTMADI/.test(out) || !/end \+14690592000 tick = \+57\.833 ms = \+1\.733 kare/.test(out) || counters.setActions.size)
+    fail("kuyruk ≥ 1 kare durmadı:\n" + out.split("\n").filter((l) => /DURDU|•|ölçüm/.test(l)).join("\n"));
+  else ok("kuyruk +1.733 kare (≥ 1) → DUR, SetOutPoint denenmedi");
+};
+
+// ============================================================ v1.2.1 HATA 2: kayıt ipucudur, kilit değil
+const shown = (id) => els[id] && els[id].style.display !== "none";
+async function waitFor(cond, ms = 6000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    if (cond()) return true;
+    await sleep(100);
+  }
+  return cond();
+}
+/** Aktif sequence'ı başka birine geçirip geri alır → panel "sequence değişti" diye kayıtları doğrular. */
+async function revisit(guid) {
+  state.activeGuid = "guid-other";
+  mockGen++;
+  await sleep(1700);
+  state.activeGuid = guid;
+  mockGen++;
+  await sleep(1900);
+}
+const stepsOf = (g) => JSON.parse(lsStore.get("spread.steps.v1") ?? "{}")[g] ?? {};
+
+scenarios.hint_spread_undo = async () => {
+  // Emre: Dağıt → Ctrl+Z → Dağıt yeniden (aynı sequence). Önce 1.2.0'dan kalma parmak izsiz "Dağıt ✓" işareti (gerçek durum).
+  setupA027();
+  lsStore.set("spread.steps.v1", JSON.stringify({ "guid-a027": { spread: { kind: "ok", text: "12 klip kendi track'ine dağıtıldı.", at: "2026-09-29T08:00:00.000Z" } } }));
+  markLog();
+  await revisit("guid-a027");
+  if (!shown("btn-spread") || stepsOf("guid-a027").spread || !/Önceki Dağıt kaydı timeline'la doğrulanamıyor \(eski sürümün kaydı/.test(newLog()))
+    fail(`eski sürümün Dağıt ✓ işareti sequence açılınca unutulmadı: ${JSON.stringify(stepsOf("guid-a027"))}\n${newLog()}`);
+  else ok("1.2.0'dan kalan parmak izsiz 'Dağıt ✓' → sequence açılınca doğrulanamadı, unutuldu (günlükte); Dağıt düğmesi görünür");
+  const before = a027Before();
+  let out = await clickAndWait("btn-spread", yes);
+  if (!/✓ SPREAD tamam/.test(out)) return fail("A027 Dağıt tamamlanmadı:\n" + failLines(out));
+  await sleep(150);
+  const st = stepsOf("guid-a027").spread;
+  if (!st || !/^\d+:[0-9a-f]+:[0-9a-f]+$/.test(st.fp ?? "") || !st.tp || shown("btn-spread") || !shown("btn-collect")) fail(`Dağıt işareti / parmak izi / gösterge: ${JSON.stringify(st)}`);
+  else ok("Dağıt ✓ işareti işlem sonundaki timeline'ın parmak iziyle yazıldı (fp + tp); sıradaki adım Topla");
+  undoN(3); // Ctrl+Z × 3 (overwrite, ilk overwrite, dağıt)
+  mockGen++;
+  markLog();
+  if (!(await waitFor(() => shown("btn-spread"))) || !/Timeline değişmiş \(geri alma\/elle düzenleme\) — önceki Dağıt kaydı unutuldu\./.test(newLog()))
+    fail("Ctrl+Z'den sonra gösterge Dağıt'a dönmedi:\n" + newLog());
+  else ok("Ctrl+Z × 3 → şekil değişti → bayat Dağıt kaydı kendiliğinden unutuldu ('Timeline değişmiş … önceki Dağıt kaydı unutuldu.'); Dağıt düğmesi geri geldi");
+  if (a027Before() !== before) return fail("mock geri alma aslına döndürmedi");
+  out = await clickAndWait("btn-spread", yes);
+  if (!/✓ SPREAD tamam/.test(out) || /zaten yapılmış görünüyor|YARIM/.test(out)) fail("geri alınan Dağıt yeniden çalışmadı:\n" + failLines(out));
+  else ok("aynı sequence'ta Dağıt yeniden çalıştı (kilit yok, soru yok) — Ctrl+Z sayısı yine açık: " + (/Ctrl\+Z'ye (\d+) kez/.exec(out) || ["", "?"])[1]);
+  // kısmi geri alma (yalnız son adım): Dağıt yine çalışır (canlı timeline'dan plan), kayıt engellemez
+  undoN(1);
+  mockGen++;
+  out = await clickAndWait("btn-spread", yes);
+  if (!/✓ SPREAD tamam|✗ SPREAD DURDU: (?!.*zaten)/.test(out) || /zaten yapılmış görünüyor/.test(out) || !/önceki Dağıt kaydı unutuldu/.test(out)) fail("kısmi geri almadan sonra Dağıt engellendi:\n" + failLines(out));
+  else ok("kısmi Ctrl+Z (× 1) → Dağıt kayda takılmadan canlı timeline'dan yeniden planladı");
+};
+
+scenarios.hint_spread_reload = async () => {
+  // Dağıt → ↻ → Dağıt; Emre'nin 5 adımlık sınamasının sonu: Dağıt → Ctrl+Z → Dağıt → ↻ → Dağıt
+  setupA027();
+  updReset();
+  await startUpdHelper();
+  globalThis.location = { reload: () => upd.uxpReloads++ };
+  let out = await clickAndWait("btn-spread", yes);
+  if (!/✓ SPREAD tamam/.test(out)) return fail("Dağıt tamamlanmadı:\n" + failLines(out));
+  undoN(3);
+  mockGen++;
+  out = await clickAndWait("btn-spread", yes);
+  if (!/✓ SPREAD tamam/.test(out)) return fail("Ctrl+Z sonrası Dağıt tamamlanmadı:\n" + failLines(out));
+  await sleep(150);
+  markLog();
+  els["btn-reload"].click();
+  await sleep(1000);
+  if (Object.keys(stepsOf("guid-a027")).length || !/Bu sequence'ın kayıtları temizlendi\./.test(newLog()) || lsStore.get("spread.reloadNote.v1") !== "A027C012_260803UH" || upd.uxpReloads !== 1)
+    fail(`↻ bu sequence'ın kayıtlarını temizlemedi: ${JSON.stringify(stepsOf("guid-a027"))} not=${lsStore.get("spread.reloadNote.v1")} reload=${upd.uxpReloads}\n${newLog()}`);
+  else ok("↻ → bu sequence'ın adım kayıtları silindi, 'Bu sequence'ın kayıtları temizlendi.' (günlük + yeniden yüklemeden sonra bildirim), panel yenilendi");
+  await sleep(5300); // sahte location.reload → panel 5 sn sonra kilidi açar
+  let q = "";
+  out = await clickAndWait("btn-spread", async (x) => ((q = x), yes()));
+  if (q && /zaten yapılmış/.test(q)) fail("↻'dan sonra Dağıt hâlâ 'zaten yapılmış' diye soruyor");
+  else if (!/Zaten dağıtılmış/.test(out)) fail("↻'dan sonra Dağıt çalışmadı:\n" + failLines(out));
+  else ok("↻'dan sonra Dağıt kayıtsız çalıştı (timeline zaten dağıtılmış → 'Zaten dağıtılmış', soru yok)");
+  lsStore.delete("spread.reloadNote.v1");
+  delete globalThis.location;
+  await stopHelper();
+};
+
+scenarios.hint_topla_undo = async () => {
+  // Topla → Ctrl+Z (tamamı) → Topla yeniden: TOPLA kaydı bayat → unutulur, TOPLA baştan çalışır ("zaten toplanmış" / soru yok)
+  setupSync(smallSpec());
+  const before = mainTracks();
+  const o1 = await clickAndWait("btn-collect", yes, doneRe);
+  if (!/✓ TOPLA tamam/.test(o1)) return fail("TOPLA tamamlanmadı:\n" + failLines(o1));
+  await sleep(150);
+  if (!stepsOf("guid-main-edit").topla?.fp || !lsStore.get("spread.collectRecord.v1")?.includes("guid-main-edit")) return fail("TOPLA işareti / kaydı yazılmadı");
+  const m = /Ctrl\+Z'ye (\d+) kez bas/.exec(o1);
+  undoN(Number(m ? m[1] : 0));
+  mockGen++;
+  if (mainTracks() !== before) return fail("mock TOPLA'yı geri almadı");
+  const qs = [];
+  const o2 = await clickAndWait("btn-collect", async (x) => (qs.push(x), yes()), doneRe);
+  if (!/Timeline değişmiş \(geri alma\/elle düzenleme\) — önceki Topla kaydı unutuldu\./.test(o2) || qs.some((x) => /zaten yapılmış/.test(x)) || !/✓ TOPLA tamam/.test(o2) || /Zaten toplanmış/.test(o2))
+    fail("geri alınan TOPLA yeniden çalışmadı:\n" + qs.join("\n---\n") + "\n" + failLines(o2));
+  else ok("Topla → Ctrl+Z → Topla: bayat TOPLA kaydı unutuldu (günlükte), TOPLA baştan çalıştı; kilit / soru yok");
+};
+
+scenarios.hint_same_question = async () => {
+  // timeline değişmemiş + Dağıt yeniden → kilit değil SORU. Synchronize (zamanda kaydırma) Dağıt kaydını BAYATLATMAZ.
+  setupA027();
+  let out = await clickAndWait("btn-spread", yes);
+  if (!/✓ SPREAD tamam/.test(out)) return fail("Dağıt tamamlanmadı:\n" + failLines(out));
+  await sleep(150);
+  const n = counters.txNames.length;
+  let q = "", title = "";
+  out = await clickAndWait("btn-spread", async (x) => ((q = x), (title = els["ask-title"].textContent), no()));
+  if (!/^Bu sequence'ta Dağıt zaten yapılmış görünüyor .*Yine de çalıştırılsın mı\?$/.test(q) || title !== "Dağıt yine de çalıştırılsın mı?" || !/İptal edildi/.test(out) || counters.txNames.length !== n)
+    fail(`değişmemiş timeline'da Dağıt sormadı: [${title}] ${q}\n${failLines(out)}`);
+  else ok("değişmemiş timeline + Dağıt → 'Bu sequence'ta Dağıt zaten yapılmış görünüyor. Yine de çalıştırılsın mı?' (kilit yok); Vazgeç → hiçbir şey");
+  out = await clickAndWait("btn-spread", yes);
+  if (!/Zaten dağıtılmış/.test(out) || counters.txNames.length !== n) fail("Evet'ten sonra Dağıt çalışmadı:\n" + failLines(out));
+  else ok("Evet → Dağıt çalıştı (timeline zaten dağıtılmış → 'Zaten dağıtılmış')");
+  // Clip › Synchronize: harici ses ZAMANDA kayar, track'i aynı → Dağıt kaydı durur, sıradaki adım Topla
+  const S = seqByGuid("guid-a027");
+  const w = S.a[12][0];
+  (w.start += sec(1.5)), (w.end += sec(1.5));
+  mockGen++;
+  markLog();
+  await revisit("guid-a027");
+  if (/önceki Dağıt kaydı unutuldu/.test(newLog()) || !stepsOf("guid-a027").spread || !shown("btn-collect")) fail("Synchronize (zaman kayması) Dağıt kaydını bayat saydı:\n" + newLog());
+  else ok("Synchronize gibi zamanda kaydırma → Dağıt kaydı DURDU (track yerleşimi aynı), sıradaki adım yine Topla");
+  q = "";
+  out = await clickAndWait("btn-spread", async (x) => ((q = x), no()));
+  if (/zaten yapılmış/.test(q) || !/Zaten dağıtılmış/.test(out)) fail("zaman kaymasından sonra: " + q + "\n" + failLines(out));
+  else ok("zaman kaymasından sonra tam parmak izi tutmuyor → 'zaten yapılmış' sorusu yok; Dağıt doğrudan çalıştı ('Zaten dağıtılmış')");
+};
+
+scenarios.reload_scope = async () => {
+  // ↻ yalnız aktif sequence'ın kayıtlarını siler: başka sequence'ın kayıtları ve kırpma kalibrasyonu kalır; eski KES planı yalnız bu
+  // sequence'ınsa silinir
+  setupSync(smallSpec());
+  updReset();
+  await startUpdHelper();
+  globalThis.location = { reload: () => upd.uxpReloads++ };
+  const two = (x) => JSON.stringify({ "guid-main-edit": x, "guid-other": x });
+  lsStore.set("spread.steps.v1", two({ spread: { kind: "ok", text: "x", at: "2026-09-29T08:00:00.000Z" } }));
+  lsStore.set("spread.stoppedState.v2", two({ op: "TOPLA", digest: "x" }));
+  lsStore.set("spread.collectRecord.v1", two({ v: 1, at: "x" }));
+  lsStore.set("spread.trimCal.v1", two({ v: 1 }));
+  const planDir = path.join(TMPHOME, "Library", "Application Support", "BadIdeaAgency", "SpreadHelper");
+  fsReal.mkdirSync(planDir, { recursive: true });
+  const planFile = path.join(planDir, "link-plan.json");
+  const plan = (guid) => JSON.stringify({ v: 1, kind: "spread-link-plan", sequence: { name: "x", guid }, createdAt: "2026-09-29T08:00:00.000Z", groups: [] });
+  fsReal.writeFileSync(planFile, plan("guid-other"));
+  els["btn-reload"].click();
+  await sleep(1000);
+  const has = (k, g) => g in JSON.parse(lsStore.get(k) ?? "{}");
+  const mainGone = ["spread.steps.v1", "spread.stoppedState.v2", "spread.collectRecord.v1"].every((k) => !has(k, "guid-main-edit"));
+  const otherKept = ["spread.steps.v1", "spread.stoppedState.v2", "spread.collectRecord.v1"].every((k) => has(k, "guid-other"));
+  if (!mainGone || !otherKept || !has("spread.trimCal.v1", "guid-main-edit") || !fsReal.existsSync(planFile))
+    fail(`↻ kapsamı: bu sequence silindi=${mainGone}, öteki kaldı=${otherKept}, kalibrasyon=${has("spread.trimCal.v1", "guid-main-edit")}, ötekinin planı=${fsReal.existsSync(planFile)}`);
+  else ok("↻ → aktif sequence'ın işaret / yarım iş / TOPLA kaydı silindi; BAŞKA sequence'ınkiler, kırpma kalibrasyonu ve ötekinin KES planı durdu");
+  await sleep(5300);
+  fsReal.writeFileSync(planFile, plan("guid-main-edit"));
+  upd.reloads = upd.uxpReloads = 0;
+  els["btn-reload"].click();
+  await sleep(1000);
+  if (fsReal.existsSync(planFile)) fail("↻ bu sequence'ın eski KES planını silmedi");
+  else ok("↻ → bu sequence'ın eski KES planı (link-plan.json) silindi");
+  await sleep(5300);
+  lsStore.delete("spread.reloadNote.v1");
+  delete globalThis.location;
+  await stopHelper();
+};
 
 // ------------------------------------------------------------ çalıştır
 (async () => {

@@ -1,7 +1,8 @@
 // Adım göstergesi (v1.0.0) — YALNIZ görünüm: hangi adım tamam (✓ + kısa sonuç), sıradaki hangisi (vurgulu). Hiçbir işlemi
 // engellemez ya da başlatmaz. Kaynaklar: bu panelin sequence başına hatırladığı son sonuçlar (localStorage) + TOPLA / BAĞLA kaydı.
-// Timeline okunmaz (her saniye sequence okumak Premiere'i yorar); kullanıcı işlemi el ile geri aldıysa ✓ eski kalabilir — işlemler
-// yine kendi kayıt / düzen denetimlerini yapar.
+// Her saniye timeline okunmaz (Premiere'i yorar). v1.2.1: her işaret, işlemin SONUNDAKİ timeline parmak izini taşır (fp: tam,
+// tp: yalnız kaynak + track); panel açılınca, sequence değişince, timeline'ın şekli değişince (track / klip sayıları) ve her işlemden
+// önce canlı timeline'la karşılaştırılır — tutmayan işaret silinir (records.ts → reconcile). KAYIT İPUCUDUR, KİLİT DEĞİLDİR.
 
 import { readPanelLinkResult } from "./linker";
 import { loadRecord } from "./settings";
@@ -9,7 +10,9 @@ import type { StepId, StepView } from "./ui";
 
 const KEY = "spread.steps.v1";
 
-type Saved = Partial<Record<StepId, { kind: "ok" | "warn"; text: string; at: string }>>;
+/** fp / tp: işlemin sonundaki timeline parmak izi (records.ts); v1.2.0 ve öncesinin kayıtlarında yok */
+export type StepMark = { kind: "ok" | "warn"; text: string; at: string; fp?: string; tp?: string };
+type Saved = Partial<Record<StepId, StepMark>>;
 
 function all(): Record<string, Saved> {
   try {
@@ -42,6 +45,41 @@ export function rememberStep(guid: string | null, step: StepId, kind: "ok" | "wa
   } catch {
     /* hatırlanamazsa yalnız bu oturumda görünmez */
   }
+}
+
+function saveAll(a: Record<string, Saved>): void {
+  try {
+    window.localStorage.setItem(KEY, JSON.stringify(a));
+  } catch {
+    /* hatırlanamazsa yalnız bu oturumda görünmez */
+  }
+}
+
+/** v1.2.1: bu sequence'ın adım işaretleri (salt okuma). */
+export function stepMarks(guid: string): Saved {
+  return { ...(all()[guid] ?? {}) };
+}
+
+/** v1.2.1: işlemin sonundaki timeline parmak izini işarete yazar (işaret yoksa bir şey yapmaz). */
+export function setStepPrint(guid: string, step: StepId, fp: string, tp: string): void {
+  const a = all();
+  const m = a[guid]?.[step];
+  if (!m) return;
+  a[guid] = { ...a[guid], [step]: { ...m, fp, tp } };
+  saveAll(a);
+}
+
+/** v1.2.1: verilen adımların işaretlerini siler (yalnız bu sequence). ids yoksa bu sequence'ın bütün işaretleri. */
+export function forgetSteps(guid: string, ids?: StepId[]): void {
+  const a = all();
+  if (!(guid in a)) return;
+  if (!ids) delete a[guid];
+  else {
+    const s: Saved = { ...a[guid] };
+    for (const id of ids) delete s[id];
+    a[guid] = s;
+  }
+  saveAll(a);
 }
 
 export function stepViews(guid: string | null): { steps: Record<StepId, StepView>; next: StepId | null } {

@@ -7,18 +7,30 @@
 //   5) her klip planladığı track'te ve doğru kaynaktan
 // Her fark → DUR (kendi başına düzeltme yok). v0.3.4: "kırpma eşitlemesi" istisnası (TX-C) kaldırıldı — set action'lar tek
 // transaction'da aynı kenarda birikiyor (kanıtlandı, trimcal.ts); kırpılmış kamera SPREAD'de baştan reddedilir (spread.ts).
+// v1.2.1: SPREAD kameraları ayrı transaction'larda overwrite eder (ilk kamera tek başına = ölçüm). Ara adımlarda "pending" (henüz
+// overwrite edilmemiş) kameralar beklenmez; "loose" kameraların zaman farkı burada sorun sayılmaz, çağıran ölçer (trimstate.ts
+// overwriteFit: yalnız kuyrukta < 1 kare → ayrı transaction'da SetOutPoint, başka her fark → DUR).
 
 import { keyFull, secOf, trackLabel, type ClipInfo, type Kind, type Snapshot } from "./model";
-import type { Plan } from "./plan";
+import type { Placement, Plan, Unit } from "./plan";
 
 export interface VerifyResult {
   ok: boolean;
   problems: string[];
+  /** her beklenen yerleşim için hedef track'inde bulunan klip */
+  found: Map<Placement, ClipInfo>;
+}
+
+export interface SpreadStage {
+  /** henüz overwrite edilmemiş kameralar (yerleşimleri beklenmez) */
+  pending?: Set<Unit>;
+  /** overwrite edilmiş ama zamanı çağıranca ölçülecek kameralar (zaman farkı sorun sayılmaz) */
+  loose?: Set<Unit>;
 }
 
 const TIME_FIELDS: (keyof ClipInfo)[] = ["start", "end", "inPt", "outPt", "speed"];
 
-function diffTimes(a: ClipInfo, b: ClipInfo): string[] {
+export function diffTimes(a: ClipInfo, b: ClipInfo): string[] {
   const out: string[] = [];
   for (const f of TIME_FIELDS) {
     if (a[f] !== b[f]) {
@@ -37,8 +49,12 @@ function diffTimes(a: ClipInfo, b: ClipInfo): string[] {
 
 const trackKey = (k: Kind, t: number) => `${k}|${t}`;
 
-export function verifySpread(plan: Plan, fin: Snapshot): VerifyResult {
+export function verifySpread(plan: Plan, fin: Snapshot, stage: SpreadStage = {}): VerifyResult {
   const problems: string[] = [];
+  const found = new Map<Placement, ClipInfo>();
+  const pending = stage.pending ?? new Set<Unit>();
+  const loose = stage.loose ?? new Set<Unit>();
+  const expected = plan.placements.filter((p) => !pending.has(p.unit));
   // okuma bütünlüğü: boş dönen track, okuma sırasında değişen kuşak, klip okuma hatası → güvenilir değil → DUR
   for (const w of fin.warnings) problems.push(`okuma uyarısı: ${w}`);
 
@@ -55,12 +71,14 @@ export function verifySpread(plan: Plan, fin: Snapshot): VerifyResult {
     }
 
   // 1) klip sayısı
-  if (fin.clips.length !== plan.placements.length)
-    problems.push(`klip sayısı değişti: önce ${plan.placements.length}, şimdi ${fin.clips.length}`);
+  if (fin.clips.length !== expected.length)
+    problems.push(
+      `klip sayısı ${pending.size ? "beklenenden farklı" : "değişti"}: ${pending.size ? `beklenen ${expected.length} (${pending.size} kamera henüz yerleşmedi)` : `önce ${plan.placements.length}`}, şimdi ${fin.clips.length}`
+    );
 
   // 5) + 2) her asıl, hedef track'inde ve zamanları aynı
   const matched = new Set<ClipInfo>();
-  for (const p of plan.placements) {
+  for (const p of expected) {
     const here = byTrack.get(trackKey(p.clip.kind, p.target)) ?? [];
     const now = here.find((c) => c.projId === p.clip.projId) ?? null;
     if (!now) {
@@ -68,6 +86,8 @@ export function verifySpread(plan: Plan, fin: Snapshot): VerifyResult {
       continue;
     }
     matched.add(now);
+    found.set(p, now);
+    if (loose.has(p.unit)) continue; // zaman farkını çağıran ölçer
     const d = diffTimes(p.clip, now);
     if (d.length)
       problems.push(`"${p.clip.name}" (${trackLabel(p.clip.kind, p.target)}) zamanı aslıyla aynı değil: ${d.join("; ")}`);
@@ -77,7 +97,7 @@ export function verifySpread(plan: Plan, fin: Snapshot): VerifyResult {
 
   // 4) kamera: video ve ses(ler) aynı start/end
   for (const u of plan.units) {
-    if (u.kind !== "camera") continue;
+    if (u.kind !== "camera" || pending.has(u) || loose.has(u)) continue;
     const v = (byTrack.get(trackKey("V", u.vTarget!)) ?? []).find((c) => c.projId === u.video!.projId);
     if (!v) continue; // yukarıda raporlandı
     u.audio.forEach((_, k) => {
@@ -87,7 +107,7 @@ export function verifySpread(plan: Plan, fin: Snapshot): VerifyResult {
     });
   }
 
-  return { ok: problems.length === 0, problems };
+  return { ok: problems.length === 0, problems, found };
 }
 
 /**

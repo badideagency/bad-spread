@@ -29,8 +29,8 @@ import {
 } from "./collect";
 import {
   askUser,
-  assertNotStopped,
   ceilTo,
+  confirmNotStopped,
   expectState,
   forgetStopped,
   frameTicks,
@@ -47,8 +47,9 @@ import {
 import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
 import { fmtClip, relocate, secOf, settle, snapshot, ticks, trackLabel, TICKS_PER_SECOND, type ClipInfo, type Snapshot } from "./model";
 import { analyze, describeLinks, duplicateSets, partlyParked, suspiciousMembers, type Analysis, type DuplicateSet, type Recording } from "./sessions";
+import { confirmRedo, reconcileAndLog, stale } from "./records";
 import { requireActive, type SeqContext } from "./session";
-import { getGapSec, getThreshold, loadRecord, mappingFor, saveMapping, saveRecord, type CollectRecord } from "./settings";
+import { getGapSec, getThreshold, loadRecord, mappingFor, saveBindRecord, saveMapping, saveRecord, type CollectRecord } from "./settings";
 import { done, log, progress } from "./ui";
 
 export const CHECK_MSG = "Kontrol et, sonra BAĞLA'ya bas.";
@@ -108,7 +109,10 @@ export async function runCollect(): Promise<void> {
     ctx = await requireActive();
     log(`sequence: "${ctx.name}"`, "dim");
     const sAll = await snapshot(ctx);
-    assertNotStopped(ctx, sAll, "TOPLA");
+    // v1.2.1: kayıt ipucudur, kilit değil — tutmayan kayıt silinir; tutan kayıtta yalnız soru
+    await reconcileAndLog(ctx.guid, sAll);
+    if (!(await confirmNotStopped(ctx, sAll, "TOPLA"))) return log("İptal edildi — hiçbir şey değişmedi.", "warn");
+    if (!(await confirmRedo(ctx.guid, sAll, "topla", "topla"))) return; // Bağla'dan sonraki hâl aşağıda kendi sorusuyla
     for (const w of sAll.warnings) throw new SpreadStop(`Okuma sorunu: ${w}. TOPLA BAŞLAMADI.`);
     // çift kopyalar: fazlalar ilk adımda silinecek → bütün analiz ve plan çiftsiz düzen (s0) üzerinden
     const allDups = duplicateSets(classify(sAll));
@@ -130,19 +134,37 @@ export async function runCollect(): Promise<void> {
     const mapping = mappingFor(sourcesOf(items));
     const frame = makeFrame(items, mapping);
     // önceki TOPLA'nın park ettikleri (kayıttan; track sırasından tahmin YOK) → analize girmez, yerinde kalır
-    const rec = loadRecord(ctx.guid);
+    let rec = loadRecord(ctx.guid);
     // BAĞLA kesimi yapılmışsa harici sesler çapalara bölünmüştür → senkron kanıtı (tam kayıtlar) yok, oturumlar güvenle yeniden
-    // bulunamaz → TAHMİN YOK, başlamaz. Kesimsiz BAĞLA (yalnız silme/bağlama) sonrası TOPLA çalışır ama taşınanların bağı çözülür.
-    const bs = bindState(rec, s0);
-    if (bs === "partial" || ((bs === "applied" || bs === "thinned") && rec!.bind!.created.length))
-      throw new SpreadStop(
-        bs === "partial"
-          ? "BAĞLA'dan sonra düzen değişmiş (kesim kısmen ya da Ctrl+Z ile geri alınmış: silinenlerin bir kısmı geri gelmiş ya da kesilen parçalar yok). TOPLA BAŞLAMADI, hiçbir şey değişmedi. " +
-              "BAĞLA öncesi yedek sequence'la çalış ya da BAĞLA'yı Ctrl+Z ile tamamen geri al."
-          : "Bu sequence BAĞLA'dan geçti: sesler kesildi (harici sesler çapalara, kamera sesleri harici sessiz aralıklara), oturumları bulduran tam kayıtlar artık yok → oturumlar güvenle " +
-              "yeniden bulunamaz (tahmin edilmez). TOPLA BAŞLAMADI, hiçbir şey değişmedi. Yeniden toplamak için BAĞLA öncesi yedek sequence'ı kullan " +
-              "(ya da BAĞLA'yı Ctrl+Z ile tamamen geri al)."
+    // bulunamayabilir. v1.2.1: KİLİT DEĞİL, SORU (kayıt timeline'la tutuyor). Kesimsiz BAĞLA (yalnız silme/bağlama) sonrası TOPLA
+    // çalışır ama taşınanların bağı çözülür.
+    let bs = bindState(rec, s0);
+    if (bs === "partial") {
+      // BAĞLA kaydı bu düzenle tutmuyor (kısmen geri alınmış / elle değişmiş) → bayat: unutulur, TOPLA normal çalışır
+      saveBindRecord(ctx.guid, null);
+      log(stale("Bağla"), "warn");
+      rec = loadRecord(ctx.guid);
+      bs = bindState(rec, s0);
+    }
+    if ((bs === "applied" || bs === "thinned") && rec!.bind!.created.length) {
+      const ans = await askUser(
+        "Bu sequence'ta Bağla zaten yapılmış görünüyor: sesler kesildi (harici sesler çapalara, kamera sesleri harici sessiz aralıklara), " +
+          "oturumları bulduran tam kayıtlar artık yok. Topla bu kesilmiş düzenden oturum bulmaya çalışır — sonuç beklediğin gibi olmayabilir " +
+          "(önce yedek alınır, Ctrl+Z ile geri alınır). Önerilen: BAĞLA öncesi yedek sequence'ı kullan ya da BAĞLA'yı Ctrl+Z ile tamamen geri al. " +
+          "Yine de çalıştırılsın mı?",
+        [
+          "Bu sequence'ta Bağla zaten yapılmış görünüyor (sesler kesildi).",
+          "Topla kesilmiş seslerden oturum bulmaya çalışır; sonuç farklı olabilir.",
+          "Önerilen: Bağla öncesi yedek sequence ya da Ctrl+Z ile Bağla'yı geri al.",
+        ],
+        { title: "Topla yine de çalıştırılsın mı?", yes: "Yine de çalıştır", no: "Vazgeç" }
       );
+      if (ans !== "Evet") {
+        log("İptal edildi — hiçbir şey değişmedi.", "warn");
+        return;
+      }
+      log("Bağla kaydı var (sesler kesilmiş) ama kullanıcı devam dedi.", "warn");
+    }
     // park kaydı YALNIZ TOPLA'nın bıraktığı düzen duruyorsa geçerli: TOPLA tamamen geri alınmışsa bırakılır (her şey senkron
     // sonucundan yeniden), düzen el ile değişmişse sorulur
     const keep = parkedFromRecord(items, rec);
