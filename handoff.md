@@ -8,6 +8,11 @@ Kaynak: kullanıcının 2026-09-29 isteği (Emre'nin yeni çekimi; tick'ler rapo
 v1.4.0 kendi SENKRON motorumuz (ayrı bölüm). Kısıtlar aynen (Premiere kaydetmeden kapatılmaz, token gömülmez, PlayerDebugMode yalnız
 HKCU, TrLR varsayılanı Sil, kaynak kod güncelleme deposuna gitmez, UI/UX Pro Max `--persist` yok, yeni UI mevcut sade dile uyar).
 
+**Yayın (2026-09-29):** PR #7 birleştirildi (main `bc6307a`); `node scripts/publish-update.mjs --no-build` → güncelleme deposunda commit
+`7772db4` "Spread 1.3.0": main'deki `release/Spread_Kurulum_v1.3.0.zip` ile bayt bayt aynı zip, `latest.json` 1.3.0 (sha256
+`e1af3601…ab820`). Dışarıdan doğrulandı: raw `latest.json` 1.3.0; indirilen zip'in sha256'sı tutuyor; yardımcının `validateLatest` +
+`checkKit` + `checkCcx` denetiminden geçiyor. Depoda yalnız README.md, latest.json, releases/*.zip.
+
 ### Kurallar (`spread/src/health.ts` saf; `sessions.ts → analyze` kullanır → TOPLA, BAĞLA, Durum raporu aynı sonucu görür)
 
 - İmkânsız durumlar YALNIZ kimliği KESİN cihazlarda (`certainDevice`: kameralar + Zoom tarih_saat): (a) aynı cihazın iki kaydı ≥ 1 kare
