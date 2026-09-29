@@ -44,7 +44,7 @@ sığdığı dizi); gerisini **şüpheli** işaretler. Onayda, günlükte ve Dur
 
 ## Doğrulama
 
-- Mock: 119 → 127 senaryo. Yeniler: seçim birimi (eşit seçenek → belirsiz; sığma; iki gövde → sorulur; kurallar ayrışınca belirsiz),
+- Mock: 119 → 126 senaryo. Yeniler: seçim birimi (eşit seçenek → belirsiz; sığma; iki gövde → sorulur; kurallar ayrışınca belirsiz),
   A043 şeklinde fixture (15 tek-kamera klip, 8'i yanlış yerde: doğru 7 seçilir, 8 şüpheli park edilir; üç eşzamanlı DJI mikrofonu hata
   sayılmaz ve şeritlere dağılır; Bağla şeritli düzende çalışır ve park'takilere dokunmaz; gerçek yerleşimde "sorun yok" ve Topla eski
   akış), aynı çekimin başka bir bozuk yerleşimi (belirsizler), üst üste ilişkisiz gruplar (sorulur), adı tanınmayan ses (1.2.1 gibi),

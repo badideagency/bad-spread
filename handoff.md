@@ -82,7 +82,7 @@ düşen iki klip" ÇAKIŞMA'sıyla dururdu (1.2.1'de de; çok mikrofonlu DJI hi�
 | m1′ (doğrulama) | Yalnız sıra bozukluğunda (sayaç başa dönmesi) soru 1.2.1'de çalışan akışı durduruyordu | Oturum olarak kalır + "SIRA:" uyarısı (`health_wrap`) |
 | nit | tur sınırında çift park; sıra tetiklemesinde gerekçesiz soru; makarasız etiket; tek dosyalı DJI notu; spread-core'da ölü ifade; yinelenen cmpOrder; iki kez kare okuma | hepsi düzeltildi |
 
-### Mock (v1.3.0): 119 → 127 senaryo
+### Mock (v1.3.0): 119 → 126 senaryo
 
 - `health_unit`: eşit uzun zincirler → BELİRSİZ; sığma elemesi; ters sıra iki klip → BELİRSİZ + SORULUR; aynı adlı iki gövde → SORULUR;
   ayrışma (C005 bütün seslerden sonra) → C005 şüpheli, C003 / C004 BELİRSİZ; `vetoDevice` / `counterUsable` / `certainDevice`.
