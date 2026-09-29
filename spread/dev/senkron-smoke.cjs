@@ -155,6 +155,114 @@ scenarios.motor_kisa_iliskisiz = async () => {
   else fail(`kısa ilişkisiz klipler: yanlış ${j.wrong}, emin değil ${j.unsure.length}`);
 };
 
+scenarios.motor_tekrar = async () => {
+  // inceleme #15: tekrarlayan içerik (müzik döngüsü, aynı jingle, tekrar eden bölüm) yanlış yerleşimin ana kaynağı → hiçbiri yanlış yerleşmez
+  const quiet = { yieldNow: () => Promise.resolve() };
+  const rows = [];
+  let wrong = 0;
+  // (a) B2: iki farklı kamera, 20 sn klipler, 8 sn'lik birebir müzik döngüsü; gerçekte 200 sn ayrı; harici ses yok
+  {
+    const Sp = scene(900, 41);
+    const loop = scene(8, 99);
+    const M = new Float32Array(Sp.length);
+    for (let i = 0; i < M.length; i++) M[i] = 0.1 * Sp[i] + loop[i % loop.length];
+    const r = await CORE.senkronSolve(
+      [input("C1", "camera", "A", "C1", true, null, record(M, 300.123, 20, MIC.cam, 1)), input("C2", "camera", "B", "C2", true, null, record(M, 500.777, 20, MIC.cam2, 2))],
+      { frameSec: 1 / 25 },
+      quiet
+    );
+    const n = r.placed.filter((p) => p.status === "ok").length;
+    wrong += n;
+    rows.push(`döngü: ${n ? "YERLEŞTİ" : "emin değil"}`);
+  }
+  // (b) B2: aynı 3 sn jingle 400 sn arayla, 6 / 7 sn'lik iki klip (farklı kameralar)
+  {
+    const M = scene(900, 61);
+    const ring = scene(3, 5);
+    for (const t of [200, 600]) for (let i = 0; i < ring.length; i++) M[t * SR + i] += 2 * ring[i];
+    const r = await CORE.senkronSolve(
+      [input("CamA", "camera", "A", "CamA", true, null, record(M, 199, 6, MIC.cam, 3)), input("CamB", "camera", "B", "CamB", true, null, record(M, 598.5, 7, MIC.cam2, 4))],
+      { frameSec: 1 / 25 },
+      quiet
+    );
+    const n = r.placed.filter((p) => p.status === "ok").length;
+    wrong += n;
+    rows.push(`jingle: ${n ? "YERLEŞTİ" : "emin değil"}`);
+  }
+  // (c) B3: 20 sn'lik bölüm iki kez; X ve Y grup 1'de çelişkili → sahte ikinci grup kurmaz
+  {
+    const M = scene(900, 71);
+    for (let i = 0; i < 20 * SR; i++) M[700 * SR + i] = M[100 * SR + i];
+    const r = await CORE.senkronSolve(
+      [
+        input("R1", "audio", "Zoom", "R1", true, null, record(M, 0, 500, MIC.zoom1, 5)),
+        input("R2", "audio", "DJI", "R2", false, null, record(M, 400, 495, MIC.lav1, 6)),
+        input("X", "camera", "A", "X", true, null, record(M, 102, 8, MIC.cam, 7)),
+        input("Y", "camera", "B", "Y", true, null, record(M, 101, 12, MIC.cam2, 8)),
+      ],
+      { frameSec: 1 / 25 },
+      quiet
+    );
+    const xy = r.placed.filter((p) => (p.name === "X" || p.name === "Y") && p.status === "ok").length;
+    wrong += xy + (r.groups.length > 1 ? 1 : 0);
+    rows.push(`çelişen: X/Y ${xy ? "YERLEŞTİ" : "emin değil"}, ${r.groups.length} grup`);
+  }
+  // (d) B4: aynı müzik iki kez çalıyor, kayıtçı yalnız ikincisinde; kamera klibi birincisinde → saatle 600 sn çelişki → emin değil
+  {
+    const M = scene(1200, 9);
+    const song = scene(20, 77);
+    for (const t of [100, 700]) for (let i = 0; i < song.length; i++) M[t * SR + i] += 1.5 * song[i];
+    const r = await CORE.senkronSolve(
+      [
+        input("ZOOM", "audio", "Zoom", "ZOOM", true, [1], record(M, 500, 690, MIC.zoom1, 9), 500),
+        input("A1", "camera", "A", "A1", true, [1], record(M, 600, 60, MIC.cam, 10), 603),
+        input("A2", "camera", "A", "A2", true, [3], record(M, 900, 60, MIC.cam, 11), 903),
+        input("A3", "camera", "A", "A3", true, [2], record(M, 105, 6, MIC.cam, 12), 108),
+        input("A4", "camera", "A", "A4", true, [4], record(M, 1000, 40, MIC.cam, 13), 1003),
+      ],
+      { frameSec: 1 / 25 },
+      quiet
+    );
+    const a3 = r.placed.find((p) => p.name === "A3");
+    wrong += a3.status === "ok" ? 1 : 0;
+    rows.push(`saat çelişkisi: A3 ${a3.status === "ok" ? "YERLEŞTİ" : `emin değil (${a3.why.slice(0, 40)}…)`}`);
+  }
+  // (e) B1: saat ipucu turu doğru yöne bakar (8 sn'lik bölüm 50 sn önce tekrarlanıyor; 5 sn'lik klip)
+  {
+    const M = scene(900, 5);
+    for (let i = 0; i < 8 * SR; i++) M[349 * SR + i] = M[399 * SR + i];
+    const r = await CORE.senkronSolve(
+      [
+        input("E1", "audio", "Zoom", "E1", true, [1], record(M, 0, 890, MIC.zoom1, 14)),
+        input("E2", "audio", "DJI", "E2", false, null, record(M, 340, 300, MIC.lav1, 15)),
+        input("A1", "camera", "A", "A1", true, [1], record(M, 100, 60, MIC.cam, 16), 5100),
+        input("A2", "camera", "A", "A2", true, [3], record(M, 600, 60, MIC.cam, 17), 5600),
+        input("A3", "camera", "A", "A3", true, [2], record(M, 400, 5, MIC.cam, 18), 5400),
+      ],
+      { frameSec: 1 / 25 },
+      quiet
+    );
+    const e1 = r.placed.find((p) => p.name === "E1");
+    const a3 = r.placed.find((p) => p.name === "A3");
+    const bad = a3.status === "ok" && Math.abs(a3.pos - e1.pos - 400) > 0.001;
+    wrong += bad ? 1 : 0;
+    rows.push(`tekrar eden bölüm: A3 ${a3.status === "ok" ? `${(a3.pos - e1.pos).toFixed(3)} sn (gerçek 400)` : "emin değil"}`);
+  }
+  // (f) DC kayması olan kamera sesi yine yerleşir
+  {
+    const M = scene(900, 55);
+    const dc = record(M, 200.3, 40, MIC.cam, 19).map((v) => Math.min(32767, v + 9830));
+    const r = await CORE.senkronSolve([input("ZOOM", "audio", "Zoom", "ZOOM", true, null, record(M, 100, 700, MIC.zoom1, 20)), input("DC", "camera", "A", "DC", true, null, dc)], { frameSec: 1 / 25 }, quiet);
+    const z = r.placed.find((p) => p.name === "ZOOM");
+    const d = r.placed.find((p) => p.name === "DC");
+    const ok1 = d.status === "ok" && Math.abs(d.pos - z.pos - 100.3) < 0.001;
+    if (!ok1) wrong += d.status === "ok" ? 1 : 0;
+    rows.push(`DC kaymalı klip: ${ok1 ? "doğru yerde" : d.status}`);
+  }
+  if (!wrong) ok(`tekrarlayan içerik — yanlış yerleşim 0: ${rows.join("; ")}`);
+  else fail(`tekrarlayan içerikte ${wrong} yanlış yerleşim: ${rows.join("; ")}`);
+};
+
 scenarios.motor_iptal = async () => {
   const M = scene(300, 5);
   const files = [

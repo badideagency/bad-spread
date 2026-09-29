@@ -358,7 +358,9 @@ var SpreadCore = (function(exports) {
 		tolSec: .002,
 		fineHalfSec: 1,
 		fineWinSec: 8,
-		hintHalfSec: 90
+		hintHalfSec: 10,
+		wideSec: 60,
+		clockTolSec: 30
 	};
 	var Cancelled = class extends Error {
 		constructor() {
@@ -683,7 +685,11 @@ var SpreadCore = (function(exports) {
 		const nodes = [];
 		for (let i = 0; i < files.length; i++) {
 			await step(`zarf ${i + 1}/${files.length}`, .05 * (i / Math.max(1, files.length)));
-			const x = toFloat(files[i].pcm);
+			const x0 = toFloat(files[i].pcm);
+			let mean = 0;
+			for (let k = 0; k < x0.length; k++) mean += x0[k];
+			mean /= Math.max(1, x0.length);
+			const x = x0 === files[i].pcm || Math.abs(mean) > 1e-6 ? Float32Array.from(x0, (v) => v - mean) : x0;
 			nodes.push({
 				f: files[i],
 				x,
@@ -709,13 +715,17 @@ var SpreadCore = (function(exports) {
 			const kMin = win ? Math.floor(win[0] * 100) : -Infinity;
 			const kMax = win ? Math.ceil(win[1] * 100) : Infinity;
 			const pk = nccPeaks(A.env.env, B.env.env, minN, kMin, kMax, 100).filter((p) => p.ncc >= o.minNcc);
+			const lo = Math.max(minN - B.env.env.length, kMin);
+			const hi = Math.min(A.env.env.length - minN, kMax);
 			const e = {
 				a: i,
 				b: j,
 				peaks: [],
 				best: 0,
 				bestRatio: 0,
-				why: null
+				why: null,
+				span: Math.max(0, hi - lo) / 100,
+				hinted: !!win
 			};
 			if (!pk.length) {
 				e.why = "ortak bölüm / benzerlik yok";
@@ -763,30 +773,33 @@ var SpreadCore = (function(exports) {
 			edges.push(await match(pairs[q][0], pairs[q][1], null));
 		}
 		await step("çözülüyor", .87);
-		let placement = place(nodes, edges, o);
+		const banned = /* @__PURE__ */ new Map();
+		const settle = () => {
+			let P = place(nodes, edges, o, banned);
+			for (let round = 0; round < 6; round++) {
+				const more = clockConflicts(nodes, P, o).filter(([i]) => !banned.has(i));
+				if (!more.length) break;
+				for (const [i, why] of more) banned.set(i, why);
+				P = place(nodes, edges, o, banned);
+			}
+			return P;
+		};
+		let placement = settle();
 		const offs = deviceOffsets(nodes, placement);
-		const retry = nodes.map((_, i) => i).filter((i) => placement.group[i] === 0 && nodes[i].env.usable && nodes[i].f.clock !== null && offs.has(nodes[i].f.device));
+		const retry = nodes.map((_, i) => i).filter((i) => placement.group[i] === 0 && !banned.has(i) && !placement.blocked[i] && nodes[i].env.usable && nodes[i].f.clock !== null && offs.has(nodes[i].f.device));
 		if (retry.length) {
 			let changed = false;
 			for (let r = 0; r < retry.length; r++) {
 				const i = retry[r];
 				const gi = offs.get(nodes[i].f.device);
-				const expect = nodes[i].f.clock + gi.offset;
+				const expect = nodes[i].f.clock + gi.offset + lead(nodes[i]);
 				for (let j = 0; j < n; j++) {
 					if (placement.group[j] !== gi.group || !nodes[j].env.usable) continue;
 					if (nodes[i].f.device === nodes[j].f.device && nodes[i].f.certain && nodes[j].f.certain && nodes[i].f.recording !== nodes[j].f.recording) continue;
 					await step(`saat ipucuyla yeniden aranıyor ${r + 1}/${retry.length}`, .88 + .08 * (r / retry.length));
 					const d = expect - placement.pos[j];
-					const [a, b, sign] = i < j ? [
-						i,
-						j,
-						1
-					] : [
-						j,
-						i,
-						-1
-					];
-					const c = sign * d;
+					const [a, b] = i < j ? [i, j] : [j, i];
+					const c = i === a ? -d : d;
 					const e = await match(a, b, [c - o.hintHalfSec, c + o.hintHalfSec]);
 					if (!e.peaks.length) continue;
 					const k = edges.findIndex((x) => x.a === a && x.b === b);
@@ -800,19 +813,23 @@ var SpreadCore = (function(exports) {
 				}
 			}
 			if (changed) {
-				placement = place(nodes, edges, o);
-				notes.push(`saat ipucuyla dar pencerede yeniden arandı: ${retry.length} dosya`);
+				placement = settle();
+				notes.push(`saat ipucuyla dar pencerede (±${o.hintHalfSec} sn) yeniden arandı: ${retry.length} dosya`);
 			}
 		}
+		if (banned.size) notes.push(`${banned.size} dosya saat ipucuyla çeliştiği için yerleştirilmedi`);
 		await step("rapor", .97);
 		return report(nodes, edges, placement, o, notes);
 	}
+	/** PCM başının dosyanın zaman sıfırına göre yeri (sn). */
+	var lead = (x) => typeof x.f.lead === "number" && Number.isFinite(x.f.lead) ? x.f.lead : 0;
 	/** Konum tahmini: yerleşmiş j'den i'ye kenar e'nin q. tepesi → pos(i). */
 	function estimate(e, q, i, posJ) {
 		const s = e.peaks[q].s;
 		return e.a === i ? posJ - s : posJ + s;
 	}
-	function place(nodes, edges, o) {
+	/** @param banned yerleştirilmeyecek dosyalar (ör. saat ipucuyla çelişen) → gerekçeleriyle "emin değil" */
+	function place(nodes, edges, o, banned = /* @__PURE__ */ new Map()) {
 		const n = nodes.length;
 		const P = {
 			group: new Array(n).fill(0),
@@ -825,14 +842,17 @@ var SpreadCore = (function(exports) {
 			})),
 			support: new Array(n).fill(0),
 			why: new Array(n).fill(""),
-			used: /* @__PURE__ */ new Map()
+			used: /* @__PURE__ */ new Map(),
+			blocked: new Array(n).fill(false)
 		};
+		for (const [i, w] of banned) P.why[i] = w;
 		const inc = nodes.map(() => []);
 		edges.forEach((e, k) => {
-			if (!e.peaks.length) return;
+			if (!e.peaks.length || banned.has(e.a) || banned.has(e.b)) return;
 			inc[e.a].push(k);
 			inc[e.b].push(k);
 		});
+		const wide = (k) => edges[k].hinted || edges[k].span >= o.wideSec;
 		const strength = (i) => inc[i].reduce((s, k) => s + edges[k].peaks[0].peak, 0);
 		const violates = (i, p, g) => {
 			const fi = nodes[i].f;
@@ -857,7 +877,7 @@ var SpreadCore = (function(exports) {
 		let g = 0;
 		for (;;) {
 			let root = -1;
-			for (let i = 0; i < n; i++) if (P.group[i] === 0 && inc[i].length && (root < 0 || strength(i) > strength(root))) root = i;
+			for (let i = 0; i < n; i++) if (P.group[i] === 0 && !P.blocked[i] && inc[i].length && (root < 0 || strength(i) > strength(root))) root = i;
 			if (root < 0) break;
 			g++;
 			P.group[root] = g;
@@ -877,7 +897,7 @@ var SpreadCore = (function(exports) {
 				let bestUsed = [];
 				const why = /* @__PURE__ */ new Map();
 				for (let i = 0; i < n; i++) {
-					if (P.group[i] !== 0) continue;
+					if (P.group[i] !== 0 || P.blocked[i] || banned.has(i)) continue;
 					const est = [];
 					for (const k of inc[i]) {
 						const e = edges[k];
@@ -920,6 +940,10 @@ var SpreadCore = (function(exports) {
 					});
 					if (okc.length && !(okc.length > 1 && okc[1].w >= .5 * okc[0].w)) chosen = okc[0];
 					else if (okc.length) reason = "çelişen eşleşmeler (iki konum da güçlü)";
+					if (chosen && !chosen.m.some((x) => wide(x.k)) && chosen.m.length < 2) {
+						reason = "tek ve dar aralıklı eşleşme (kısa klipler; tekrarlayan içerik olabilir) — ikinci bağımsız eşleşme yok";
+						chosen = null;
+					}
 					if (!chosen) {
 						why.set(i, reason || "uygun konum yok");
 						continue;
@@ -941,6 +965,10 @@ var SpreadCore = (function(exports) {
 				}
 				if (bestI < 0) {
 					for (const [i, w] of why) if (P.group[i] === 0 && !P.why[i]) P.why[i] = w;
+					for (let i = 0; i < n; i++) if (P.group[i] === 0 && !P.blocked[i] && inc[i].some((k) => P.group[edges[k].a === i ? edges[k].b : edges[k].a] === g)) {
+						P.blocked[i] = true;
+						if (!P.why[i]) P.why[i] = "grubun dosyalarıyla eşleşmesi var ama tutarlı bir konum yok";
+					}
 					break;
 				}
 				P.group[bestI] = g;
@@ -961,19 +989,23 @@ var SpreadCore = (function(exports) {
 		for (let gg = 1; gg <= g; gg++) {
 			const mem = nodes.map((_, i) => i).filter((i) => P.group[i] === gg);
 			if (mem.length === 1) {
-				P.group[mem[0]] = 0;
-				P.why[mem[0]] = P.why[mem[0]] && !/dayanağı/.test(P.why[mem[0]]) ? P.why[mem[0]] : "hiçbir eşleşmesi yerleşemedi";
+				const i = mem[0];
+				P.group[i] = 0;
+				const nb = inc[i].map((k) => edges[k].a === i ? edges[k].b : edges[k].a).find((j) => P.why[j] && !/dayanağı/.test(P.why[j]));
+				P.why[i] = nb !== void 0 ? `eşleştiği "${nodes[nb].f.name}" yerleşemedi (${P.why[nb]})` : "hiçbir eşleşmesi yerleşemedi";
 			}
 		}
 		return P;
 	}
+	/** Dosya başının (zaman sıfırı) grup koordinatındaki yeri. */
+	var mpos = (nodes, P, i) => P.pos[i] - lead(nodes[i]);
 	function deviceOffsets(nodes, P) {
 		const by = /* @__PURE__ */ new Map();
 		nodes.forEach((x, i) => {
 			if (P.group[i] === 0 || x.f.clock === null) return;
 			by.set(x.f.device, [...by.get(x.f.device) ?? [], {
 				g: P.group[i],
-				v: P.pos[i] - x.f.clock
+				v: mpos(nodes, P, i) - x.f.clock
 			}]);
 		});
 		const out = /* @__PURE__ */ new Map();
@@ -982,17 +1014,49 @@ var SpreadCore = (function(exports) {
 			for (const x of list) cnt.set(x.g, (cnt.get(x.g) ?? 0) + 1);
 			const g = [...cnt.entries()].sort((a, b) => b[1] - a[1])[0][0];
 			const v = list.filter((x) => x.g === g).map((x) => x.v);
+			const m = median(v);
 			out.set(d, {
-				offset: median(v),
+				offset: m,
 				group: g,
-				n: v.length
+				n: v.length,
+				spread: median(v.map((x) => Math.abs(x - m)))
+			});
+		}
+		return out;
+	}
+	/**
+	* Saat ipucuyla çelişen yerleşimler (inceleme #15 B4): kimliği KESİN cihazın (tek saat) aynı gruptaki ≥ 3 saatli dosyası aynı kaymada
+	* tutarlıysa (medyan mutlak sapma ≤ 2 sn), saatine > clockTolSec uymayan dosya — aynı içerik başka zamanda da çalmış olabilir.
+	*/
+	function clockConflicts(nodes, P, o) {
+		const out = [];
+		const by = /* @__PURE__ */ new Map();
+		nodes.forEach((x, i) => {
+			if (P.group[i] === 0 || x.f.clock === null || !x.f.certain) return;
+			const k = `${P.group[i]}\u0000${x.f.device}`;
+			by.set(k, [...by.get(k) ?? [], i]);
+		});
+		for (const list of by.values()) {
+			if (list.length < 3) continue;
+			const v = list.map((i) => mpos(nodes, P, i) - nodes[i].f.clock);
+			const m = median(v);
+			if (median(v.map((x) => Math.abs(x - m))) > 2) continue;
+			list.forEach((i, k) => {
+				if (Math.abs(v[k] - m) > o.clockTolSec) out.push([i, `saat ipucuyla ${(v[k] - m).toFixed(1)} sn çelişiyor (aynı cihazın ${list.length - 1} dosyası saatine uyuyor; aynı ses başka zamanda da çalmış olabilir)`]);
 			});
 		}
 		return out;
 	}
 	function report(nodes, edges, P, o, notes) {
-		const offs = deviceOffsets(nodes, P);
 		const G = Math.max(0, ...P.group);
+		const shift = /* @__PURE__ */ new Map();
+		for (let g = 1; g <= G; g++) {
+			let m = Infinity;
+			nodes.forEach((_, i) => P.group[i] === g && (m = Math.min(m, mpos(nodes, P, i))));
+			if (m !== Infinity) shift.set(g, m);
+		}
+		const rpos = (i) => mpos(nodes, P, i) - (shift.get(P.group[i]) ?? 0);
+		const offs = deviceOffsets(nodes, P);
 		const groups = [];
 		for (let g = 1; g <= G; g++) {
 			const mem = nodes.map((_, i) => i).filter((i) => P.group[i] === g);
@@ -1000,8 +1064,8 @@ var SpreadCore = (function(exports) {
 			groups.push({
 				n: groups.length + 1,
 				ids: mem.map((i) => nodes[i].f.id),
-				start: Math.min(...mem.map((i) => P.pos[i])),
-				end: Math.max(...mem.map((i) => P.pos[i] + nodes[i].dur)),
+				start: Math.min(...mem.map((i) => rpos(i))),
+				end: Math.max(...mem.map((i) => rpos(i) + nodes[i].dur)),
 				clockFrom1: null
 			});
 		}
@@ -1015,7 +1079,7 @@ var SpreadCore = (function(exports) {
 			for (let g = 1; g <= G; g++) {
 				const m = /* @__PURE__ */ new Map();
 				nodes.forEach((x, i) => {
-					if (P.group[i] === g && x.f.clock !== null) m.set(x.f.device, [...m.get(x.f.device) ?? [], x.f.clock - P.pos[i]]);
+					if (P.group[i] === g && x.f.clock !== null) m.set(x.f.device, [...m.get(x.f.device) ?? [], x.f.clock - rpos(i)]);
 				});
 				const mm = /* @__PURE__ */ new Map();
 				for (const [d, v] of m) mm.set(d, median(v));
@@ -1036,20 +1100,20 @@ var SpreadCore = (function(exports) {
 		const placed = nodes.map((x, i) => {
 			const g = P.group[i];
 			const off = offs.get(x.f.device);
-			const hintPos = g && off && off.group === g && x.f.clock !== null ? x.f.clock + off.offset : null;
+			const hintPos = g && off && off.group === g && x.f.clock !== null ? x.f.clock + off.offset - (shift.get(g) ?? 0) : null;
 			return {
 				id: x.f.id,
 				name: x.f.name,
 				status: g ? "ok" : "emin değil",
 				group: g ? renum.get(g) ?? 0 : 0,
-				pos: g ? P.pos[i] : null,
+				pos: g ? rpos(i) : null,
 				confidence: g ? Math.min(1, P.weight[i]) : 0,
 				via: P.via[i] >= 0 ? nodes[P.via[i]].f.name : null,
 				viaPeak: P.viaPeak[i].ncc,
 				viaRatio: P.viaPeak[i].ratio,
 				support: P.support[i],
 				hintPos,
-				hintDiff: hintPos !== null && g ? P.pos[i] - hintPos : null,
+				hintDiff: hintPos !== null && g ? rpos(i) - hintPos : null,
 				why: g ? P.why[i] : !x.env.usable ? x.env.why : P.why[i] || bestWhy(i, edges) || "eşleşme yok"
 			};
 		});
@@ -1078,7 +1142,8 @@ var SpreadCore = (function(exports) {
 			deviceClock: [...offs.entries()].map(([device, v]) => ({
 				device,
 				offset: v.offset,
-				n: v.n
+				n: v.n,
+				spread: v.spread
 			})),
 			notes
 		};

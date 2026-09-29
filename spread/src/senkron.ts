@@ -8,13 +8,19 @@
 // 2) KABA: iki zarfın bütün kaydırmalarda NORMALİZE çapraz korelasyonu (FFT + önek toplamlarıyla yerel normalizasyon; yalnız en az
 //    `minOverlap` üst üste binen kaydırmalar). Güven = en yüksek tepe (NCC) VE birinci / ikinci tepe oranı (ikinci tepe: birinciden
 //    ≥ 1 sn uzakta). Eşik altı → eşleşme YOK (tahmin yok).
-// 3) İNCE: kaba sonucun ±1 sn'sinde, 8 kHz sinyalde, en yüksek enerjili ≤ 15 sn'lik ortak bölümde GCC-PHAT (farklı mikrofonların
+// 3) İNCE: kaba sonucun ±1 sn'sinde, 8 kHz sinyalde, en yüksek enerjili ≤ 8 sn'lik ortak bölümde GCC-PHAT (farklı mikrofonların
 //    renk farkını düzler, tepe keskin) + parabolik alt-örnek ara değerleme → ≪ 1 ms. İnce tepe kabaya ≤ 50 ms uzak ve keskin olmalı.
 // 4) ÇÖZÜM: en çok desteklenen dosyadan başlayarak BÜYÜYEN yerleşim. Yerleşmemiş her dosya için yerleşmiş komşularının verdiği
 //    konum tahminleri ±2 ms içinde kümelenir; en ağır küme açıkça önde (ikinci küme < yarısı) VE kısıtlar tutuyorsa yerleşir:
 //    kimliği kesin cihazın (kamera, Zoom) iki kaydı ≥ 1 kare üst üste olamaz; sayacı güvenli cihazda dosya sırası = zaman sırası.
 //    Kısıtı bozan eşleşme düşer, çiftin bir sonraki (yine güvenli) tepesi denenir. Hiçbir yolla yerleşemeyen → "emin değil".
 //    Birbirine hiç bağlanmayan kümeler AYRI GRUP (ayrı oturum); gruplar arası mesafe saat ipucundan, yoksa bilinmez (boşluk).
+//    TEKRARLAYAN İÇERİK (müzik döngüsü, aynı jingle) yanlış yerleşimin ana kaynağıdır (inceleme #15). Bu yüzden:
+//      - bir dosya TEK bir eşleşmeyle ancak o eşleşme GENİŞ bir aralıkta arandıysa (≥ wideSec: rakip tekrarlar oran sınamasına
+//        girebilsin) yerleşir; dar aralıklı eşleşmelerde (iki kısa klip) en az İKİ bağımsız eşleşme gerekir;
+//      - bir grupta eşleşmesi olup orada yerleşemeyen (çelişen / kısıtı bozan) dosya başka grup kuramaz, başka gruba giremez;
+//      - kimliği kesin cihazın (kamera, Zoom) ≥ 3 saatli dosyası aynı saat kaymasında tutarlıysa (sapma ≤ 2 sn), saatine
+//        > clockTolSec uyuşmayan dosyası "emin değil" (saat ipucuyla çelişiyor) ve çözüm onsuz yeniden kurulur.
 // 5) SAAT İPUÇLARI (dosya adı tarih_saat, ffprobe creation_time / timecode) YALNIZ aramayı daraltır ve raporlanır: cihaz başına saat
 //    kayması, o cihazın güvenle yerleşmiş dosyalarının (konum − saat) medyanı. İpucuyla daraltılmış ikinci turda da eşikler aynı.
 // Bütün konumlar saniye (Number); tick'e çeviri UXP'de (1 sn = 254016000000 tick; 1 ms ≪ 1 kare).
@@ -43,6 +49,10 @@ export interface SenkronOpts {
   fineWinSec: number;
   /** saat ipucuyla daraltılmış aramanın yarı genişliği (sn) */
   hintHalfSec: number;
+  /** tek eşleşmeyle yerleşme için en dar arama aralığı (sn) */
+  wideSec: number;
+  /** tutarlı cihaz saatine göre izin verilen en büyük fark (sn) */
+  clockTolSec: number;
 }
 
 export const DEFAULT_OPTS: SenkronOpts = {
@@ -56,7 +66,9 @@ export const DEFAULT_OPTS: SenkronOpts = {
   tolSec: 0.002,
   fineHalfSec: 1,
   fineWinSec: 8,
-  hintHalfSec: 90,
+  hintHalfSec: 10,
+  wideSec: 60,
+  clockTolSec: 30,
 };
 
 export interface SenkronInput {
@@ -75,6 +87,8 @@ export interface SenkronInput {
   /** saat ipucu: kaydın başlangıcı, saniye (aynı cihazın dosyaları arasında karşılaştırılabilir) ya da null */
   clock: number | null;
   clockSrc?: string;
+  /** PCM'in ilk örneğinin dosyanın zaman sıfırına göre yeri (sn; ses akışı videodan sonra başlıyorsa +) — rapor konumları dosya başına göre */
+  lead?: number;
 }
 
 export interface Peak {
@@ -92,6 +106,10 @@ export interface Edge {
   best: number;
   bestRatio: number;
   why: string | null;
+  /** aranan kaydırma aralığının genişliği (sn) — dar aralıkta rakip tekrarlar hiç sınanmamış olabilir */
+  span: number;
+  /** saat ipucuyla daraltılmış ikinci turdan */
+  hinted: boolean;
 }
 
 export interface Placed {
@@ -131,7 +149,7 @@ export interface SenkronResult {
   placed: Placed[];
   groups: Group[];
   edges: { a: string; b: string; s: number | null; peak: number; ratio: number; used: boolean; residualMs: number | null; why: string | null }[];
-  deviceClock: { device: string; offset: number; n: number }[];
+  deviceClock: { device: string; offset: number; n: number; spread: number }[];
   notes: string[];
 }
 
@@ -486,7 +504,12 @@ export async function solve(files: SenkronInput[], opts0: Partial<SenkronOpts> =
   const nodes: Node[] = [];
   for (let i = 0; i < files.length; i++) {
     await step(`zarf ${i + 1}/${files.length}`, 0.05 * (i / Math.max(1, files.length)));
-    const x = toFloat(files[i].pcm);
+    const x0 = toFloat(files[i].pcm);
+    // DC kayması zarfı düzleştirmesin (inceleme #15): ortalama çıkarılır (kopya; çağıranın dizisine dokunulmaz)
+    let mean = 0;
+    for (let k = 0; k < x0.length; k++) mean += x0[k];
+    mean /= Math.max(1, x0.length);
+    const x = x0 === files[i].pcm || Math.abs(mean) > 1e-6 ? Float32Array.from(x0, (v) => v - mean) : x0;
     nodes.push({ f: files[i], x, env: envelope(x), dur: x.length / SR });
   }
   const n = nodes.length;
@@ -510,7 +533,10 @@ export async function solve(files: SenkronInput[], opts0: Partial<SenkronOpts> =
     const kMin = win ? Math.floor(win[0] * ENV_RATE) : -Infinity;
     const kMax = win ? Math.ceil(win[1] * ENV_RATE) : Infinity;
     const pk = nccPeaks(A.env.env, B.env.env, minN, kMin, kMax, ENV_RATE).filter((p) => p.ncc >= o.minNcc);
-    const e: Edge = { a: i, b: j, peaks: [], best: 0, bestRatio: 0, why: null };
+    // aranan aralık: ortak kısmı ≥ minN olan kaydırmalar (∩ pencere)
+    const lo = Math.max(minN - B.env.env.length, kMin);
+    const hi = Math.min(A.env.env.length - minN, kMax);
+    const e: Edge = { a: i, b: j, peaks: [], best: 0, bestRatio: 0, why: null, span: Math.max(0, hi - lo) / ENV_RATE, hinted: !!win };
     if (!pk.length) {
       e.why = "ortak bölüm / benzerlik yok";
       return e;
@@ -554,24 +580,37 @@ export async function solve(files: SenkronInput[], opts0: Partial<SenkronOpts> =
     edges.push(await match(pairs[q][0], pairs[q][1], null));
   }
   await step("çözülüyor", 0.87);
-  let placement = place(nodes, edges, o);
-  // saat ipucu ikinci tur: yerleşemeyenler için, cihaz saat kayması biliniyorsa dar pencerede (eşikler aynı)
+  const banned = new Map<number, string>();
+  const settle = () => {
+    let P = place(nodes, edges, o, banned);
+    for (let round = 0; round < 6; round++) {
+      const more = clockConflicts(nodes, P, o).filter(([i]) => !banned.has(i));
+      if (!more.length) break;
+      for (const [i, why] of more) banned.set(i, why);
+      P = place(nodes, edges, o, banned);
+    }
+    return P;
+  };
+  let placement = settle();
+  // saat ipucu ikinci tur: yerleşemeyenler için, cihaz saat kayması biliniyorsa dar pencerede (±hintHalfSec; eşikler aynı)
   const offs = deviceOffsets(nodes, placement);
-  const retry = nodes.map((_, i) => i).filter((i) => placement.group[i] === 0 && nodes[i].env.usable && nodes[i].f.clock !== null && offs.has(nodes[i].f.device));
+  const retry = nodes
+    .map((_, i) => i)
+    .filter((i) => placement.group[i] === 0 && !banned.has(i) && !placement.blocked[i] && nodes[i].env.usable && nodes[i].f.clock !== null && offs.has(nodes[i].f.device));
   if (retry.length) {
     let changed = false;
     for (let r = 0; r < retry.length; r++) {
       const i = retry[r];
       const gi = offs.get(nodes[i].f.device)!;
-      const expect = nodes[i].f.clock! + gi.offset; // grup gi.group koordinatında
+      const expect = nodes[i].f.clock! + gi.offset + lead(nodes[i]); // i'nin PCM başının beklenen yeri (grup gi.group koordinatı)
       for (let j = 0; j < n; j++) {
         if (placement.group[j] !== gi.group || !nodes[j].env.usable) continue;
         if (nodes[i].f.device === nodes[j].f.device && nodes[i].f.certain && nodes[j].f.certain && nodes[i].f.recording !== nodes[j].f.recording) continue;
         await step(`saat ipucuyla yeniden aranıyor ${r + 1}/${retry.length}`, 0.88 + 0.08 * (r / retry.length));
-        // pos(i) − pos(j) beklenen: expect − pos(j)
+        // d = beklenen pos(i) − pos(j). Kenar s = pos(b) − pos(a) saklar → i = a ise s = −d, i = b ise s = d (inceleme #15 B1)
         const d = expect - placement.pos[j];
-        const [a, b, sign] = i < j ? [i, j, 1] : [j, i, -1];
-        const c = sign * d;
+        const [a, b] = i < j ? [i, j] : [j, i];
+        const c = i === a ? -d : d;
         const e = await match(a, b, [c - o.hintHalfSec, c + o.hintHalfSec]);
         if (!e.peaks.length) continue;
         const k = edges.findIndex((x) => x.a === a && x.b === b);
@@ -585,10 +624,11 @@ export async function solve(files: SenkronInput[], opts0: Partial<SenkronOpts> =
       }
     }
     if (changed) {
-      placement = place(nodes, edges, o);
-      notes.push(`saat ipucuyla dar pencerede yeniden arandı: ${retry.length} dosya`);
+      placement = settle();
+      notes.push(`saat ipucuyla dar pencerede (±${o.hintHalfSec} sn) yeniden arandı: ${retry.length} dosya`);
     }
   }
+  if (banned.size) notes.push(`${banned.size} dosya saat ipucuyla çeliştiği için yerleştirilmedi`);
   await step("rapor", 0.97);
   return report(nodes, edges, placement, o, notes);
 }
@@ -603,7 +643,12 @@ interface Placement {
   why: string[];
   /** kullanılan tepe (kenar indeksi → tepe indeksi) */
   used: Map<number, number>;
+  /** bir grupta eşleşmesi olup orada yerleşemedi → başka grup kuramaz / giremez */
+  blocked: boolean[];
 }
+
+/** PCM başının dosyanın zaman sıfırına göre yeri (sn). */
+const lead = (x: Node) => (typeof x.f.lead === "number" && Number.isFinite(x.f.lead) ? x.f.lead : 0);
 
 /** Konum tahmini: yerleşmiş j'den i'ye kenar e'nin q. tepesi → pos(i). */
 function estimate(e: Edge, q: number, i: number, posJ: number): number {
@@ -611,7 +656,8 @@ function estimate(e: Edge, q: number, i: number, posJ: number): number {
   return e.a === i ? posJ - s : posJ + s;
 }
 
-function place(nodes: Node[], edges: Edge[], o: SenkronOpts): Placement {
+/** @param banned yerleştirilmeyecek dosyalar (ör. saat ipucuyla çelişen) → gerekçeleriyle "emin değil" */
+function place(nodes: Node[], edges: Edge[], o: SenkronOpts, banned: Map<number, string> = new Map()): Placement {
   const n = nodes.length;
   const P: Placement = {
     group: new Array(n).fill(0),
@@ -622,13 +668,17 @@ function place(nodes: Node[], edges: Edge[], o: SenkronOpts): Placement {
     support: new Array(n).fill(0),
     why: new Array(n).fill(""),
     used: new Map(),
+    blocked: new Array(n).fill(false),
   };
+  for (const [i, w] of banned) P.why[i] = w;
   const inc: number[][] = nodes.map(() => []);
   edges.forEach((e, k) => {
-    if (!e.peaks.length) return;
+    if (!e.peaks.length || banned.has(e.a) || banned.has(e.b)) return;
     inc[e.a].push(k);
     inc[e.b].push(k);
   });
+  // tek eşleşmeyle yerleşme yalnız geniş aralıkta aranmış (rakip tekrarlar sınanmış) ya da saatle daraltılmış kenarla
+  const wide = (k: number) => edges[k].hinted || edges[k].span >= o.wideSec;
   const strength = (i: number) => inc[i].reduce((s, k) => s + edges[k].peaks[0].peak, 0);
   // kısıt: i'yi p'ye koymak aynı gruptaki yerleşmişlerle çelişiyor mu
   const violates = (i: number, p: number, g: number): string | null => {
@@ -656,7 +706,7 @@ function place(nodes: Node[], edges: Edge[], o: SenkronOpts): Placement {
   for (;;) {
     // yeni grubun kökü: en güçlü bağlı, yerleşmemiş dosya
     let root = -1;
-    for (let i = 0; i < n; i++) if (P.group[i] === 0 && inc[i].length && (root < 0 || strength(i) > strength(root))) root = i;
+    for (let i = 0; i < n; i++) if (P.group[i] === 0 && !P.blocked[i] && inc[i].length && (root < 0 || strength(i) > strength(root))) root = i;
     if (root < 0) break;
     g++;
     P.group[root] = g;
@@ -673,7 +723,7 @@ function place(nodes: Node[], edges: Edge[], o: SenkronOpts): Placement {
       let bestUsed: [number, number][] = [];
       const why = new Map<number, string>();
       for (let i = 0; i < n; i++) {
-        if (P.group[i] !== 0) continue;
+        if (P.group[i] !== 0 || P.blocked[i] || banned.has(i)) continue;
         // tahminler: yerleşmiş komşulardan, bütün güvenli tepeler
         const est: { p: number; w: number; k: number; q: number }[] = [];
         for (const k of inc[i]) {
@@ -712,6 +762,11 @@ function place(nodes: Node[], edges: Edge[], o: SenkronOpts): Placement {
         });
         if (okc.length && !(okc.length > 1 && okc[1].w >= 0.5 * okc[0].w)) chosen = okc[0];
         else if (okc.length) reason = "çelişen eşleşmeler (iki konum da güçlü)";
+        // kanıt: en az bir GENİŞ aralıklı eşleşme ya da iki bağımsız eşleşme (tekrarlayan içerik — inceleme #15 B2)
+        if (chosen && !chosen.m.some((x) => wide(x.k)) && chosen.m.length < 2) {
+          reason = "tek ve dar aralıklı eşleşme (kısa klipler; tekrarlayan içerik olabilir) — ikinci bağımsız eşleşme yok";
+          chosen = null;
+        }
         if (!chosen) {
           why.set(i, reason || "uygun konum yok");
           continue;
@@ -730,6 +785,12 @@ function place(nodes: Node[], edges: Edge[], o: SenkronOpts): Placement {
       }
       if (bestI < 0) {
         for (const [i, w] of why) if (P.group[i] === 0 && !P.why[i]) P.why[i] = w;
+        // bu grupla güvenli eşleşmesi olup yerleşemeyenler başka grup kuramaz / başka gruba giremez (inceleme #15 B3)
+        for (let i = 0; i < n; i++)
+          if (P.group[i] === 0 && !P.blocked[i] && inc[i].some((k) => P.group[edges[k].a === i ? edges[k].b : edges[k].a] === g)) {
+            P.blocked[i] = true;
+            if (!P.why[i]) P.why[i] = "grubun dosyalarıyla eşleşmesi var ama tutarlı bir konum yok";
+          }
         break;
       }
       P.group[bestI] = g;
@@ -752,34 +813,74 @@ function place(nodes: Node[], edges: Edge[], o: SenkronOpts): Placement {
   for (let gg = 1; gg <= g; gg++) {
     const mem = nodes.map((_, i) => i).filter((i) => P.group[i] === gg);
     if (mem.length === 1) {
-      P.group[mem[0]] = 0;
-      P.why[mem[0]] = P.why[mem[0]] && !/dayanağı/.test(P.why[mem[0]]) ? P.why[mem[0]] : "hiçbir eşleşmesi yerleşemedi";
+      const i = mem[0];
+      P.group[i] = 0;
+      // kökün kendi gerekçesi yok; komşularının (engellenen / yetersiz kanıt) gerekçesi varsa o
+      const nb = inc[i].map((k) => (edges[k].a === i ? edges[k].b : edges[k].a)).find((j) => P.why[j] && !/dayanağı/.test(P.why[j]));
+      P.why[i] = nb !== undefined ? `eşleştiği "${nodes[nb].f.name}" yerleşemedi (${P.why[nb]})` : "hiçbir eşleşmesi yerleşemedi";
     }
   }
   return P;
 }
 
-function deviceOffsets(nodes: Node[], P: Placement): Map<string, { offset: number; group: number; n: number }> {
+/** Dosya başının (zaman sıfırı) grup koordinatındaki yeri. */
+const mpos = (nodes: Node[], P: Placement, i: number) => P.pos[i] - lead(nodes[i]);
+
+function deviceOffsets(nodes: Node[], P: Placement): Map<string, { offset: number; group: number; n: number; spread: number }> {
   const by = new Map<string, { g: number; v: number }[]>();
   nodes.forEach((x, i) => {
     if (P.group[i] === 0 || x.f.clock === null) return;
-    by.set(x.f.device, [...(by.get(x.f.device) ?? []), { g: P.group[i], v: P.pos[i] - x.f.clock }]);
+    by.set(x.f.device, [...(by.get(x.f.device) ?? []), { g: P.group[i], v: mpos(nodes, P, i) - x.f.clock }]);
   });
-  const out = new Map<string, { offset: number; group: number; n: number }>();
+  const out = new Map<string, { offset: number; group: number; n: number; spread: number }>();
   for (const [d, list] of by) {
     // en kalabalık gruptaki tahminler (gruplar arası konum ortak değil)
     const cnt = new Map<number, number>();
     for (const x of list) cnt.set(x.g, (cnt.get(x.g) ?? 0) + 1);
     const g = [...cnt.entries()].sort((a, b) => b[1] - a[1])[0][0];
     const v = list.filter((x) => x.g === g).map((x) => x.v);
-    out.set(d, { offset: median(v), group: g, n: v.length });
+    const m = median(v);
+    out.set(d, { offset: m, group: g, n: v.length, spread: median(v.map((x) => Math.abs(x - m))) });
+  }
+  return out;
+}
+
+/**
+ * Saat ipucuyla çelişen yerleşimler (inceleme #15 B4): kimliği KESİN cihazın (tek saat) aynı gruptaki ≥ 3 saatli dosyası aynı kaymada
+ * tutarlıysa (medyan mutlak sapma ≤ 2 sn), saatine > clockTolSec uymayan dosya — aynı içerik başka zamanda da çalmış olabilir.
+ */
+function clockConflicts(nodes: Node[], P: Placement, o: SenkronOpts): [number, string][] {
+  const out: [number, string][] = [];
+  const by = new Map<string, number[]>();
+  nodes.forEach((x, i) => {
+    if (P.group[i] === 0 || x.f.clock === null || !x.f.certain) return;
+    const k = `${P.group[i]}\u0000${x.f.device}`;
+    by.set(k, [...(by.get(k) ?? []), i]);
+  });
+  for (const list of by.values()) {
+    if (list.length < 3) continue;
+    const v = list.map((i) => mpos(nodes, P, i) - nodes[i].f.clock!);
+    const m = median(v);
+    if (median(v.map((x) => Math.abs(x - m))) > 2) continue;
+    list.forEach((i, k) => {
+      if (Math.abs(v[k] - m) > o.clockTolSec)
+        out.push([i, `saat ipucuyla ${(v[k] - m).toFixed(1)} sn çelişiyor (aynı cihazın ${list.length - 1} dosyası saatine uyuyor; aynı ses başka zamanda da çalmış olabilir)`]);
+    });
   }
   return out;
 }
 
 function report(nodes: Node[], edges: Edge[], P: Placement, o: SenkronOpts, notes: string[]): SenkronResult {
-  const offs = deviceOffsets(nodes, P);
   const G = Math.max(0, ...P.group);
+  // raporlanan konum: dosya başı (zaman sıfırı; ses akışının başlangıç kayması düşülmüş), grubun en erken dosya başı 0
+  const shift = new Map<number, number>();
+  for (let g = 1; g <= G; g++) {
+    let m = Infinity;
+    nodes.forEach((_, i) => P.group[i] === g && (m = Math.min(m, mpos(nodes, P, i))));
+    if (m !== Infinity) shift.set(g, m);
+  }
+  const rpos = (i: number) => mpos(nodes, P, i) - (shift.get(P.group[i]) ?? 0);
+  const offs = deviceOffsets(nodes, P);
   const groups: Group[] = [];
   for (let g = 1; g <= G; g++) {
     const mem = nodes.map((_, i) => i).filter((i) => P.group[i] === g);
@@ -787,8 +888,8 @@ function report(nodes: Node[], edges: Edge[], P: Placement, o: SenkronOpts, note
     groups.push({
       n: groups.length + 1,
       ids: mem.map((i) => nodes[i].f.id),
-      start: Math.min(...mem.map((i) => P.pos[i])),
-      end: Math.max(...mem.map((i) => P.pos[i] + nodes[i].dur)),
+      start: Math.min(...mem.map((i) => rpos(i))),
+      end: Math.max(...mem.map((i) => rpos(i) + nodes[i].dur)),
       clockFrom1: null,
     });
   }
@@ -804,7 +905,7 @@ function report(nodes: Node[], edges: Edge[], P: Placement, o: SenkronOpts, note
     for (let g = 1; g <= G; g++) {
       const m = new Map<string, number[]>();
       nodes.forEach((x, i) => {
-        if (P.group[i] === g && x.f.clock !== null) m.set(x.f.device, [...(m.get(x.f.device) ?? []), x.f.clock - P.pos[i]]);
+        if (P.group[i] === g && x.f.clock !== null) m.set(x.f.device, [...(m.get(x.f.device) ?? []), x.f.clock - rpos(i)]);
       });
       const mm = new Map<string, number>();
       for (const [d, v] of m) mm.set(d, median(v));
@@ -825,20 +926,20 @@ function report(nodes: Node[], edges: Edge[], P: Placement, o: SenkronOpts, note
   const placed: Placed[] = nodes.map((x, i) => {
     const g = P.group[i];
     const off = offs.get(x.f.device);
-    const hintPos = g && off && off.group === g && x.f.clock !== null ? x.f.clock + off.offset : null;
+    const hintPos = g && off && off.group === g && x.f.clock !== null ? x.f.clock + off.offset - (shift.get(g) ?? 0) : null;
     return {
       id: x.f.id,
       name: x.f.name,
       status: g ? "ok" : "emin değil",
       group: g ? renum.get(g) ?? 0 : 0,
-      pos: g ? P.pos[i] : null,
+      pos: g ? rpos(i) : null,
       confidence: g ? Math.min(1, P.weight[i]) : 0,
       via: P.via[i] >= 0 ? nodes[P.via[i]].f.name : null,
       viaPeak: P.viaPeak[i].ncc,
       viaRatio: P.viaPeak[i].ratio,
       support: P.support[i],
       hintPos,
-      hintDiff: hintPos !== null && g ? P.pos[i] - hintPos : null,
+      hintDiff: hintPos !== null && g ? rpos(i) - hintPos : null,
       why: g ? P.why[i] : !x.env.usable ? x.env.why : P.why[i] || bestWhy(i, edges) || "eşleşme yok",
     };
   });
@@ -855,7 +956,7 @@ function report(nodes: Node[], edges: Edge[], P: Placement, o: SenkronOpts, note
     placed,
     groups,
     edges: outEdges,
-    deviceClock: [...offs.entries()].map(([device, v]) => ({ device, offset: v.offset, n: v.n })),
+    deviceClock: [...offs.entries()].map(([device, v]) => ({ device, offset: v.offset, n: v.n, spread: v.spread })),
     notes,
   };
 }
