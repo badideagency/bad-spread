@@ -5,4 +5,6 @@
 export { classify } from "./classify";
 export { compareLinkGroups, groupsFromLayout, layoutGroupItems, linkItemKey, linkItemOf, reduceToPresent } from "./sessions";
 export { channelOutliers, channelTypeName } from "./channels";
+// v1.4.0 SENKRON: ses eşleştirme motoru (yardımcı js/senkron.js çözülmüş sesleri buraya verir)
+export { solve as senkronSolve, clockFromName as senkronClock, DEFAULT_OPTS as SENKRON_OPTS } from "./senkron";
 export const CORE_VERSION = "1.1.0";

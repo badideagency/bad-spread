@@ -38,6 +38,7 @@
     "SpreadHelper/js/spread-core.js",
     "SpreadHelper/js/helper.js",
     "SpreadHelper/js/updater.js",
+    "SpreadHelper/js/senkron.js",
     "SpreadHelper/js/panel.js",
     "SpreadHelper/jsx/host.jsx",
   ];

@@ -1,6 +1,6 @@
 {
   "name": "spread-probe",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "type": "commonjs",
   "scripts": {
@@ -11,7 +11,7 @@
     "check:api": "node scripts/check-api-refs.mjs",
     "api:table": "node scripts/check-api-refs.mjs --table",
     "smoke": "npm run build && node dev/smoke.cjs && node dev/smoke.cjs grim && node dev/smoke.cjs throw && node dev/smoke.cjs strict && node dev/smoke.cjs linked && node dev/smoke.cjs filter",
-    "check": "npm run typecheck && npm run lint && npm run check:api && npm run check:jsx && npm run check:xml && npm run check:core && npm run smoke && npm run smoke:spread && bash scripts/regress-trim.sh",
+    "check": "npm run typecheck && npm run lint && npm run check:api && npm run check:jsx && npm run check:xml && npm run check:core && npm run smoke && npm run smoke:spread && npm run smoke:senkron && bash scripts/regress-trim.sh",
     "package:probe": "bash scripts/package-ccx.sh probe",
     "build:spread": "vite build --config spread/vite.config.mjs",
     "smoke:spread": "npm run build:spread && node spread/dev/smoke.cjs all",
@@ -23,7 +23,8 @@
     "check:xml": "python3 scripts/check-xml.py",
     "regress:trim": "npm run build:spread && bash scripts/regress-trim.sh",
     "package:kurulum": "bash scripts/package-kurulum.sh",
-    "publish-update": "node scripts/publish-update.mjs"
+    "publish-update": "node scripts/publish-update.mjs",
+    "smoke:senkron": "node spread/dev/senkron-smoke.cjs all"
   },
   "devDependencies": {
     "@adobe/cc-ext-uxp-types": "^7.3.1",
@@ -39,5 +40,5 @@
     "typescript-eslint": "^8.70.1",
     "vite": "^8.3.1"
   },
-  "description": "Spread — Premiere Pro UXP eklentisi (Spread v1.3.0: Dağıt / Topla / Bağla) + CEP yardımcı paneli (Spread Helper v1.3.0) + API yoklama paneli (Spread Probe v0.1.1, arşiv)"
+  "description": "Spread — Premiere Pro UXP eklentisi (Spread v1.4.0: Dağıt / Topla / Bağla) + CEP yardımcı paneli (Spread Helper v1.4.0) + API yoklama paneli (Spread Probe v0.1.1, arşiv)"
 }

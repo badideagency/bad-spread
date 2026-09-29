@@ -11,6 +11,7 @@ import { loadTrimCal } from "./settings";
 import { buildStatusReport } from "./status";
 import { describeCal } from "./trimcal";
 import { SPREAD_VERSION } from "./version";
+import { lastSenkronReport } from "./senkronrun";
 
 interface UxpFs {
   writeFileSync(path: string, data: string, options: { encoding?: string }): number;
@@ -76,13 +77,19 @@ export async function buildIssueReport(allowRead: boolean): Promise<string> {
     L.push("günlükteki kalibrasyon satırları:");
     for (const l of tail(calLog, 40)) L.push(`  ${l}`);
   }
-  for (const op of ["SPREAD", "TOPLA", "BAĞLA"]) {
+  for (const op of ["SPREAD", "SENKRON", "TOPLA", "BAĞLA"]) {
     const o = j.ops.find((x) => x.label === op);
     L.push("");
     L.push(`---- SON ${op} GÜNLÜĞÜ ${o ? `(${o.at})` : ""} ----`);
     if (o) for (const l of tail(o.lines, 400)) L.push(l);
     else L.push("(bu oturumda çalışmadı)");
   }
+  // v1.4.0: son SENKRON denemesinin tam raporu (senkron-deneme.txt ile aynı metin)
+  L.push("");
+  const sr = lastSenkronReport();
+  L.push(`---- SON SENKRON DENEMESİ ${sr ? `(${sr.at})` : ""} ----`);
+  if (sr) for (const l of tail(sr.text.split("\n"), 800)) L.push(l);
+  else L.push("(bu oturumda SENKRON çalışmadı)");
   L.push("");
   L.push("---- GÜNCELLEME GÜNLÜĞÜ (Spread Helper, update.log; son satırlar) ----");
   const ul = readUpdateLog(120);

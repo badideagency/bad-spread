@@ -111,7 +111,7 @@ export async function buildStatusReport(): Promise<string> {
   L.push(`SENKRON SAĞLIĞI${parked.size ? ` (TOPLA kaydındaki park'taki ${parked.size} klip hariç)` : ""}`);
   const hs = healthSummary(a);
   if (hs.head) {
-    L.push(`  ${hs.head} Bunlar oturuma alınmaz (TOPLA park track'ine alır, zamanı değişmez; silinmez) → elle düzelt ya da yeniden senkronla.`);
+    L.push(`  ${hs.head} Bunlar oturuma alınmaz (TOPLA park track'ine alır, zamanı değişmez; silinmez) → SENKRON (Spread) ile yeniden hizala ya da elle düzelt.`);
     for (const l of hs.lines) L.push(`  ${l}`);
   } else if (a.healthNotes.some((n) => /^SIRA:/.test(n)))
     L.push("  klip ayrılmadı: sayaç sırası ters görünen oturum(lar) var ama hangi klibin yanlış olduğu çıkarılamadı (aşağıdaki SIRA notu)");

@@ -19,7 +19,8 @@
  *    CORS ön-isteği gerektirir ve bu sunucu HİÇBİR CORS izni vermez.
  *  - Komutlar: POST /v1/ping, /v1/link, /v1/channels (v1.1.0, salt okuma: seslerin kanal tipi); v1.2.0: /v1/update (gövdede
  *    yalnız beklenen sürüm; indirilecek adres sabit, js/updater.js), /v1/restart (projeler kaydedilip doğrulanmadan Premiere
- *    kapatılmaz), /v1/reload (↻: sunucu kapanır, panel yeniden yüklenir). Rastgele betik
+ *    kapatılmaz), /v1/reload (↻: sunucu kapanır, panel yeniden yüklenir); v1.4.0: /v1/senkron ({ op: start | status | cancel };
+ *    ses eşleştirme js/senkron.js'te — ffmpeg sabit adresten, sha256 doğrulanarak; dosya yolları ffmpeg'e kabuksuz argüman). Rastgele betik
  *    çalıştırma YOK: ExtendScript'e yalnız host.jsx'teki sabit fonksiyonlar, doğrulanmış (tip / uzunluk / biçim) ve
  *    JSON.stringify ile üretilmiş sabit değerlerle çağrılır.
  *  - v1.1.0 bağlama: Premiere bir grubu reddederse (linkSelection false) ve grupta kanal tipi farklı sesler varsa (mono + stereo),
@@ -33,11 +34,11 @@
 (function () {
   "use strict";
 
-  var VERSION = "1.3.0";
+  var VERSION = "1.4.0";
   var PORT = 47731;
   var MAX_BODY = 1024 * 1024;
   /** Köprü komutları (v1.2.0: + güncelleme, yeniden başlatma, ↻ yeniden yükleme). */
-  var ROUTES = ["/v1/ping", "/v1/link", "/v1/channels", "/v1/update", "/v1/restart", "/v1/reload"];
+  var ROUTES = ["/v1/ping", "/v1/link", "/v1/channels", "/v1/update", "/v1/restart", "/v1/reload", "/v1/senkron"];
   // Panelle AYNI sınırlar (spread/src/linker.ts LINK_LIMITS) — panel BAĞLA planında kesmeden ÖNCE denetler
   var LIMITS = { groupItems: 256, groupsPerRequest: 64, name: 1024, sequenceName: 512 };
   /** Plan dosyasındaki grup sayısı üst sınırı (paneldeki BAĞLA grupları LINK_BATCH'lik partilerle gönderir). */
@@ -224,6 +225,28 @@
           faultAfter: deps.faultAfter,
         });
       return updater;
+    }
+    // v1.4.0 SENKRON (js/senkron.js): Spread'in veri klasörü (…\BadIdeaAgency\Spread) — ffmpeg, önbellek
+    var senkron = null;
+    function getSenkron() {
+      if (!senkron && deps.createSenkron)
+        senkron = deps.createSenkron({
+          fs: deps.fs,
+          path: deps.path,
+          os: deps.os,
+          https: deps.https,
+          crypto: deps.crypto,
+          zlib: deps.zlib,
+          childProcess: deps.childProcess,
+          core: core,
+          log: log,
+          home: home,
+          platform: deps.senkronPlatform || platform,
+          dataDir: deps.senkronDataDir,
+          tools: deps.senkronTools,
+          download: deps.senkronDownload,
+        });
+      return senkron;
     }
     // v1.2.0 ↻: bağlama (köprü ya da bu paneldeki BAĞLA) sürerken yeniden yükleme reddedilir (yarım bağ kalmasın)
     var working = 0;
@@ -455,11 +478,26 @@
             // v1.2.0 ↻: yanıt gittikten sonra sunucu kapanır (port boşalır) ve panel kendini yeniden yükler
             if (typeof deps.reload !== "function") throw new Error("yeniden yükleme bu ortamda yok");
             var ub = getUpdater();
-            if (working > 0 || (ub && ub.isBusy())) throw new Error("Spread Helper meşgul (bağlama ya da güncelleme sürüyor); bitince yeniden dene");
+            var sb = senkron;
+            if (working > 0 || (ub && ub.isBusy()) || (sb && sb.isBusy())) throw new Error("Spread Helper meşgul (bağlama, güncelleme ya da SENKRON sürüyor); bitince yeniden dene");
             setTimeout(function () {
               deps.reload();
             }, 300);
             return Promise.resolve({ ok: true, helper: VERSION });
+          }
+          if (req.url === "/v1/senkron") {
+            // v1.4.0: tek iş; start hemen döner (iş arka planda), status ilerleme / sonuç, cancel iptal
+            var sk = getSenkron();
+            if (!sk) throw new Error("SENKRON bu ortamda yok (js/senkron.js yüklenmedi)");
+            var op = body && body.op;
+            if (op === "start") return Promise.resolve(sk.start(body));
+            if (op === "status") {
+              var st = sk.status();
+              st.ffmpeg = sk.ffmpegState();
+              return Promise.resolve(st);
+            }
+            if (op === "cancel") return Promise.resolve(sk.cancel());
+            throw bad("op geçersiz");
           }
           if (req.url === "/v1/channels") {
             var cc = cleanChannelsRequest(body);
@@ -843,10 +881,11 @@
         return during(bindFromPlan(opts));
       },
       updater: getUpdater,
-      /** v1.2.0 ↻ (bu paneldeki): bağlama / güncelleme sürüyor mu */
+      senkron: getSenkron,
+      /** v1.2.0 ↻ (bu paneldeki): bağlama / güncelleme / SENKRON sürüyor mu */
       isWorking: function () {
         var u = getUpdater();
-        return working > 0 || !!(u && u.isBusy());
+        return working > 0 || !!(u && u.isBusy()) || !!(senkron && senkron.isBusy());
       },
       stop: function () {
         state.listening = false;
@@ -946,6 +985,8 @@
           log: logLine,
           // v1.2.0 güncelleme (js/updater.js) ve ↻ yeniden yükleme
           createUpdater: window.SpreadUpdater ? window.SpreadUpdater.createUpdater : null,
+          // v1.4.0 SENKRON (js/senkron.js)
+          createSenkron: window.SpreadSenkron ? window.SpreadSenkron.createSenkron : null,
           https: nodeRequire("https"),
           zlib: nodeRequire("zlib"),
           childProcess: nodeRequire("child_process"),

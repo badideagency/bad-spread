@@ -303,6 +303,7 @@ const ppro = {
     cast: (p) => {
       if (M.noType) throw new Error("mock: ClipProjectItem.cast yok");
       return {
+        getMediaFilePath: async () => p.mediaPath ?? "", // v1.4.0 SENKRON
         getMedia: async () => ({ getDuration: () => mkTT(p.dur) }),
         getFootageInterpretation: async () => {
           if (M.noFootage) throw new Error("mock: getFootageInterpretation yok");
@@ -945,7 +946,19 @@ let helper = null;
 const helperLog = [];
 /** yardımcının ExtendScript çağrısı (senaryolar araya girebilsin diye dolaylı) */
 const helperEval = { fn: null };
-async function startHelper() {
+/** v1.4.0 SENKRON: yardımcının ffmpeg'i yerine sahte ikililer (dev/fake-ffmpeg.cjs: <yol>.pcm'i basar) — ağ / gerçek ffmpeg yok */
+const SENKRON_SK = require(path.join(__dirname, "..", "..", "cep-helper", "js", "senkron.js"));
+function fakeTools() {
+  const dir = path.join(TMPHOME, "fake-ffmpeg");
+  fsReal.mkdirSync(dir, { recursive: true });
+  const t = { ffmpeg: path.join(dir, "ffmpeg"), ffprobe: path.join(dir, "ffprobe") };
+  for (const k of ["ffmpeg", "ffprobe"]) {
+    fsReal.writeFileSync(t[k], `#!/bin/sh\nexec "${process.execPath}" "${path.join(__dirname, "fake-ffmpeg.cjs")}" ${k} "$@"\n`);
+    fsReal.chmodSync(t[k], 0o755);
+  }
+  return t;
+}
+async function startHelper(extra = {}) {
   if (helper) return helper;
   const ctx = vm.createContext({ app: fakeApp });
   vm.runInContext(HOST_SRC, ctx);
@@ -960,7 +973,24 @@ async function startHelper() {
       cb(String(r));
     }, 1);
   const evalScript = (script, cb) => helperEval.fn(script, cb);
-  helper = HELPER.createHelper({ http, crypto: cryptoReal, fs: fsReal, path, os: osReal, evalScript, core: CORE, home: TMPHOME, platform: "darwin", log: (l) => helperLog.push(l) });
+  helper = HELPER.createHelper({
+    http,
+    crypto: cryptoReal,
+    fs: fsReal,
+    path,
+    os: osReal,
+    evalScript,
+    core: CORE,
+    home: TMPHOME,
+    platform: "darwin",
+    log: (l) => helperLog.push(l),
+    https: require("https"),
+    zlib: require("zlib"),
+    childProcess: require("child_process"),
+    createSenkron: SENKRON_SK.createSenkron,
+    senkronTools: fakeTools(),
+    ...extra,
+  });
   await helper.start();
   return helper;
 }
@@ -1291,7 +1321,9 @@ function checkLinks(seq, groups, label) {
   if (!bad) ok(`${label}: ${groups.length} grup — her grubun kameraları + kendi oturumunun ses parçaları tek bağda, grup/oturum dışı bağ yok`);
 }
 
-const doneRe = /✓ SPREAD tamam|✗ SPREAD DURDU|✓ TOPLA tamam|✗ TOPLA DURDU|✓ BAĞLA tamam|⚠ BAĞLA bitti|✗ BAĞLA DURDU|✓ KES tamam|İptal edildi|Zaten dağıtılmış|Zaten toplanmış|Durum raporu hazır/;
+const doneRe = /✓ SPREAD tamam|✗ SPREAD DURDU|✓ TOPLA tamam|✗ TOPLA DURDU|✓ BAĞLA tamam|⚠ BAĞLA bitti|✗ BAĞLA DURDU|✓ KES tamam|İptal edildi|Zaten dağıtılmış|Zaten toplanmış|Durum raporu hazır|✓ SENKRON \(Dene\) bitti|✗ SENKRON DURDU/;
+/** v1.4.0: Uygula dahil SENKRON bitişi */
+const senkronDoneRe = /✓ SENKRON UYGULANDI|✗ SENKRON DURDU|Uygula iptal edildi|İptal edildi|SENKRON: timeline zaten/;
 const txOf = (prefix) => counters.txNames.filter((n) => n.startsWith(prefix));
 const TOPLA_TX = "TOPLA: yedek sequence,TOPLA: ilk park (ölçüm),TOPLA: park,TOPLA: ilk yerleştirme (ölçüm),TOPLA: yerleştir";
 const CAL_TX = ["kopyaları", "SetOutPoint", "SetEnd", "SetInPoint", "SetStart", "baş+kuyruk birlikte", "kopyalarını sil"].map((x) => `BAĞLA: kalibrasyon ${x}`);
@@ -3505,6 +3537,7 @@ function kitZip(ver) {
     "SpreadHelper/js/spread-core.js": "// çekirdek",
     "SpreadHelper/js/helper.js": `var VERSION = "${ver}";`,
     "SpreadHelper/js/updater.js": "// güncelleyici",
+    "SpreadHelper/js/senkron.js": "// senkron",
     "SpreadHelper/js/panel.js": "// panel",
     "SpreadHelper/jsx/host.jsx": "// host",
     "SpreadHelper/js/yeni-dosya.js": "// yalnız yeni sürümde",
@@ -4887,6 +4920,297 @@ scenarios.health_order = async () => {
   if (!/✓ TOPLA tamam: 1 oturum/.test(out) || !c3.length || c3.some((x) => x.c.start !== sec(20) || x.track < (x.kind === "V" ? 1 : 3)))
     fail("C0003 park'ta değil / zamanı değişti:\n" + failLines(out));
   else ok("C0003 park track'inde (zamanı aynı); C0001, C0002, C0004 + DJI tek oturum");
+};
+
+// ============================================================ v1.4.0 SENKRON (Dağıt → SENKRON → Topla)
+// Dağıt düzeni (her dosya kendi track'inde, zamanlar senkronsuz), sentetik sesler (dev/senkron-synth.cjs) sahte ffmpeg'le (<yol>.pcm).
+const SYN = require("./senkron-synth.cjs");
+const SENKRON_TRUTH = {
+  "DJI_01_20260925_160000.WAV": 0,
+  "DJI_02_20260925_160001.WAV": 1.5,
+  "DJI_03_20260925_160003.WAV": 3.25,
+  "A080C001_260925XX.MP4": 20.5,
+  "A080C002_260925XX.MP4": 80.25,
+  "A080C003_260925XX.MP4": 140.125,
+};
+let senkronScene = null;
+function setupSenkron({ shareTrack = false } = {}) {
+  senkronScene ??= SYN.scene(220, 1234);
+  const media = path.join(TMPHOME, "medya");
+  fsReal.mkdirSync(media, { recursive: true });
+  const cams = [
+    { name: "A080C001_260925XX.MP4", start: 0n, dur: sec(40), t: 20.5, mic: SYN.MIC.cam },
+    { name: "A080C002_260925XX.MP4", start: sec(60), dur: sec(50), t: 80.25, mic: SYN.MIC.cam },
+    { name: "A080C003_260925XX.MP4", start: sec(130), dur: sec(45), t: 140.125, mic: SYN.MIC.cam },
+    { name: "A080C004_260925XX.MP4", start: sec(200), dur: sec(30), t: null, mic: null }, // sessiz → emin değil
+  ];
+  const wavs = [
+    { name: "DJI_01_20260925_160000.WAV", start: 0n, dur: sec(200), t: 0, mic: SYN.MIC.lav1 },
+    { name: "DJI_02_20260925_160001.WAV", start: 0n, dur: sec(190), t: 1.5, mic: SYN.MIC.lav2 },
+    { name: "DJI_03_20260925_160003.WAV", start: shareTrack ? sec(300) : 0n, dur: sec(195), t: 3.25, mic: SYN.MIC.lav3 },
+  ];
+  const s = setupSync({ cams: cams.map(({ name, start, dur }) => ({ name, start, dur })), wavs: wavs.map(({ name, start, dur }) => ({ name, start, dur })), others: [] });
+  if (shareTrack) {
+    // Dağıt düzeni DEĞİL: DJI_03 DJI_01'in track'inde (zamanda ayrı)
+    const i3 = s.a.findIndex((tr) => tr.some((c) => /^DJI_03/.test(c.name)));
+    const i1 = s.a.findIndex((tr) => tr.some((c) => /^DJI_01/.test(c.name)));
+    s.a[i1].push(...s.a[i3]);
+    s.a[i3] = [];
+  }
+  let seed = 1;
+  for (const x of [...cams, ...wavs]) {
+    const p = projItems[x.name];
+    const file = path.join(media, x.name);
+    p.mediaPath = file;
+    fsReal.writeFileSync(file, "sahte medya " + x.name);
+    const secs = Number(x.dur / TPS);
+    const pcm = x.t === null ? new Int16Array(secs * 8000) : SYN.record(senkronScene, x.t, secs, x.mic, seed++);
+    fsReal.writeFileSync(file + ".pcm", Buffer.from(pcm.buffer));
+  }
+  return s;
+}
+const mediaStartOf = (name) => {
+  const l = clipNamed(new RegExp("^" + name.replace(/\./g, "\\.") + "$"));
+  const v = new Set(l.map((x) => x.c.start - x.c.inPt));
+  return v.size === 1 ? [...v][0] : null;
+};
+const reportFile = () => path.join(TMPHOME, "Library", "Application Support", "BadIdeaAgency", "Spread", "senkron-deneme.txt");
+
+scenarios.senkron_dene = async () => {
+  const s = setupSenkron();
+  await startHelper();
+  try {
+    fsReal.rmSync(reportFile(), { force: true });
+  } catch {}
+  const before = JSON.stringify(allClips(s).map(entry), (k, v) => (typeof v === "bigint" ? v.toString() : v));
+  const qs = [];
+  const out = await clickAndWait("btn-senkron", async (x) => (qs.push(x), yes()), doneRe);
+  const after = JSON.stringify(allClips(seqByGuid("guid-main-edit")).map(entry), (k, v) => (typeof v === "bigint" ? v.toString() : v));
+  if (!/✓ SENKRON \(Dene\) bitti: 6\/7 dosya 1 grupta yerleşti; emin değil 1\. Timeline'a dokunulmadı\./.test(out)) return fail("SENKRON Dene sonucu:\n" + failLines(out) + "\n" + out.split("\n").slice(-12).join("\n"));
+  ok("SENKRON (Dene): 6/7 dosya tek grupta yerleşti, sessiz klip 'emin değil'; yardımcı sesleri (sahte ffmpeg) çözdü, motor eşleştirdi");
+  if (qs.length || counters.txNames.length || before !== after) fail(`Dene timeline'a dokundu / soru sordu: ${counters.txNames.join(", ")} ${qs.join(" | ")}`);
+  else ok("Dene: hiçbir transaction yok, soru yok, timeline birebir aynı");
+  let rep = "";
+  try {
+    rep = fsReal.readFileSync(reportFile(), "utf8");
+  } catch {}
+  const pos = (n) => {
+    const m = new RegExp(`G1\\s+(-?[\\d.]+) sn .*"${n.replace(/\./g, "\\.")}"`).exec(rep);
+    return m ? Number(m[1]) : null;
+  };
+  const errs = Object.entries(SENKRON_TRUTH).map(([n, t]) => (pos(n) === null ? Infinity : Math.abs(pos(n) - pos("DJI_01_20260925_160000.WAV") - t) * 1000));
+  if (!/SPREAD SENKRON — DENEME RAPORU/.test(rep) || !/Grup 1: 6 dosya/.test(rep) || !/"A080C004_260925XX\.MP4" — sessiz/.test(rep) || Math.max(...errs) > 1)
+    fail("senkron-deneme.txt eksik / yanlış:\n" + rep.split("\n").slice(0, 30).join("\n") + "\nhatalar ms: " + errs.join(", "));
+  else ok(`senkron-deneme.txt: grup özeti, dosya başına konum / güven / eşleştiği dosya / saat ipucu farkı, 'emin değil' listesi; bilinen ofsetler ≤ ${Math.max(...errs).toFixed(3)} ms`);
+  const issue = await (async () => {
+    copied = null;
+    markLog();
+    els["btn-issue"].click();
+    // rapor bütün günlüğü toplar (tam koşuda uzun sürer; bu sırada panel meşgul) → "Sorun raporu:" satırını bekle
+    for (let i = 0; i < 3000 && !/Sorun raporu:/.test(newLog()); i++) await sleep(20);
+    return copied ?? "";
+  })();
+  if (!/---- SON SENKRON DENEMESİ/.test(issue) || !/SPREAD SENKRON — DENEME RAPORU/.test(issue)) fail("Sorun bildir raporunda SENKRON bölümü yok");
+  else ok("Sorun bildir raporu: 'SON SENKRON DENEMESİ' bölümü (tam rapor)");
+  copied = null;
+};
+
+scenarios.senkron_uygula = async () => {
+  // Ayarlar › "Deneysel: SENKRON uygula" açık → Dene'den sonra Uygula sorulur → yalnız zamanda taşır; sonra Topla tek oturum bulur
+  const s0 = setupSenkron();
+  lsStore.set("spread.senkronApply.v1", "1");
+  await startHelper();
+  const qs = [];
+  const out = await clickAndWait("btn-senkron", async (x) => (qs.push(x), yes()), senkronDoneRe);
+  // DJI_01 sahnenin başında (grup başı 0) ve timeline'da zaten 0'da → taşınmaz; kalan 6 dosya (sessiz C004 dahil) taşınır
+  if (!/✓ SENKRON UYGULANDI: 6 dosya zamanda taşındı/.test(out) || !qs.some((q) => /SENKRON UYGULA \(deneysel\) — 6 dosyanın 10 klibi YALNIZ ZAMANDA/.test(q)))
+    return fail("Uygula:\n" + qs.map((q) => q.slice(0, 200)).join("\n---\n"));
+  const want = ["SENKRON: yedek sequence", "SENKRON: ilk park (ölçüm)", "SENKRON: park", "SENKRON: ilk yerleştirme (ölçüm)", "SENKRON: yerleştir"];
+  if (counters.txNames.join("|") !== want.join("|")) fail("transaction'lar: " + counters.txNames.join(", "));
+  else ok("Uygula: yedek → ilk park (ölçüm, tek dosya) → park → ilk yerleştirme (ölçüm) → yerleştir; her adım tick düzeyinde doğrulandı");
+  // konumlar: grup başı 0; harici sesler tick düzeyinde (≤ 1 ms), kameralar kareye yuvarlı (≤ ½ kare + 1 ms)
+  const bad = [];
+  const half = Number(FRAME25 / 2n) / Number(TPS);
+  for (const [n, t] of Object.entries(SENKRON_TRUTH)) {
+    const ms = mediaStartOf(n);
+    const e = ms === null ? Infinity : Math.abs(Number(ms) / Number(TPS) - t);
+    const tol = /^A080/.test(n) ? half + 0.001 : 0.001;
+    if (e > tol) bad.push(`${n}: ${(e * 1000).toFixed(3)} ms`);
+    if (/^A080/.test(n) && ms % FRAME25 !== 0n) bad.push(`${n}: kareye oturmadı`);
+  }
+  const c4 = mediaStartOf("A080C004_260925XX.MP4");
+  if (c4 === null || c4 < sec(200)) bad.push(`A080C004 (emin değil) en sonda değil: ${c4}`);
+  const tracksSame = allClips(seqByGuid("guid-main-edit")).every((x) => allClips(s0).some((y) => y.c.name === x.c.name && y.kind === x.kind && y.track === x.track));
+  if (bad.length || !tracksSame) fail("Uygula konumları: " + bad.join("; ") + (tracksSame ? "" : " / track değişti"));
+  else ok("konumlar: harici sesler ≤ 1 ms, kameralar kareye yuvarlı (≤ ½ kare), track'ler aynı; 'emin değil' klip grubun ardında tek başına");
+  // akış: Dağıt → SENKRON → Topla
+  const o2 = await clickAndWait("btn-collect", yes, doneRe);
+  if (!/✓ TOPLA tamam: 1 oturum/.test(o2) || !/park: A080C004_260925XX/.test(o2) || /SENKRON SAĞLIĞI/.test(o2)) fail("SENKRON'dan sonra Topla:\n" + failLines(o2));
+  else ok("ardından Topla: 1 oturum (A080C001–C003 + 3 DJI, 3 şerit), sessiz klip sahipsiz → park; senkron sağlığı temiz");
+  lsStore.delete("spread.senkronApply.v1");
+};
+
+scenarios.senkron_iptal = async () => {
+  setupSenkron();
+  await startHelper();
+  fsReal.rmSync(path.join(TMPHOME, "Library", "Application Support", "BadIdeaAgency", "Spread", "senkron-cache"), { recursive: true, force: true });
+  process.env.FAKE_FFMPEG_SLOW_MS = "1500";
+  markLog();
+  els["btn-senkron"].click();
+  let seen = false;
+  for (let i = 0; i < 300; i++) {
+    await sleep(20);
+    if (/ses okunuyor/.test(els["progress-text"]?.textContent ?? "") && els["btn-cancel"]?.style.display === "flex") {
+      seen = true;
+      break;
+    }
+  }
+  els["btn-cancel"].click();
+  let out = "";
+  for (let i = 0; i < 500 && !/İptal edildi|SENKRON DURDU|bitti/.test(out); i++) {
+    await sleep(20);
+    out = newLog();
+  }
+  delete process.env.FAKE_FFMPEG_SLOW_MS;
+  await sleep(300);
+  if (!seen || !/İptal edildi — hiçbir şey değişmedi/.test(out) || counters.txNames.length || els["btn-cancel"].style.display !== "none")
+    fail(`İptal: ilerleme görüldü ${seen}, iptal düğmesi ${els["btn-cancel"]?.style.display}\n` + out.split("\n").slice(-6).join("\n"));
+  else ok("İptal: ilerleme 'ses okunuyor …' ve İptal düğmesi göründü → İptal → yardımcıdaki iş durdu, 'İptal edildi — hiçbir şey değişmedi', düğme gizlendi");
+};
+
+scenarios.senkron_yok = async () => {
+  // yardımcı yok → açık hata; Dağıt düzeni değil → Uygula başlamaz; ilk kullanımda ffmpeg indirme sorusu / indirilemezse açık hata
+  setupSenkron();
+  await stopHelper();
+  let out = await clickAndWait("btn-senkron", yes, doneRe);
+  if (!/✗ SENKRON DURDU: SENKRON Spread Helper'la çalışır/.test(out) || counters.txNames.length) fail("yardımcısız SENKRON:\n" + failLines(out));
+  else ok("yardımcı kapalı → 'SENKRON Spread Helper'la çalışır …' (timeline değişmedi)");
+  setupSenkron({ shareTrack: true });
+  lsStore.set("spread.senkronApply.v1", "1");
+  await startHelper();
+  out = await clickAndWait("btn-senkron", yes, senkronDoneRe);
+  lsStore.delete("spread.senkronApply.v1");
+  if (!/Uygula yalnız Dağıt düzeninde çalışır/.test(out) || counters.txNames.length) fail("Dağıt dışı düzende Uygula:\n" + failLines(out));
+  else ok("iki dosya aynı track'te (Dağıt düzeni değil) → Uygula başlamadı, hiçbir şey değişmedi");
+  await stopHelper();
+  await startHelper({ senkronTools: undefined, senkronPlatform: "win32", senkronDownload: () => Promise.reject(new Error("getaddrinfo ENOTFOUND github.com")) });
+  setupSenkron();
+  await sleep(600); // yeni token dosyası (yardımcı yeniden başladı)
+  const qs = [];
+  out = await clickAndWait("btn-senkron", async (x) => (qs.push(x), no()), doneRe);
+  if (!/ffmpeg'i indirir: resmî Windows derlemesi \(7\.1\.1/.test(qs.join("\n")) || !/İptal edildi — hiçbir şey değişmedi/.test(out)) fail("ffmpeg indirme sorusu:\n" + qs.join("\n") + "\n" + failLines(out));
+  else ok("ilk kullanım: 'ffmpeg'i indirir (7.1.1, ~88 MB, sha256 doğrulanır) … İndirilsin mi?' → Vazgeç → hiçbir şey");
+  out = await clickAndWait("btn-senkron", yes, doneRe);
+  if (!/✗ SENKRON DURDU: SENKRON yardımcıda durdu: ffmpeg indirilemedi: getaddrinfo ENOTFOUND github\.com/.test(out)) fail("indirilemeyen ffmpeg:\n" + failLines(out) + out.split("\n").slice(-4).join("\n"));
+  else ok("indirme olmazsa açık hata: 'ffmpeg indirilemedi: … İnternet bağlantısını kontrol et; olmazsa … şu klasöre koy' (timeline değişmedi)");
+  await stopHelper();
+};
+
+scenarios.senkron_degisti = async () => {
+  // inceleme #15 M2: (a) eşleştirme sürerken timeline değişirse Uygula başlamaz; (b) taşınacak dosyanın track'inde yolu okunamayan
+  // başka bir dosyanın klibi varsa (ör. çevrimdışı müzik) Dağıt düzeni sayılmaz — yalnız okunan dosyalara bakmak yetmez
+  const s = setupSenkron();
+  lsStore.set("spread.senkronApply.v1", "1");
+  await startHelper();
+  await sleep(600); // önceki senaryo yardımcıyı durdurduysa: yeni token dosyası
+  fsReal.rmSync(path.join(TMPHOME, "Library", "Application Support", "BadIdeaAgency", "Spread", "senkron-cache"), { recursive: true, force: true });
+  process.env.FAKE_FFMPEG_SLOW_MS = "300";
+  const qs = [];
+  const run = clickAndWait("btn-senkron", async (x) => (qs.push(x), yes()), senkronDoneRe);
+  let moved = false;
+  for (let i = 0; i < 500 && !moved; i++) {
+    await sleep(20);
+    if (/ses okunuyor/.test(els["progress-text"]?.textContent ?? "")) {
+      const c = s.a.flat().find((x) => /^DJI_02/.test(x.name));
+      c.start += sec(1);
+      c.end += sec(1);
+      moved = true;
+    }
+  }
+  let out = await run;
+  delete process.env.FAKE_FFMPEG_SLOW_MS;
+  if (!moved || !/✗ SENKRON DURDU: Eşleştirme sürerken timeline değişti/.test(out) || counters.txNames.length || qs.length)
+    fail(`eşleştirme sırasında değişen timeline: ${moved} ${counters.txNames.join(", ")} ${qs.join(" | ")}\n` + failLines(out));
+  else ok("eşleştirme sürerken klip kaydırıldı → Uygula başlamadı (soru yok, transaction yok, yedek yok)");
+  lsStore.delete("spread.senkronApply.v1");
+  const s2 = setupSenkron();
+  lsStore.set("spread.senkronApply.v1", "1");
+  const stray = pi("MUZIK_ALTYAPI.WAV", sec(30), { video: false }); // mediaPath yok → yolu okunamaz
+  const i2 = s2.a.findIndex((tr) => tr.some((c) => /^DJI_02/.test(c.name)));
+  s2.a[i2].push(mkClip("A", stray, sec(400), sec(430)));
+  out = await clickAndWait("btn-senkron", yes, senkronDoneRe);
+  lsStore.delete("spread.senkronApply.v1");
+  // track adı kullanıcının gördüğü gibi (1'den): dizin i2 → "A{i2 + 1}"
+  if (!new RegExp(`Uygula yalnız Dağıt düzeninde çalışır .*: A${i2 + 1}\\.`).test(out) || counters.txNames.length) fail("okunamayan klip aynı track'te:\n" + failLines(out));
+  else ok(`DJI_02'nin track'inde (A${i2 + 1}) yolu okunamayan başka bir klip → Uygula başlamadı, hiçbir şey değişmedi`);
+};
+
+scenarios.senkron_lead = async () => {
+  // inceleme #15 N5: ses akışının dosya başına göre yeri bilinmeyen dosya (ffprobe > 5 sn kayma gösteriyor) — sesi eşleşse de Uygula onu
+  // bulunan yere TAŞIMAZ, emin olunmayanlarla en sona koyar; rapor bunu yazar
+  setupSenkron();
+  const dji2 = path.join(TMPHOME, "medya", "DJI_02_20260925_160001.WAV");
+  fsReal.writeFileSync(dji2 + ".meta.json", JSON.stringify({ audioStart: 9 }));
+  lsStore.set("spread.senkronApply.v1", "1");
+  await startHelper();
+  await sleep(600);
+  const out = await clickAndWait("btn-senkron", yes, senkronDoneRe);
+  lsStore.delete("spread.senkronApply.v1");
+  fsReal.rmSync(dji2 + ".meta.json", { force: true });
+  let rep = "";
+  try {
+    rep = fsReal.readFileSync(reportFile(), "utf8");
+  } catch {}
+  const d2 = mediaStartOf("DJI_02_20260925_160001.WAV");
+  const d1 = mediaStartOf("DJI_01_20260925_160000.WAV");
+  const okMove = /✓ SENKRON UYGULANDI/.test(out) && /"DJI_02_20260925_160001\.WAV": sesi eşleşti ama ses akışının dosya başına göre yeri bilinmiyor → taşınmaz, en sona/.test(out);
+  const atEnd = d2 !== null && d1 !== null && d2 >= sec(200) && d2 - d1 !== sec(1.5);
+  if (!okMove || !atEnd || !/DJI_02_20260925_160001\.WAV".*ses başlangıcı bilinmiyor → Uygula'da taşınmaz/.test(rep))
+    fail(`bilinmeyen ses başlangıcı: DJI_02 ${d2} DJI_01 ${d1}\n` + failLines(out) + out.split("\n").filter((l) => /DJI_02/.test(l)).join("\n"));
+  else ok("ses akışının başlangıcı bilinmeyen DJI_02 (ffprobe 9 sn kayma) → sesi eşleşti ama taşınmadı, en sona kondu; raporda yazıyor");
+};
+
+scenarios.senkron_grup_once = async () => {
+  // iki ayrı çekim (iki grup; Grup 1 = eşleşmesi en güçlü dosyanın grubu = B çekimi); dosya adındaki saate göre Grup 2 (A, 16:00),
+  // Grup 1'den (B, 17:00) 1 saat ÖNCE → Uygula önce onu koyar, Grup 1'i saat farkı kadar sonra (inceleme #15: eski kod saat sırasında
+  // ilk gelen grubu "Grup 1'in başı" sanıyordu → Grup 1 saatten kopup boşlukla hemen ardına gidiyordu)
+  const A = SYN.scene(70, 4321);
+  const B = SYN.scene(70, 8765);
+  const media = path.join(TMPHOME, "medya2");
+  fsReal.mkdirSync(media, { recursive: true });
+  const spec = [
+    { name: "A081C001_260925XX.MP4", cam: true, start: 0n, dur: sec(40), sc: A, t: 10, mic: SYN.MIC.cam },
+    { name: "A081C002_260925XX.MP4", cam: true, start: sec(50), dur: sec(40), sc: B, t: 5, mic: SYN.MIC.cam },
+    { name: "DJI_01_20260925_160000.WAV", cam: false, start: 0n, dur: sec(60), sc: A, t: 0, mic: SYN.MIC.lav1 },
+    { name: "DJI_02_20260925_170000.WAV", cam: false, start: 0n, dur: sec(60), sc: B, t: 0, mic: SYN.MIC.lav2 },
+  ];
+  setupSync({ cams: spec.filter((x) => x.cam), wavs: spec.filter((x) => !x.cam), others: [] });
+  let seed = 50;
+  for (const x of spec) {
+    const file = path.join(media, x.name);
+    projItems[x.name].mediaPath = file;
+    fsReal.writeFileSync(file, "sahte medya " + x.name);
+    fsReal.writeFileSync(file + ".pcm", Buffer.from(SYN.record(x.sc, x.t, Number(x.dur / TPS), x.mic, seed++).buffer));
+  }
+  lsStore.set("spread.senkronApply.v1", "1");
+  await startHelper();
+  await sleep(600);
+  const out = await clickAndWait("btn-senkron", yes, senkronDoneRe);
+  lsStore.delete("spread.senkronApply.v1");
+  let rep = "";
+  try {
+    rep = fsReal.readFileSync(reportFile(), "utf8");
+  } catch {}
+  const st = (n) => mediaStartOf(n);
+  const got = spec.map((x) => `${x.name.slice(0, 8)} ${st(x.name) === null ? "?" : (Number(st(x.name)) / Number(TPS)).toFixed(3)}`).join(", ");
+  const before = /Grup 2: 2 dosya.*Grup 1'den 3600\.000 sn ÖNCE/.test(rep);
+  const exact =
+    st("DJI_01_20260925_160000.WAV") === 0n &&
+    st("A081C001_260925XX.MP4") === sec(10) &&
+    st("DJI_02_20260925_170000.WAV") === sec(3600) &&
+    st("A081C002_260925XX.MP4") === sec(3605);
+  if (!/✓ SENKRON UYGULANDI/.test(out) || !before || !exact) fail(`saatle önce gelen grup: ${got}\n` + rep.split("\n").filter((l) => /Grup \d/.test(l)).join("\n") + "\n" + failLines(out));
+  else ok(`Grup 2 saat ipucuna göre Grup 1'den 3600 sn ÖNCE → önce o (DJI_01 0 sn, C001 10 sn), Grup 1 saat farkıyla 3600 sn'de (DJI_02 3600, C002 3605)`);
 };
 
 // ------------------------------------------------------------ çalıştır

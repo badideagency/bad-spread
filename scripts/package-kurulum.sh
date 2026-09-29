@@ -26,7 +26,7 @@ KIT="$STAGE/kit"
 mkdir -p "$KIT/SpreadHelper"
 cp release/spread.ccx "$KIT/"
 cp -R cep-helper/CSXS cep-helper/index.html cep-helper/js cep-helper/jsx cep-helper/.debug "$KIT/SpreadHelper/"
-for f in CSXS/manifest.xml .debug index.html js/spread-core.js js/helper.js js/updater.js js/panel.js jsx/host.jsx; do
+for f in CSXS/manifest.xml .debug index.html js/spread-core.js js/helper.js js/updater.js js/senkron.js js/panel.js jsx/host.jsx; do
   [ -f "$KIT/SpreadHelper/$f" ] || { echo "HATA: pakette SpreadHelper/$f yok"; exit 1; }
 done
 python3 scripts/check-xml.py "$KIT/SpreadHelper" >/dev/null || { echo "HATA: paketteki XML geçersiz"; exit 1; }

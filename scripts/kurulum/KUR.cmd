@@ -1,8 +1,8 @@
 @echo off
 setlocal EnableExtensions
-title Spread 1.3.0 kurulumu
+title Spread 1.4.0 kurulumu
 rem ---------------------------------------------------------------------------------------------------------------
-rem Spread 1.3.0 - tek tik kurulum (Windows). Yonetici izni ISTEMEZ; yalniz kullanicinin kendi alanina yazar:
+rem Spread 1.4.0 - tek tik kurulum (Windows). Yonetici izni ISTEMEZ; yalniz kullanicinin kendi alanina yazar:
 rem   a) HKCU\Software\Adobe\CSXS.12 ve CSXS.11: PlayerDebugMode = "1" (imzasiz Spread Helper icin; onceki degerler saklanir)
 rem   b) %APPDATA%\Adobe\CEP\extensions\com.badideagency.spread.helper  (Spread Helper, eskisinin ustune)
 rem   c) spread.ccx -> Adobe UnifiedPluginInstallerAgent /install (Adobe belgesi: developer.adobe.com/premiere-pro/uxp/plugins/
@@ -33,7 +33,7 @@ if not errorlevel 1 (
 if not exist "%SRC%\CSXS\manifest.xml" goto :nozip
 if not exist "%CCX%" goto :nozip
 
-echo Spread 1.3.0 kuruluyor...
+echo Spread 1.4.0 kuruluyor...
 echo.
 
 rem a) onceki PlayerDebugMode degerlerini (yalniz ILK kurulumda) sakla, sonra "1" yap
@@ -70,7 +70,7 @@ if errorlevel 1 (set "R_PANEL=HATA") else (set "R_PANEL=OK")
 :summary
 echo.
 echo ================================================================
-echo   Spread 1.3.0 kurulumu
+echo   Spread 1.4.0 kurulumu
 echo ================================================================
 if "%R_DEBUG%"=="OK" echo   [tamam] Gelistirici kipi PlayerDebugMode = 1 - CSXS.11 ve CSXS.12
 if not "%R_DEBUG%"=="OK" echo   [HATA ] PlayerDebugMode yazilamadi

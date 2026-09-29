@@ -1,4 +1,175 @@
-# handoff — Spread v1.3.0 (senkron sağlığı + eşzamanlı DJI şeritleri) + geçmiş (v1.2.1, v1.2.0, v1.1.0, v1.0.0, ADIM 3.4 … 1)
+# handoff — Spread v1.4.0 (SENKRON: kendi ses eşleştirmemiz, "Dene") + geçmiş (v1.3.0, v1.2.1, v1.2.0, v1.1.0, v1.0.0, ADIM 3.4 … 1)
+
+## v1.4.0 — SENKRON: kendi ses eşleştirmemiz (varsayılan "Dene"; "Uygula" deneysel anahtarın arkasında)
+
+Kaynak: kullanıcının 2026-09-29 isteği, AŞAMA 2. Hedef akış: Dağıt → SENKRON (Spread) → Topla → Bağla; Clip › Synchronize alternatif.
+Hesap YARDIMCIDA (CEP'in Node'u), UXP yalnız okur ve yerleştirir. Kısıtlar aynen (1.3.0).
+
+### Parçalar
+| Dosya | Ne |
+|---|---|
+| `spread/src/senkron.ts` (SAF) | Motor: zarf (DC çıkarılır; 100 Hz log-enerji − ±0.5 sn ortalama), kaba NCC (FFT + önek toplamları, en az `minOverlap` ortak), ince GCC-PHAT (8 kHz, ±1 sn, en enerjili ≤ 8 sn'lik bölüm, parabolik alt-örnek), güven, büyüyen yerleşim (±2 ms kümeleri; en ağır küme açıkça önde + kısıtlar + tekrarlayan içerik kuralları), saat ipucu + saat çelişkisi, rapor verisi. Yardımcıya `spread-core.js` içinde derlenir (`senkronSolve`, `senkronClock`) |
+| `cep-helper/js/senkron.js` | Yardımcı: istek denetimi, ffmpeg indirme / sha256 / çıkarma, ffprobe (+ ilk ses karesi → `lead`) + çözme (mono 8 kHz s16le) + önbellek, iş / ilerleme / iptal (indirme dahil). Köprü `POST /v1/senkron` `{op: start | status | cancel}` (helper.js) |
+| `spread/src/senkronrun.ts` | UXP: dosya yolları (`ClipProjectItem.getMediaFilePath`, d.ts:L973), iş başlatma + ilerleme + İptal, rapor (`senkron-deneme.txt` + Sorun bildir bölümü), Uygula |
+| `spread/public/index.html`, `index.ts`, `ui.ts`, `settings.ts` | Dağıt'ın altındaki "Senkron" düğmesi (ipucu satırında), ilerlemede İptal, Ayarlar › DENEYSEL ("Senkron · Dene", "SENKRON uygula: Kapalı/Açık", `spread.senkronApply.v1`, varsayılan kapalı) |
+
+### ffmpeg (sabit, kurulum paketine GÖMÜLMEZ)
+- Kaynak: gyan.dev'in resmî Windows derlemesi (ffmpeg.org indirme sayfasının Windows bağlantısı), GitHub sürüm deposu GyanD/codexffmpeg:
+  `https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip` (92 234 348 bayt, zip64 değil).
+  İzinli alan adları: github.com → 302 → release-assets.githubusercontent.com (eski: objects.githubusercontent.com).
+- sha256 (2026-09-29, bu oturumda indirilen dosyadan hesaplandı; `cep-helper/js/senkron.js → FFMPEG`):
+  - zip `04861d3339c5ebe38b56c19a15cf2c0cc97f5de4fa8910e4d47e5e6404e4a2d4`
+  - `bin/ffmpeg.exe` (87 429 632) `b90225987bdd042cca09a1efb5e34e9848f2d1dbf5fbcd388753a44145522997`
+  - `bin/ffprobe.exe` (87 291 904) `05e8fa639450f8191635192871ae37a3ec3e4638fa12f3b7d49c6522ba16a8ed`
+  - `LICENSE` (35 147) `8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903`
+- Kurulum: zip belleğe iner (≤ boy + 1 KB), sha256 tutmazsa HİÇBİR ŞEY yazılmaz; yalnız ffmpeg.exe, ffprobe.exe, LICENSE (→ LICENSE.txt)
+  çıkarılır (CRC-32 + her birinin sha256'sı). Önce üçü de `.new` yazılır, sonra yeniden adlandırılır; yazma / adlandırma hatasında
+  `.new`ler silinir ve açık mesaj ("ffmpeg klasörüne yazılamadı … disk dolu ya da dosya kullanımda olabilir"); `KAYNAK.txt` (sürüm, adres,
+  sha256, lisans). Kurulumda bellek tepesi ~360 MB (zip parçaları + birleştirme + açılan iki exe; bir kez). İndirme sürerken İptal isteği
+  keser. "Kurulu mu" (UXP'nin indirme sorusu) da sha256'ya bakar: boyu tutan ama içeriği bozuk kurulum sorulup yeniden iner; tutmayan
+  kurulum (boyut:zaman imzası aynı kaldıkça) her durum sorgusunda yeniden okunmaz. İndirilemezse açık hata + zip'i elle aynı klasöre koyma
+  yolu (aynı denetim). Windows dışında: UXP soru sormadan "SENKRON şimdilik yalnız Windows'ta".
+- **Lisans notu**: ffmpeg bu derlemede GPL v3 (derlemenin README / LICENSE'ı; libx264 vb. ile). Spread onu **dağıtmaz**: kullanıcının
+  bilgisayarına, kullanıcının onayıyla ("ffmpeg indirilsin mi?"), resmî derleyicinin yayımladığı değiştirilmemiş dosya olarak indirilir;
+  LICENSE.txt yanında durur; ayrı bir süreç olarak çalıştırılır (bağlanmaz / gömülmez). Kaynak: derlemenin README'sindeki commit
+  `https://github.com/FFmpeg/FFmpeg/commit/db69d06eee`.
+- Çağrı: `child_process.spawn(exe, [sabit bayraklar…, yol])` (kabuk yok; yol mutlak olmak zorunda → "-" ile başlayamaz):
+  ffprobe `-v error -print_format json -show_format -show_streams`; ses akışı varsa ikinci ffprobe `-v error -select_streams a:0
+  -read_intervals %+#16 -show_entries frame=pts_time,best_effort_timestamp_time -print_format json` (ilk ÇÖZÜLEN ses karesinin zamanı);
+  ffmpeg `-nostdin -hide_banner -loglevel error -i <yol> -map 0:a:0 -vn -sn -dn -ac 1 -ar 8000 -acodec pcm_s16le -f s16le pipe:1`.
+  İlk ses akışı; kanallar karıştırılır (-ac 1).
+- **Ses akışının başlangıç kayması (`lead`, inceleme #15 M1)**: çözülen PCM ilk ses karesiyle başlar; Premiere klibi dosyanın zaman
+  sıfırına koyar. lead = ilk çözülen ses karesinin zamanı − ilk video akışının start_time'ı (yoksa format start_time); |lead| > 5 sn →
+  kullanılmaz + not. Motor konumları dosya başına göre verir (PCM başı − lead). PCM[0] tanım gereği ilk ÇÖZÜLEN karedir (akışın
+  start_time'ı çoğu dosyada aynı; ön-dolgu / skip_samples kareyi kaydırabilir → ölçülen kullanılır). Wine'da sesi 0.5 sn geç başlayan
+  MP4'te start_time da ilk kare de 0.478 (kap 0.5 − 1024/48000'i 1 ms'lik ölçekte yazıyor), sonuç ≤ 1 ms. Başlangıç bilinmiyorsa
+  (ffprobe okuyamadı ya da |lead| > 5 sn) `leadOk = false`: sesi eşleşse de Uygula o dosyayı TAŞIMAZ, emin olunmayanlarla en sona
+  koyar; rapor yazar (inceleme #15 N5). Önbellek anahtarı değişmedi (PCM aynı; lead her işte ffprobe'dan).
+- Önbellek: `%APPDATA%\BadIdeaAgency\Spread\senkron-cache\<sha1(yol|boyut|mtime)>.pcm`; > 2 GB → en eskiler silinir. KALDIR.cmd bütün
+  `Spread` klasörünü (ffmpeg + önbellek dahil) siler.
+
+### Motor ayrıntıları (`DEFAULT_OPTS`, sentetik ölçümlerle seçildi)
+- Kaba aday: zarf NCC ≥ 0.15, ortak ≥ min(kısa dosya, 15 sn), en çok 4 aday (≥ 1 sn aralı). Zarf tek başına kısa kliplerde ayırt
+  edici DEĞİL (ölçüm: ilişkisiz 5 sn klip NCC 0.67'ye çıkabiliyor) → güven ince aşamadan. Zarftan önce sinyalin ortalaması (DC)
+  çıkarılır (0.3 DC kaymalı klip "ayırt edici ses yok" oluyordu).
+- İnce: GCC-PHAT tepesi ≥ 0.06, keskinlik (tepe / ±5 ms dışı en büyük) ≥ 2, birinci / ikinci aday oranı ≥ 3, ince sonuç kabaya ≤ 50 ms.
+  Ölçüm (sentetik, farklı mikrofon rengi / gürültü / yankı): doğru eşleşmeler tepe 0.14–0.77, keskinlik 2.6–6.5, oran 20–38; ilişkisiz
+  klipler tepe ≤ 0.027, keskinlik ≤ 1.5.
+- Çiftler: aynı KESİN cihazın farklı kayıtları eşleştirilmez (aynı anda olamaz); aynı kaydın kanalları (Zoom Tr1 ↔ Tr2) eşleşir ve aynı
+  başlangıçta olmak zorunda; kamera↔harici, harici↔harici (DJI mikrofonları dahil), kamera↔kamera (farklı cihaz).
+- Yerleşim: en güçlü bağlı dosya grubun dayanağı; her adımda yerleşmemiş dosyalar için yerleşmiş komşulardan gelen konum tahminleri ±2 ms
+  kümelenir; kısıtı bozan kümeler (kesin cihazın iki kaydı ≥ 1 kare üst üste; güvenli sayaçta dosya sırası ters) elenir, bir sonraki
+  güvenli tepe denenir; kalan en ağır küme ikinciden ≥ 2 kat ağır değilse "çelişen eşleşmeler" → emin değil. Bağlanmayan kümeler ayrı
+  grup; tek başına kalan dosya grup sayılmaz. Gruplar arası mesafe: aynı cihazın iki grupta saatli dosyası varsa (saat − konum) farkı.
+- **Tekrarlayan içerik** (müzik döngüsü, aynı jingle, tekrar eden bölüm — inceleme #15'in engelleyicilerinin ortak kaynağı):
+  - GENİŞ eşleşme: aranan kaydırma aralığı ≥ `wideSec` 60 sn (rakip tekrarlar oran sınamasına girebilmiş) ya da doğrulanmış saat
+    ipucuyla daraltılmış. İki kısa klip arasındaki eşleşme DAR: rakip tekrarlar hiç aday olmaz → oran sınaması boştur (20 sn klipler,
+    8 sn döngü: +0.654 yerine +200.654 olmalıydı).
+  - Grup yalnız geniş eşleşmesi olan bir dosyadan kurulur (dar eşleşmeli kök hiç büyüyemez).
+  - GÜÇLÜ yerleşim = grubun dayanağı ya da güçlü yerleşmiş bir dosyaya GENİŞ eşleşme; grup yalnız güçlü yerleşimlerle büyür (tahminler
+    ve kısıtlar da yalnız onlardan). Yalnız dar eşleşmelerle (≥ 2 kısa klip — ikisi de aynı tekrarlayan olayı görmüş olabilir, N2: aynı
+    şarkı iki kez çalınmış, X 300 sn yanlış yere) bulunan yer dondurulmaz (sonra güçlü bir komşu gelirse güçlü yerleşir); grup bitince
+    hâlâ öyleyse "emin değil" + raporda "olası yer: G1 … sn (dar kanıt — kontrol et)", başka gruba giremez.
+  - Bir grupta eşleşmesi olup orada yerleşemeyen (çelişen / kısıtı bozan) dosya "engelli": başka grup kuramaz, başka gruba giremez
+    (önce X/Y birbirini tutup sahte "Grup 2" kuruyordu). Gerekçesi korunur. Yalnız gerçekten kurulan grup (≥ 2 güçlü dosya) engeller;
+    tek başına kalan kök dağılır, komşuları serbest (N3).
+  - Saatin ANLAMI kanıtlanmamıştır (başlangıç mı, bitiş mi — bazı telefon / drone creation_time'ı kaydın sonu; N1). İki varsayım:
+    başlangıç (dosya başı − saat) ve bitiş (ses sonu − saat); "tutan" = medyan mutlak sapma ≤ `clockMadSec` 2 sn.
+  - Saat çelişkisi: kimliği KESİN cihazın aynı grupta ≥ 3 saatli dosyası için tutan HER varsayımda > `clockTolSec` 30 sn uymayan
+    dosya "emin değil (saat ipucuyla … çelişiyor)" ve çözüm onsuz yeniden kurulur (≤ 6 tur); hiçbir varsayım tutmuyorsa saat kullanılmaz.
+- Saat ipucu: dosya adı (YYYYMMDD_HHMMSS, YYMMDD_HHMMSS) > timecode > creation_time; cihaz başına tek kaynak (çoğunluk). Raporlanır
+  (beklenen konum, fark). İkinci tur (yerleşemeyenler için beklenen yerin ±`hintHalfSec` 10 sn'sinde, eşikler aynı; kenar
+  `s = pos(b) − pos(a)` işareti düzeltildi) YALNIZ doğrulanmış saatte: aynı cihazın ≥ 2 dosyası sesle yerleşmiş ve başlangıç varsayımı
+  tutuyor; bitiş varsayımı da tutuyorsa (ör. hepsi aynı uzunlukta) iki varsayım bu dosya için ≤ 2 sn içinde aynı yeri söylemeli. Yoksa
+  ikinci tur yok + not ("cihaz saati doğrulanamadı"). Yanlış anlaşılan saat pencereye yalnız tekrarı düşürüp onu "doğrulatıyordu"
+  (A3 54 sn yanlış, saat farkı 0.00).
+- Bilinçli ödünleşimler (yanlış yerleşim yerine "emin değil" — kullanıcının "önce sıfır yanlış" kuralı):
+  - Kaydın ucuna yalnız ~14.5 sn binen kısa klip, tek eşleşmesi dar → "emin değil" (önce doğru yerleşiyordu).
+  - Yalnız kısa dosyalardan oluşan çekim (ör. 40 sn WAV + üç 30 sn klip; aralarında ≥ 60 sn'lik aralıkta sınanabilen eşleşme yok)
+    HİÇ senkronlanmaz: hepsi "emin değil" — geniş eşleşmesi olan dosya olmadığı için grup da kurulmaz, olası yer de raporlanmaz (N4).
+  - Saatin anlamı belirsizse (aynı uzunlukta dosyalar + creation_time) ikinci tur yok.
+- Kalan risk: GENİŞ bir eşleşme de tekrar yüzünden yanlış olabilir, eğer tekrar aranan bütün aralığı kapsıyorsa (ör. uzun bir kayıtta
+  aynı şarkı iki kez ve klip yalnız şarkıyı içeriyor → iki aday → oran sınaması "emin değil" der; ama kayıt yalnız BİR çalınışı
+  kapsıyorsa ve klip öbürünü çektiyse, klibin gerçek yeri kayıtta yok → tek aday → yanlış yer). Saati doğrulanmış kesin cihazlarda saat
+  çelişkisi bunu yakalar; saatsiz cihazda yakalanmaz. Sınanan durumlarda yanlış yerleşim 0; "hiçbir zaman" DEĞİL.
+
+### Uygula (deneysel)
+- Taşınanlar yalnız "ok" (güçlü) yerleşimler; "emin değil" (dar kanıt dahil) ve ses başlangıcı bilinmeyenler (`leadOk = false`) en sona,
+  tek tek.
+- Eşleştirme dakikalar sürebilir → Uygula'dan önce TAZE okuma; timeline `s0` ile birebir aynı değilse (klipler, yerler, track sayısı)
+  DUR, hiçbir şey yapılmaz. Sonra `reconcileAndLog` + `confirmNotStopped` (yarım kalmış önceki işlem sorusu; yarım SENKRON artık
+  "Senkron (yarım iş)" diye anılır — `records.ts OP_NAME`, `guard.ts STEP_NAME`). Onaydan sonra ve yedekten sonra yine birebir denetim.
+- Yalnız Dağıt düzeni: taşınacak her dosyanın track'lerinde TIMELINE'DAKİ BÜTÜN kliplere bakılır (yolu okunamayan / sınıflandırılamayan
+  dosyaların klipleri dahil) — başka dosyanın klibi varsa DUR (track adı kullanıcının gördüğü gibi, 1'den). Dosyanın bütün klipleri
+  (sınıflandırılamayan parçaları dahil) birlikte taşınır ve aynı medya başlangıcında olmalı.
+- Hedef: saatli gruplar saat sırasıyla (Grup 1'den ÖNCE olan da olabilir: `clockFrom1` < 0), saatsizler sonra. İlk saatli grubun
+  yerinden "Grup 1'in sıfırı" bulunur; sonraki saatli grup, saat mesafesi önceki grubun sonundan sonraysa orada, değilse önceki sonu +
+  Ayarlar'daki boşluk (kareye hizalı). Kamera klipleri kareye yuvarlanır (günlükte ms), harici sesler tick düzeyinde. Emin
+  olunmayanlar en sona, tek tek.
+- Adımlar (TOPLA'nın kanıtlı kalıbı): yedek sequence → ilk park (ölçüm, tek dosya; kareye oturmayan harici ses varsa o) → park →
+  ilk yerleştirme (ölçüm) → yerleştir; her adımdan sonra tick düzeyinde düzen karşılaştırması; tutmazsa DUR (Ctrl+Z sayısı + yedek).
+
+### Mock / sınama
+- `npm run smoke:senkron` (9 senaryo, `spread/dev/senkron-smoke.cjs` + `senkron-synth.cjs` + `fake-ffmpeg.cjs`, ~2 dk):
+  1 kamera + 3 mikrofon 10/10 (≤ 0.029 ms), kayıt dışı ve sessiz klip emin değil, 2 kamera + Zoom iki çekim 19/19 (≤ 0.008 ms,
+  128 dk ses ~52 sn), 12 kısa ilişkisiz klip hepsi emin değil; `motor_tekrar` (döngü, jingle, çelişen X/Y, saat çelişkisi, ipucuyla
+  tekrar eden bölüm 400.000 sn, DC kaymalı klip — yanlış yerleşim 0); iptal; yardımcı: istek denetimi, zip, sha256 / indirme hatası,
+  bozuk kurulum "kurulu" sayılmaz, indirme sırasında İptal, iş + önbellek + iptal + `lead` (0.25 sn geç başlayan ses; > 5 sn kullanılmaz,
+  `leadOk = false`). `motor_tekrar` ayrıca: saat doğrulanmış → ikinci tur çalışır (A3 400.000); saat kaydın sonu + aynı uzunluklar →
+  ikinci tur yok, A3 emin değil (N1); aynı şarkıyı iki dar eşleşme → X emin değil + olası yer (N2).
+- `scripts/test-senkron-wine.sh`: GERÇEK sabit ffmpeg (indirme + sha256 + çıkarma; ikinci açılışta doğrulama), Wine'da WAV 48 kHz
+  stereo + MP4 H.264/AAC + MOV PCM + sesi 0.5 sn geç başlayan MP4 çözme; 6/6, en büyük hata 0.663 ms (o dosyanın kendisinde:
+  kap 0.5 − 1024/48000 = 0.4787 sn'yi 1 ms'lik ölçekte 0.478 yazıyor; ötekiler ≤ 0.014 ms).
+- Panel smoke: `senkron_dene` (timeline birebir aynı, rapor, Sorun bildir bölümü), `senkron_uygula` (5 transaction, konumlar, ardından
+  Topla 1 oturum), `senkron_iptal`, `senkron_yok` (yardımcı yok, Dağıt düzeni değil, ffmpeg sorusu / indirilemedi), `senkron_degisti`
+  (eşleştirme sürerken klip kaydırıldı → Uygula başlamaz; taşınacak dosyanın track'inde yolu okunamayan klip → DUR), `senkron_grup_once`
+  (saate göre Grup 1'den 1 sa ÖNCE olan grup önce, Grup 1 saat farkıyla 3600 sn'de), `senkron_lead` (ses başlangıcı bilinmeyen dosya
+  taşınmaz, en sona). Spread smoke 126 → 133 senaryo.
+
+### Bağımsız alt ajan incelemesi #15 (v1.4.0) — 4 engelleyici + 2 büyük + küçükler, hepsi ele alındı
+| # | Bulgu | Çözüm |
+|---|---|---|
+| B1 | Saat ipucu ikinci turu ayna pencerede arıyordu (`c = sign·d`; A3 400 yerine 350'de, 50 sn yanlış) | işaret düzeltildi (`c = i === a ? −d : d`), pencere ±90 → ±10 sn; `motor_tekrar` "tekrar eden bölüm" |
+| B2 | Tek aday → oran sınaması boş (8 sn döngüde iki 20 sn klip +0.654'e; 3 sn jingle iki ilişkisiz klibi birleştirdi) | tek eşleşme ancak geniş aralıkta (≥ 60 sn) arandıysa, yoksa ≥ 2 bağımsız eşleşme; "döngü", "jingle" |
+| B3 | Gruptan reddedilen dosyalar sahte yeni grup kuruyordu (X/Y "Grup 2") | "engelli" dosya grup kuramaz / giremez, gerekçe korunur; "çelişen" |
+| B4 | Cihaz saatiyle 600 sn çelişen yerleşim sessizce kabul | kesin cihazın tutarlı saatine > 30 sn uymayan → emin değil + yeniden çözüm; "saat çelişkisi" |
+| M1 | Ses akışının başlangıç kayması düşülüyordu (0.478 sn) | `lead` (ilk çözülen ses karesi − video başı), konumlar dosya başına göre; Wine ≤ 1 ms |
+| M2 | Uygula dakikalar önceki okumayla çalışıyordu; Dağıt denetimi yalnız okunan dosyalar; yarım iş kaydı yok / "Dağıt" diye anılıyordu | taze okuma + birebir denetim (onaydan ve yedekten sonra da), bütün kliplerle Dağıt denetimi, `reconcileAndLog` + `confirmNotStopped`, "Senkron" adı |
+| küçük | ffprobe / indirme sırasında İptal yutuluyordu | iptal yeniden fırlatılır; indirme isteği kesilir |
+| küçük | Negatif `clockFrom1` grupları yanlış aralıyordu | "Grup 1'in sıfırı" ilk saatli gruptan |
+| küçük | `ffmpegState` yalnız boy; macOS'ta önce "İndir?" sonra hata | sha256 (oturumda bir kez, bozuk imza önbellekli); `supported` sorudan önce |
+| küçük | DC kayması klibi kullanılamaz yapıyordu | zarftan önce ortalama çıkarılır |
+| küçük | Kurulumda adlandırma hatası yarım klasör + ham EPERM | önce hepsi `.new`, hata → temizlik + açık mesaj |
+| nit | Rapor: CİHAZ SAATİ kaymayı yazmıyordu; negatif mesafe "−x sn sonra" | "… medyanı x sn, sapma medyanı y sn"; "x sn ÖNCE" |
+
+Doğrulama turu (aynı ajan; bütün eski repro'lar 0 yanlış, M2 akışında açık yok, Wine'da lead ölçümü doğru) — yeni bulgular:
+
+| # | Bulgu | Çözüm |
+|---|---|---|
+| N1 (engelleyici) | İkinci tur anlamı kanıtlanmamış saate güveniyordu (creation_time = kaydın sonu → A3 54 sn yanlış, saat farkı 0.00; tek dosyalı kayma da kabul) | ikinci tur yalnız ≥ 2 dosyayla doğrulanmış saatte; bitiş varsayımı da sınanır, belirsizse tur yok + not; saat çelişkisi de iki varsayımla |
+| N2 (büyük) | "İki bağımsız eşleşme" aynı olayı görmüş iki kısa klip olabilir (X 300 sn yanlış) | güçlü / dar kanıt: dar kanıtlı yer "emin değil" + olası yer; belgelerde "0 yanlış" iddiası sınanan durumlara indirildi, kalan risk yazıldı |
+| N3 | Dağılan tek dosyalı kök komşularını engelli bırakıyordu (0/6) | kök geniş eşleşmeli olmalı; yalnız ≥ 2 güçlü dosyalı grup engeller |
+| N4 | Yalnız kısa dosyalardan oluşan çekim hiç senkronlanmaz | belgelendi (bilinçli ödünleşim) |
+| N5 | Bilinmeyen lead 0 sayılıyordu | `leadOk = false` → Uygula taşımaz; rapor yazar |
+| nit | probe yorumu "ilk kare 0.5"; grup sonu lead'siz | düzeltildi |
+
+İkinci doğrulama: engelleyici yok (N1–N5 kapandı; sıradan çekimlerde — Zoom 1400 sn + 2 DJI + 2 kamera 20–120 sn, saat başlangıç ya da
+bitiş, 4 tohum, 122 dosya — hepsi yerleşti, 0 dar kanıt, 0 yanlış, 0 yanlış saat yasağı). Küçük: dar kanıtla önce "yerleşen" dosya
+sonradan gelen güçlü komşuyla yeniden değerlendirilmiyordu (yer kaybı, yanlış değil) → dar kanıtlılar büyüme sırasında dondurulmaz,
+güçlü aday her zaman önce. Nit'ler: N4 metni, Dene özetinde ses başlangıcı bilinmeyenler → düzeltildi.
+
+### Belirsizlikler (v1.4.0) — gerçek Windows + Premiere'de bakılacak
+1. Gerçek kamera dosyaları: ffmpeg'in her kameranın kapsayıcısını / ses kodeğini okuyup okumadığı (BRAW gibi okuyamadığı biçim "ses
+   okunamadı" → emin değil). Çok akışlı kamera sesinde yalnız ilk akış kullanılır.
+2. `lead`: Premiere'in geç başlayan ses akışını (ve AAC ön-dolgusunu) ffmpeg gibi zaman damgasına göre koyduğu VARSAYILDI (yoksa
+   Premiere'de de ses videoyla kayık oynardı). Rapor sıfır olmayan lead'i dosya başına yazar ("ses akışı dosya başından +x sn"); "timeline
+   farkı" sütunu Premiere senkronundan sonra farkı gösterir.
+3. Eşikler sentetik sesle seçildi; gerçek odada (yankı, uzak kamera mikrofonu) PHAT tepesi düşük kalırsa "emin değil" artar (yanlış
+   yerleşim değil). Rapor her çiftin tepe / oranını yazar → eşikler gerçek veriyle ayarlanır.
+4. CEP Node'unda uzun hesap: motor adımlar arasında `setImmediate` ile nefes alır; FFT'ler (2^18–2^19) tek adımda ~0.1–0.3 sn → yardımcı
+   paneli kısa süre takılabilir, Premiere takılmaz (ayrı süreç). Kurulu ffmpeg'in sha256 denetimi (~175 MB okuma) yardımcı oturumunda
+   ilk durum sorgusunda bir kez ~1 sn sürebilir.
+5. Uygula: klonun alt-kare zaman ofsetini (harici ses) Premiere'in tam tick koyup koymadığı — ilk ölçüm adımı bunu sınar, tutmazsa DUR.
 
 ## v1.3.0 — SENKRON SAĞLIĞI (Topla öncesi) + eşzamanlı DJI mikrofonları için şerit
 
