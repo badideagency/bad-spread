@@ -1,8 +1,9 @@
-// Spread v1.2.0 — giriş noktası (yalnız arayüz bağlantıları). Üstte "Spread" + sürüm + ↻ + yardımcı noktası, altında sequence adı;
+// Spread v1.2.1 — giriş noktası (yalnız arayüz bağlantıları). Üstte "Spread" + sürüm + ↻ + yardımcı noktası, altında sequence adı;
 // üç adım (1 Dağıt → Clip › Synchronize → 2 Topla → 3 Bağla; yalnız sıradakinin düğmesi, biten adımın adına tıklayınca "Yeniden
 // çalıştır"); altta tek satır sonuç / ilerleme + "Ne yapmalıyım?"; "Ayarlar" görünümünde kaynak eşleme, eşik, boşluk, yardımcı
 // ayrıntısı, Durum raporu ve günlük; "Sorun bildir". v1.2.0: güncelleme şeridi (latest.json, 6 saatte bir) ve ↻ Yenile.
-// İşlemlerin mantığı src/ altındaki modüllerde.
+// v1.2.1: sequence kayıtları ipucudur, kilit değil (src/records.ts): panel açılınca, sequence değişince, timeline'ın şekli değişince
+// canlı timeline'la karşılaştırılır, tutmayan silinir; ↻ bu sequence'ın kayıtlarını siler. İşlemlerin mantığı src/ altındaki modüllerde.
 
 import { getActive, requireActive, sequenceGuid, sequenceName } from "./src/session";
 import { runSpread } from "./src/spread";
@@ -13,17 +14,19 @@ import { buildIssueReport, saveIssueReport } from "./src/report";
 import { classify, sourcesOf } from "./src/classify";
 import { getLinker } from "./src/linker";
 import { bindSettingInputs, renderMapping } from "./src/settings";
-import { errText, snapshot } from "./src/model";
-import { rememberStep, stepViews } from "./src/steps";
+import { errText, readShape, shapeOf, snapshot } from "./src/model";
+import { rememberStep, setStepPrint, stepViews } from "./src/steps";
+import { clearSequenceRecords, dropForgotten, fingerprint, hasRecords, pendingLink, reconcileAndLog, trackPrint } from "./src/records";
 import { SPREAD_VERSION } from "./src/version";
 import { CHECK_EVERY_MS, checkForUpdate, type Latest } from "./src/update";
-import { askUser, stopMapHas } from "./src/guard";
+import { askUser } from "./src/guard";
 import {
   answer,
   byId,
   clearLog,
   isAsking,
   log,
+  notice,
   opEnd,
   opFinish,
   opStart,
@@ -47,6 +50,9 @@ let helperReachable = false; // güncellemeyi yardımcı yapar: sürümü farkl�
 let lastSeqGuid: string | null = null; // kaynak eşlemesi en son bu sequence için tarandı
 let activeGuid: string | null = null; // adım göstergesi (şu an aktif sequence; yoksa null)
 let opGuid: string | null = null; // işlemin başladığı sequence (adım sonucu ona yazılır)
+let pendingPrint: { guid: string; step: StepId } | null = null; // v1.2.1: bu işlemde işaretlenen adım (sonunda parmak izi yazılır)
+const shapes = new Map<string, string>(); // v1.2.1: sequence → son doğrulanan şekil (track / klip sayıları)
+let validation: Promise<void> | null = null;
 
 function setDisabled(id: string, disabled: boolean): void {
   try {
@@ -81,6 +87,7 @@ async function refresh(): Promise<void> {
       if (g !== lastSeqGuid && !busy) {
         lastSeqGuid = g;
         void scanChannels(false);
+        void validateActive(); // panel açıldı / sequence değişti → kayıtlar canlı timeline'la
       }
     }
     if (!ok) activeGuid = null;
@@ -89,6 +96,69 @@ async function refresh(): Promise<void> {
   }
   for (const id of ACTIONS) setDisabled(id, busy || !ok);
   paintSteps();
+}
+
+// ------------------------------------------------------------------ v1.2.1 kayıtlar: ipucu, kilit değil
+
+/** Aktif sequence'ın kayıtlarını canlı timeline'la karşılaştırır; tutmayanları siler (günlüğe yazar), göstergeyi yeniden çizer. */
+function validateActive(): Promise<void> {
+  if (validation || busy) return validation ?? Promise.resolve();
+  validation = (async () => {
+    try {
+      const ctx = await requireActive();
+      if (!hasRecords(ctx.guid)) {
+        shapes.set(ctx.guid, "");
+        return;
+      }
+      const s = await snapshot(ctx);
+      await reconcileAndLog(ctx.guid, s);
+      shapes.set(ctx.guid, shapeOf(s));
+    } catch {
+      /* okunamazsa bir sonraki olayda */
+    } finally {
+      validation = null;
+      paintSteps();
+    }
+  })();
+  return validation;
+}
+
+/** Hafif: timeline'ın şekli (track / klip sayıları) son doğrulamadan beri değiştiyse (ör. Ctrl+Z) tam doğrulama. */
+let shaping = false;
+async function watchShape(): Promise<void> {
+  if (busy || shaping || validation || !activeGuid || !hasRecords(activeGuid)) return;
+  shaping = true;
+  try {
+    const { sequence } = await getActive();
+    if (!sequence || sequenceGuid(sequence) !== activeGuid) return;
+    const sh = await readShape(sequence);
+    if (shapes.get(activeGuid) !== sh) await validateActive();
+  } catch {
+    /* okunamazsa geç */
+  } finally {
+    shaping = false;
+  }
+}
+
+/** İşlem bir adımı işaretlediyse: işlemin sonundaki timeline'ın parmak izini işarete yazar (sonraki karşılaştırmalar buna göre). */
+async function stampStep(): Promise<void> {
+  const p = pendingPrint;
+  pendingPrint = null;
+  if (!p) return;
+  try {
+    let ctx = await requireActive();
+    if (ctx.guid !== p.guid) {
+      // kullanıcı arada başka sequence'a geçti → işlemin sequence'ı listeden bulunur (salt okuma)
+      const seq = (await ctx.project.getSequences()).find((x) => sequenceGuid(x) === p.guid); // d.ts:L2520 Project.getSequences
+      if (!seq) return;
+      ctx = { ...ctx, sequence: seq, guid: p.guid, name: sequenceName(seq) };
+    }
+    const s = await snapshot(ctx);
+    setStepPrint(p.guid, p.step, fingerprint(s), trackPrint(s));
+    shapes.set(p.guid, shapeOf(s));
+  } catch {
+    /* okunamazsa iz yok (bir sonraki doğrulamada "parmak izi yok" diye unutulur) */
+  }
 }
 
 /** Aktif sequence'taki harici kaynakları bulur ve kaynak eşleme panelini çizer (salt okuma). */
@@ -129,6 +199,14 @@ async function checkHelper(verbose: boolean): Promise<void> {
 // ------------------------------------------------------------------ v1.2.0 güncelleme (denetim burada; kurulum Spread Helper'da)
 
 const LAST_CHECK_KEY = "spread.updateCheck.v1";
+const RELOAD_NOTE = "spread.reloadNote.v1"; // v1.2.1: ↻ sonrası bildirim (tek seferlik)
+const dropReloadNote = () => {
+  try {
+    localStorage.removeItem(RELOAD_NOTE);
+  } catch {
+    /* yoksa geç */
+  }
+};
 
 function paintUpdate(): void {
   setUpdateStrip(latest ? { version: latest.version, helperOk: helperReachable } : null);
@@ -263,13 +341,36 @@ async function reloadPanels(): Promise<void> {
     busy = false;
     void refresh();
   };
-  if (activeGuid && stopMapHas(activeGuid)) {
-    const ans = await askUser(
-      "Bu sequence'ta yarım kalmış bir işlem var. Yenilemek onu düzeltmez; yarım kalan işlem yenilemeden sonra da yarım görünür.",
-      ["Bu sequence'ta yarım kalmış bir işlem var.", "Yenilemek onu düzeltmez: önce Ctrl+Z ile geri al ya da yedek sequence'ı aç."],
-      { title: "Yine de yenilensin mi?", yes: "Yenile", no: "Vazgeç" }
-    );
-    if (ans !== "Evet") return unlock();
+  if (validation) await validation;
+  // v1.2.1: aktif sequence'ın BÜTÜN adım kayıtları (işaretler, yarım iş koruması, TOPLA / BAĞLA kaydı, eski KES planı) silinir;
+  // başka sequence'larınkine ve kırpma kalibrasyonuna dokunulmaz. Bildirim yeniden yüklemeden sonra gösterilir.
+  try {
+    const { sequence } = await getActive();
+    if (sequence) {
+      const g = sequenceGuid(sequence);
+      // Bağla kesimi bağlanmayı bekliyorsa kayıtları silmek bağlamayı imkânsız kılar (KES planı + kayıt gider) → yalnız bu durumda sorulur
+      let clear = true;
+      if (pendingLink(g)) {
+        const ans = await askUser(
+          "Bu sequence'ta Bağla kesimi bağlanmayı bekliyor (Spread Helper panelindeki Bağla ya da burada Bağla). ↻ Topla / Bağla kaydını ve " +
+            "KES planını da silerse bu kesim artık bağlanamaz: Bağla'yı Ctrl+Z ile geri alıp Topla ve Bağla'yı yeniden yapman gerekir. " +
+            "Bunlar da temizlensin mi? (Yalnız yenile = adım işaretleri ve yarım iş kaydı yine silinir; Topla / Bağla kaydı ve KES planı kalır.)",
+          ["Bağla kesimi bağlanmayı bekliyor.", "Topla / Bağla kaydı silinirse bu kesim artık bağlanamaz.", "Yalnız yenile = işaretler silinir, Topla / Bağla kaydı ve plan kalır."],
+          { title: "Kayıtlar da temizlensin mi?", yes: "Temizle ve yenile", no: "Yalnız yenile" }
+        );
+        clear = ans === "Evet";
+      }
+      await clearSequenceRecords(g, !clear);
+      shapes.delete(g);
+      log(clear ? "Bu sequence'ın kayıtları temizlendi." : "Bu sequence'ın kayıtları temizlendi (Bağla bekliyor: Topla / Bağla kaydı ve KES planı korundu).", "head");
+      try {
+        localStorage.setItem(RELOAD_NOTE, sequenceName(sequence));
+      } catch {
+        /* bildirim yalnız bu satırda kalır */
+      }
+    }
+  } catch (e) {
+    log(`Kayıtlar temizlenemedi: ${errText(e)}`, "warn");
   }
   log("↻ Yenileniyor: Spread Helper ve Spread paneli yeniden yükleniyor…", "head");
   const h = await getLinker().reloadHelper();
@@ -280,12 +381,14 @@ async function reloadPanels(): Promise<void> {
       window.location.reload();
     } catch (e) {
       log(`↻ Panel yeniden yüklenemedi: ${errText(e)}. Paneli kapatıp aç.`, "warn");
+      dropReloadNote();
       unlock();
       return;
     }
-    // yeniden yükleme sessizce olmadıysa panel kilitli kalmasın
+    // yeniden yükleme sessizce olmadıysa panel kilitli kalmasın (bildirim bu oturumda günlükte kaldı; sonraki açılışta çıkmasın)
     setTimeout(() => {
       log("↻ Panel yeniden yüklenmedi; gerekirse paneli kapatıp aç.", "warn");
+      dropReloadNote();
       unlock();
     }, 5000);
   }, h ? 600 : 50);
@@ -298,10 +401,13 @@ async function exclusive(label: string, fn: () => Promise<void>): Promise<void> 
   }
   busy = true;
   try {
+    if (validation) await validation; // arka planda süren kayıt doğrulaması bitsin (işlem kendi doğrulamasını da yapar)
     await refresh();
     opGuid = activeGuid;
+    pendingPrint = null;
     opStart(label);
     await fn();
+    await stampStep();
   } catch (e) {
     log(`Beklenmeyen hata: ${errText(e)}`, "err");
     opEnd("err", `${({ SPREAD: "Dağıt", TOPLA: "Topla", BAĞLA: "Bağla", GÜNCELLE: "Güncelleme" } as Record<string, string>)[label] ?? label}: beklenmeyen hata.`, "Sorun bildir'e bas ve raporu gönder.", [errText(e)]);
@@ -423,6 +529,10 @@ function init(): void {
   }
   setDoneHandler((step, kind, text, noop) => {
     rememberStep(opGuid, step, kind, text, noop);
+    if (opGuid) {
+      pendingPrint = { guid: opGuid, step };
+      dropForgotten(opGuid); // yeni bir işlem bitti → eski "unutulanlar" artık geri yüklenmez
+    }
     paintSteps();
   });
   const actions: Record<StepId, () => void> = {
@@ -480,6 +590,17 @@ function init(): void {
     if (!isAsking()) clearLog();
   });
   bindSettingInputs();
+  // v1.2.1: ↻ Yenile'den sonra: "Bu sequence'ın kayıtları temizlendi." (yeniden yüklemeden önce yazılan satır günlükle gitti)
+  try {
+    const cleared = localStorage.getItem(RELOAD_NOTE);
+    if (cleared !== null) {
+      localStorage.removeItem(RELOAD_NOTE);
+      log(`↻ Bu sequence'ın kayıtları temizlendi ("${cleared}"): adım işaretleri, yarım iş kaydı, Topla / Bağla kaydı, eski Bağla planı. Kırpma ölçümü duruyor.`, "head");
+      notice("info", "Bu sequence'ın kayıtları temizlendi.");
+    }
+  } catch {
+    /* yoksa geç */
+  }
   log(`Spread ${SPREAD_VERSION} hazır. Sıra: Dağıt (SPREAD) → Clip > Synchronize → Topla (TOPLA) → kontrol → Bağla (BAĞLA). Her işlem önce onay ister ve yedek sequence alır.`, "head");
   void refresh();
   void checkHelper(false);
@@ -489,6 +610,10 @@ function init(): void {
   setInterval(() => {
     if (!busy) void checkHelper(false);
   }, 15000);
+  // v1.2.1: timeline'ın şekli değişti mi (ör. Ctrl+Z) → kayıtlar yeniden doğrulanır (yalnız bu sequence'ın kaydı varsa)
+  setInterval(() => {
+    if (!busy) void watchShape();
+  }, 3000);
   // güncelleme: açılışta ve 6 saatte bir (yarım saatte bir bakılır; son denetim zamanı hatırlanır)
   void checkUpdates();
   setInterval(() => {

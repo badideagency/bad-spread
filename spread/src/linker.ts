@@ -125,6 +125,8 @@ interface UxpFs {
   readFileSync(path: string, options: { encoding?: string }): string | ArrayBuffer;
   writeFileSync(path: string, data: string, options: { encoding?: string }): number;
   mkdir(path: string, options: { recursive?: boolean }): Promise<number>;
+  /** geri çağrısız → Promise (belge: "if not provided, this function will return Promise object") */
+  unlink(path: string): Promise<number>;
 }
 
 /** Token dosyasının yolu (yardımcıyla AYNI kural: ev klasörü + sabit alt yol). */
@@ -299,6 +301,50 @@ async function post(path: string, body: unknown, ms: number): Promise<Record<str
   if (!res.ok || j.ok !== true)
     throw new HelperError("yanıt", `${path}: ${String(j.error ?? `HTTP ${res.status}`)}${res.status === 401 ? " (token eski: yardımcı yeniden başlamış olabilir, tekrar dene)" : ""}`);
   return j;
+}
+
+/** v1.2.1: bu sequence'ın KES planının metni (dosya yoksa / başka sequence'ınsa null) — records.ts geri yükleme için saklar. */
+export function readLinkPlanText(guid: string): string | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require("os") as UxpOs;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs") as UxpFs;
+    const r = fs.readFileSync(helperPlanPath(os.platform(), os.homedir()), { encoding: "utf-8" }); // uxp.d.ts:L8985 fs.readFileSync, uxp.d.ts:L9198 OS.platform, uxp.d.ts:L9232 OS.homedir
+    const text = typeof r === "string" ? r : "";
+    const plan = JSON.parse(text) as { kind?: string; sequence?: { guid?: string } };
+    return plan.kind === "spread-link-plan" && plan.sequence?.guid === guid ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * v1.2.1: bu sequence'ın ESKİ KES planını (link-plan.json) ve onun paneldeki bağlama sonucunu (link-result.json) siler — başka bir
+ * sequence'ın planına dokunmaz. @param createdAt verilirse yalnız o plan. @returns silinen dosya sayısı (okunamazsa / yoksa 0)
+ */
+export async function dropLinkPlan(guid: string, createdAt?: string): Promise<number> {
+  let n = 0;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require("os") as UxpOs;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs") as UxpFs;
+    const planP = helperPlanPath(os.platform(), os.homedir()); // uxp.d.ts:L9198 OS.platform, uxp.d.ts:L9232 OS.homedir
+    const r = fs.readFileSync(planP, { encoding: "utf-8" }); // uxp.d.ts:L8985 fs.readFileSync
+    const plan = JSON.parse(typeof r === "string" ? r : "") as { kind?: string; sequence?: { guid?: string }; createdAt?: string };
+    if (plan.kind !== "spread-link-plan" || plan.sequence?.guid !== guid || (createdAt !== undefined && plan.createdAt !== createdAt)) return 0;
+    const res = readPanelLinkResult();
+    await fs.unlink(planP); // uxp.d.ts:L9149 fs.unlink
+    n++;
+    if (res && res.planCreatedAt === plan.createdAt) {
+      await fs.unlink(helperResultPath(os.platform(), os.homedir())); // uxp.d.ts:L9149 fs.unlink, uxp.d.ts:L9198 OS.platform, uxp.d.ts:L9232 OS.homedir
+      n++;
+    }
+  } catch {
+    /* plan yok / okunamıyor / silinemiyor → yardımcı paneli eski planı gösterir; Spread'in kaydı yine de silinmiştir */
+  }
+  return n;
 }
 
 /**

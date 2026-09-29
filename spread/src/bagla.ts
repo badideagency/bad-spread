@@ -37,7 +37,7 @@ import { channelOutliers, channelTypeName, mixedChannels, type ChannelItem } fro
 import { classify, fileName, sourcesOf, where } from "./classify";
 import {
   askUser,
-  assertNotStopped,
+  confirmNotStopped,
   expectState,
   forgetStopped,
   frameTicks,
@@ -52,8 +52,9 @@ import {
 import { bindState, frameFromRecord, itemKey, itemOf, layoutState, misplacedAgainst, parkedFromRecord } from "./collect";
 import { analyze, compareLinkGroups, groupsFromLayout, partlyParked, reduceToPresent, type LayoutFrame } from "./sessions";
 import { compareLayout, expOf, findExp, snapshotOverlaps } from "./layout";
-import { getLinker, HELPER_VERSION, readPanelLinkResult, writeLinkPlan, type LinkGroupResult, type PingResult } from "./linker";
+import { dropLinkPlan, getLinker, HELPER_VERSION, readPanelLinkResult, writeLinkPlan, type LinkGroupResult, type PingResult } from "./linker";
 import { big, fmtClip, relocate, secOf, settle, sleep, snapshot, ticks, trackLabel, type ClipInfo, type Snapshot } from "./model";
+import { confirmRedo, reconcileAndLog, stale } from "./records";
 import { assertSameSequence, requireActive, type SeqContext } from "./session";
 import {
   forgetTrimCal,
@@ -590,23 +591,29 @@ export async function runBind(): Promise<void> {
     ctx = await requireActive();
     log(`sequence: "${ctx.name}"`, "dim");
     const s0 = await snapshot(ctx);
-    assertNotStopped(ctx, s0, "BAĞLA");
+    // v1.2.1: kayıt ipucudur, kilit değil — tutmayan kayıt silinir; tutan kayıtta yalnız soru
+    await reconcileAndLog(ctx.guid, s0);
+    if (!(await confirmNotStopped(ctx, s0, "BAĞLA"))) return log("İptal edildi — hiçbir şey değişmedi.", "warn");
+    if (!(await confirmRedo(ctx.guid, s0, "bagla"))) return;
     for (const w of s0.warnings) throw new SpreadStop(`Okuma sorunu: ${w}. BAĞLA BAŞLAMADI.`);
     const readErr = s0.clips.flatMap((c) => c.readErrors.map((e) => `${where(c)} — ${e}`));
     if (readErr.length) throw new SpreadStop("Bazı klipler okunamadı. BAĞLA BAŞLAMADI.", readErr);
 
     // TOPLA kaydı: çerçeve, eşleme, eşik, park listesi (+ varsa BAĞLA aşaması) — tahmin yok
-    const rec = loadRecord(ctx.guid);
+    let rec = loadRecord(ctx.guid);
     if (!rec)
       throw new SpreadStop(
-        "Önce TOPLA'ya bas: bu sequence için TOPLA kaydı yok (TOPLA bu panelde bu sequence'ta tamamlanmadı ya da panel verisi silindi). BAĞLA BAŞLAMADI, hiçbir şey değişmedi."
+        "Önce TOPLA'ya bas: bu sequence için TOPLA kaydı yok (TOPLA bu panelde bu sequence'ta tamamlanmadı, geri alındı ya da panel verisi silindi). BAĞLA BAŞLAMADI, hiçbir şey değişmedi."
       );
-    const bs = bindState(rec, s0);
-    if (bs === "partial")
-      throw new SpreadStop(
-        "BAĞLA'dan sonra düzen değişmiş: kesim kısmen ya da Ctrl+Z ile geri alınmış (silinenlerin bir kısmı geri gelmiş ya da kesilen parçalar yok). BAĞLA BAŞLAMADI, hiçbir şey değişmedi. " +
-          "BAĞLA öncesi yedek sequence'la çalış ya da BAĞLA'yı Ctrl+Z ile tamamen geri al."
-      );
+    let bs = bindState(rec, s0);
+    if (bs === "partial") {
+      // v1.2.1: BAĞLA kaydı bu düzenle tutmuyor → bayat: unutulur; BAĞLA planını canlı timeline'dan kurar (ön koşullar aşağıda denetlenir)
+      saveBindRecord(ctx.guid, null);
+      await dropLinkPlan(ctx.guid);
+      log(stale("Bağla"), "warn");
+      rec = loadRecord(ctx.guid)!;
+      bs = bindState(rec, s0);
+    }
     if (bs === "applied" || bs === "thinned") return await linkOnly(ctx, rec, rec.bind!, s0, ping);
 
     const items = classify(s0);

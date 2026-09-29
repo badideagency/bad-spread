@@ -3,5 +3,9 @@
     "Güncellemeler artık panelden gelir: yeni sürüm çıkınca üstte ince bir şerit belirir, Güncelle'ye basman yeter.",
     "↻ Yenile: Spread ve Spread Helper panelleri tek tıkla yeniden yüklenir.",
     "Yeni görünüm: koyu tema, sade düzen, tek vurgu rengi."
+  ],
+  "1.2.1": [
+    "Tek kamera / 29.97 fps çekimlerde yanlış 'kırpılmış klip' uyarısı düzeltildi",
+    "Ctrl+Z sonrası tekrar Dağıt/Topla yapılabiliyor; ↻ bu sequence'ın kayıtlarını temizler"
   ]
 }

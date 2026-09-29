@@ -1,0 +1,21 @@
+{
+  "kaynak": "SpreadRapor 2026-09-29 — Spread 1.2.0, Premiere 26.5.1, sequence \"A027C012_260803UH\". Tek kamera, Zoom yok, DJI harici ses (4 WAV, A4). 12 dokunulmamış kamera klibi V9 / A9'da, hepsi in = 0; ses in/out'u videonunkiyle aynı. V 12 / A 16 track (önceki bir SPREAD geri alınmış, boş track'ler kalmış).",
+  "not": "out ve medya değerleri rapordan birebir. Dosya adlarının son iki karakteri (A042C0xx_260925xx) raporun bu özetinde yok → 'XX'. Klip start'ları ve WAV süreleri raporun bu özetinde yok → klipler arka arkaya 0'dan dizilir, 4 WAV A4'te arka arkaya (sentetik).",
+  "fps": "30000/1001",
+  "frameTicks": "8475667200",
+  "tracks": { "V": 12, "A": 16, "camV": 9, "camA": 9, "wavA": 4 },
+  "clips": [
+    { "name": "A042C001_260925XX.MP4", "out": "98877133555200", "media": "98883348480000" },
+    { "name": "A042C002_260925XX.MP4", "out": "25842309292800", "media": "25848668160000" },
+    { "name": "A042C003_260925XX.MP4", "out": "48158741030400", "media": "48161433600000" },
+    { "name": "A042C004_260925XX.MP4", "out": "15603703315200", "media": "15606743040000" },
+    { "name": "A042C005_260925XX.MP4", "out": "50718392524800", "media": "50721914880000" },
+    { "name": "A042C006_260925XX.MP4", "out": "3169899532800", "media": "3170119680000" },
+    { "name": "A042C007_260925XX.MP4", "out": "20841665644800", "media": "20849633280000" },
+    { "name": "A042C008_260925XX.MP4", "out": "68152839955200", "media": "68157573120000" },
+    { "name": "A042C009_260925XX.MP4", "out": "32792356396800", "media": "32798545920000" },
+    { "name": "A042C010_260925XX.MP4", "out": "61084133510400", "media": "61085767680000" },
+    { "name": "A042C011_260925XX.MP4", "out": "52422001632000", "media": "52428902400000" },
+    { "name": "A042C012_260925XX.MP4", "out": "111438072345600", "media": "111441899520000" }
+  ]
+}

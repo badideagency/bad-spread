@@ -26,6 +26,7 @@ import { getActive, sequenceGuid, sequenceName, SessionError, type SeqContext } 
 import { ask, humanize, log, opEnd, type Answer, type AskOptions } from "./ui";
 import { verifyTracks } from "./verify";
 import type { Sequence } from "./ppro";
+import type { Mid } from "./prints";
 
 export class SpreadStop extends Error {
   /** true → kullanıcı adımlar arasında timeline'ı değiştirdi; "Ctrl+Z × N" söylenmez, yedek önerilir */
@@ -224,6 +225,8 @@ export async function prepareTracks(
 /** @param op "SPREAD" / "TOPLA" / "BAĞLA" */
 /** v1.1.0 ana ekrandaki adım adları (günlükte işlem adları aynı: SPREAD / TOPLA / BAĞLA). */
 const STEP_NAME: Record<string, string> = { SPREAD: "Dağıt", Spread: "Dağıt", TOPLA: "Topla", BAĞLA: "Bağla" };
+const GEN: Record<string, string> = { Dağıt: "Dağıt'ın", Topla: "Topla'nın", Bağla: "Bağla'nın" };
+const ACC: Record<string, string> = { Dağıt: "Dağıt'ı", Topla: "Topla'yı", Bağla: "Bağla'yı" };
 
 export function reportStop(op: string, e: unknown, executed: string[], backupName: string | null, extra: string[] = []): void {
   const stop = e instanceof SpreadStop ? e : null;
@@ -280,7 +283,11 @@ export function reportStop(op: string, e: unknown, executed: string[], backupNam
 // siliyordu (inceleme #9, m1; A7 "kayıtlar karışabilir mi"). Eski tek kayıt bir kez haritaya taşınır.
 const STOP_KEY = "spread.stoppedState.v2";
 const STOP_KEY_V1 = "spread.stoppedState.v1";
-type StopRec = { op?: string; digest?: string };
+/**
+ * v1.2.1: left = işlemin başındaki hâle dönmek için kaç Ctrl+Z daha (kısmi geri alma tanındıysa); backup = yedek adı; mids = işlemin
+ * ara hâlleri (durduktan sonra kısmen geri alınırsa tanınsın); bindPartial = BAĞLA kaydı kısmen geri alınmış bir düzenden (records.ts).
+ */
+export type StopRec = { op?: string; digest?: string; left?: number; backup?: string | null; mids?: Mid[]; bindPartial?: boolean };
 
 function stopMap(): Record<string, StopRec> {
   let m: Record<string, StopRec> = {};
@@ -305,7 +312,8 @@ function stopMap(): Record<string, StopRec> {
   return m;
 }
 
-function digest(s: Snapshot): string {
+/** Yarım iş kaydının parmak izi (klip anahtarları + track sayıları). */
+export function digest(s: Snapshot): string {
   const text = s.clips.map(keyFull).sort().join("\n") + `|${s.vCount}|${s.aCount}`;
   let h1 = 0x811c9dc5;
   let h2 = 0x01000193;
@@ -317,11 +325,20 @@ function digest(s: Snapshot): string {
   return `${text.length}:${h1.toString(16)}:${h2.toString(16)}`;
 }
 
-export async function rememberStopped(ctx: SeqContext, op: string): Promise<void> {
+export async function rememberStopped(ctx: SeqContext, op: string, extra: { backup?: string | null; mids?: Mid[] } = {}): Promise<void> {
   try {
     const s = await snapshot(ctx);
+    setStopped(ctx.guid, { op, digest: digest(s), backup: extra.backup ?? null, mids: extra.mids ?? [] });
+  } catch {
+    /* koruma yok */
+  }
+}
+
+/** v1.2.1 (records.ts): bu sequence'ın yarım iş kaydını verilen kayıtla değiştirir. */
+export function setStopped(guid: string, rec: StopRec): void {
+  try {
     const m = stopMap();
-    m[ctx.guid] = { op, digest: digest(s) };
+    m[guid] = rec;
     window.localStorage.setItem(STOP_KEY, JSON.stringify(m));
   } catch {
     /* koruma yok */
@@ -340,21 +357,49 @@ export function forgetStopped(guid: string): void {
   }
 }
 
-/** v1.2.0 ↻ Yenile için (yalnız okuma): bu sequence'ın "yarım iş" kaydı var mı. */
-export function stopMapHas(guid: string): boolean {
+/** v1.2.1 (yalnız okuma): bu sequence'ın "yarım iş" kaydı (yoksa null). */
+export function stoppedOf(guid: string): StopRec | null {
   try {
-    return guid in stopMap();
+    return stopMap()[guid] ?? null;
   } catch {
-    return false;
+    return null;
   }
 }
 
-/** Timeline, önceki bir DURDU'nun bıraktığı hâlde mi → öyleyse SpreadStop. */
-export function assertNotStopped(ctx: SeqContext, s: Snapshot, op: string): void {
-  const rec: StopRec | undefined = stopMap()[ctx.guid];
-  if (rec && rec.digest === digest(s))
-    throw new SpreadStop(
-      `Timeline, önceki ${rec.op ?? "işlem"} durduğunda kalan YARIM hâlde (geri alınmamış). ${op} BAŞLAMADI, hiçbir şey değişmedi. ` +
-        "Önce geri al (DURDU mesajındaki kadar Ctrl+Z) ya da yedek sequence'ı kullan, sonra tekrar bas."
-    );
+/**
+ * v1.2.1: timeline, önceki bir DURDU'nun bıraktığı hâlde mi (parmak izi birebir) → KİLİT DEĞİL, SORU. Kayıt tutmuyorsa (geri
+ * alınmış / elle değişmiş) records.ts → reconcile onu önceden siler. @returns true = devam
+ */
+export async function confirmNotStopped(ctx: SeqContext, s: Snapshot, op: string): Promise<boolean> {
+  const rec = stoppedOf(ctx.guid);
+  if (!rec || rec.digest !== digest(s)) return true;
+  const prev = STEP_NAME[rec.op ?? ""] ?? rec.op ?? "işlem";
+  const bk = rec.backup ? ` — ya da yedek sequence "${rec.backup}"i aç` : " ya da yedek sequence'ı aç";
+  const [q, first, second] = rec.bindPartial
+    ? [
+        `Bu sequence'ta önceki ${prev} kısmen geri alınmış görünüyor: kesilen ses parçalarının ya da silinen seslerin bir kısmı timeline'da, bir kısmı yok. ` +
+          `Önerilen: ${ACC[prev] ?? prev} Ctrl+Z ile tamamen geri al${bk}.`,
+        `Önceki ${prev} kısmen geri alınmış görünüyor (kesilmiş sesler karışık).`,
+        `Önerilen: Ctrl+Z ile tamamen geri al${rec.backup ? ` ya da yedek "${rec.backup}"` : ""}.`,
+      ]
+    : rec.left
+      ? [
+          `Bu sequence'ta önceki ${prev} yarım geri alınmış görünüyor: timeline, ${GEN[prev] ?? prev} ara hâllerinden birinde (klipler eksik ya da park yerinde olabilir). ` +
+            `Tamamen geri almak için timeline'a tıkla ve Ctrl+Z'ye ${rec.left} kez daha bas${bk}.`,
+          `Önceki ${prev} yarım geri alınmış görünüyor (klipler eksik olabilir).`,
+          `Tamamen geri almak için Ctrl+Z × ${rec.left} daha${rec.backup ? ` ya da yedek "${rec.backup}"` : ""}.`,
+        ]
+      : [
+          `Bu sequence'ta önceki ${prev} yarım kalmış görünüyor: timeline, ${prev} durduğunda kalan YARIM hâlde (geri alınmamış). ` +
+            `Önerilen: önce geri al (DURDU mesajındaki kadar Ctrl+Z)${bk}.`,
+          `Önceki ${prev} yarıda durdu; timeline o hâlde duruyor.`,
+          "Önerilen: önce Ctrl+Z ile geri al ya da yedek sequence'ı aç.",
+        ];
+  const ans = await askUser(
+    `${q} ${STEP_NAME[op] ?? op} yine de çalıştırılsın mı? (Evet = bu düzenle çalışır; önce yeni bir yedek alınır. Hayır = hiçbir şey değişmez.)`,
+    [first, second, "Devam = bu düzenle çalışır (önce yeni yedek alınır)."],
+    { title: `${STEP_NAME[op] ?? op} yine de çalıştırılsın mı?`, yes: "Yine de çalıştır", no: "Vazgeç" }
+  );
+  if (ans === "Evet") log(`Yarım iş kaydı var ama kullanıcı devam dedi (${prev} durduğunda kalan düzen).`, "warn");
+  return ans === "Evet";
 }

@@ -1,4 +1,147 @@
-# handoff — Spread v1.2.0 (panelden güncelleme + ↻ + BadIdea tasarım dili) + geçmiş (v1.1.0, v1.0.0, ADIM 3.4 … 1)
+# handoff — Spread v1.2.1 (yanlış "kırpılmış" reddi + kayıt ipucudur, kilit değil) + geçmiş (v1.2.0, v1.1.0, v1.0.0, ADIM 3.4 … 1)
+
+## v1.2.1 — HATA 1: yanlış "kırpılmış kamera klibi" reddi · HATA 2: Ctrl+Z sonrası Dağıt / Topla kilidi
+
+Kaynak: kullanıcının 2026-09-29 raporu (Emre; Spread 1.2.0, Premiere 26.5.1, sequence "A027C012_260803UH"). Kısıtlar aynen:
+Premiere kaydetmeden kapatılmaz, token gömülmez, PlayerDebugMode yalnız HKCU, TrLR varsayılanı Sil, UI/UX Pro Max `--persist` yok,
+kaynak kod güncelleme deposuna GİTMEZ.
+
+### HATA 1 — kanıt ve kural (`spread/src/trimstate.ts`, TEK kural)
+
+- Veri (fixture: `spread/dev/fixtures/rapor-260929-a027.json`): tek kamera 29.97 fps, 12 dokunulmamış klip V9 / A9'da, hepsi in = 0.
+  out TAM KARE sayısı (ör. 98877133555200 = 11666 × 8475667200), medya süresi milisaniye hizalı → medya − out 0.026…0.940 kare.
+  1.2.0'ın kuralı `out ≠ medya sonu → kırpılmış` 12'sini de kırpılmış saydı (11'i taşınacaktı → red; V9'daki yerinde kalıyordu).
+- Kural: **kırpılmamış ⇔ in = 0 (tick tam) VE 0 ≤ medya − out < 1 kare.** Negatif fark ya da ≥ 1 kare → gerçekten kırpılmış, red sürer.
+  Kare = proje öğesinin kare hızı (`ClipProjectItem.getFootageInterpretation` d.ts:L880 → `FootageInterpretation.getFrameRate` d.ts:L1598;
+  Probe'da sınanmadı → isteğe bağlı okuma) → okunamazsa sequence timebase (`Sequence.getTimebase` d.ts:L3231, `guard.frameTicks`) →
+  o da yoksa 1/23.976 sn. NTSC hızları (n × 1000/1001) tam değerine oturtulur (29.97 → 8475667200).
+- Kullananlar: `plan.ts` (`u.trim` / `u.trimmed`), SPREAD reddi ve plan günlüğündeki `[kırpılmış]` etiketi (`spread.ts`), Durum
+  raporundaki kamera satırları (`status.ts`), ilk overwrite ölçümü (`overwriteFit`). Red satırı farkı tick + ms + kare ve kare kaynağıyla yazar.
+
+### HATA 1 — SPREAD'de "ilk overwrite (ölçüm)" (`spread.ts` → `Overwriter`)
+
+Akış artık: yedek → (TX-A track hazırlığı) → **dağıt** (clone + sil) → **ilk overwrite (ölçüm)** (ilk kamera TEK BAŞINA) → **overwrite**
+(kalanlar). Her overwrite'tan sonra yerleşen video ve ses(ler)in start/end/in/out'u aslıyla tick düzeyinde karşılaştırılır:
+- birebir → devam;
+- YALNIZ kuyruk farklı (start ve in aynı, Δend = Δout ≠ 0) ve |Δ| < 1 kare → AYRI transaction'da klip başına TEK `SetOutPoint`
+  (kanıtlı kural, trimcal.ts: SetOutPoint yalnız kuyruğu değiştirir). **End hiç kullanılmaz** (End + Out aynı transaction'da iki kez
+  kırpar — v0.3.4 kanıtı). Bağlı sesin videonun SetOutPoint'ini izleyip izlemediği bilinmiyor → HER seferinde önce yalnız videolar,
+  sesler okunur: izlediyse sese action yok; izlemediyse sese AYRI transaction'da SetOutPoint (video + ses aynı transaction'da hiç
+  ölçülmedi); karışık ya da ilk ölçümle çelişen → DUR. Sonra yeniden doğrulanır.
+- başka her fark (baş, start kayması, ≥ 1 kare) → **DUR**, kalan kameralara dokunulmaz; ölçülen fark (tick + ms + kare), Ctrl+Z
+  sayısı ve yedek adı yazılır.
+- Kameraların proje öğeleri her overwrite'tan HEMEN önce **yedek sequence'tan** taze okunur (asılları "dağıt"ta silindi; hiçbir
+  referans bir transaction'ı aşamaz — Probe kuralı). Yedek, makeBackup'ta aslıyla birebir doğrulanmıştı.
+- Ctrl+Z sayısı: dağıt + ilk overwrite + overwrite (+ varsa kuyruk düzeltmeleri) — ölçülerek tutulur; günlükte ve sonuç satırının
+  "Ne yapmalıyım?" metninde yazılır.
+- **Kısmi Ctrl+Z** (inceleme #13 M1): "dağıt" kameraların asıllarını siler, overwrite'lar sonraki transaction'larda geri koyar → geri alma
+  geçmişinde kameraların OLMADIĞI ara hâller var. Her adımdan sonraki doğrulanmış hâlin parmak izi + "kaç Ctrl+Z daha" işarete yazılır
+  (`prints.ts Trail`, `steps.setStepMids`; durursa yarım iş kaydına). Kullanıcı Ctrl+Z'ye gereğinden az basarsa bu hâl tanınır →
+  kayıt yarım iş kaydına çevrilir → bir sonraki işlem "Dağıt yarım geri alınmış görünüyor … Ctrl+Z'ye N kez daha bas — ya da yedek"
+  diye SORAR (kilit değil). TOPLA'da da aynı (park / yerleştirme adımları).
+- SPREAD de artık "yarım iş" kaydı bırakır (durunca) ve başarıda siler.
+
+### HATA 2 — kilit noktaları envanteri (önce → şimdi)
+
+| Yer | 1.2.0'da | 1.2.1'de |
+|---|---|---|
+| Adım göstergesi (`steps.ts`, `spread.steps.v1`; `ui.ts renderSteps`) | Dağıt ✓ → Dağıt düğmesi GİZLİ (yalnız adın arkasında "Yeniden çalıştır"); işaret timeline'la hiç karşılaştırılmıyordu, ↻ silmiyordu (Emre'nin kilidi) | işaret işlem sonundaki parmak iziyle yazılır; tutmazsa silinir → sıradaki adım yeniden Dağıt |
+| Göstergede TOPLA / BAĞLA ✓ (`stepViews`: TOPLA kaydı + BAĞLA aşaması) | geri alınsa da ✓ kalıyordu | TOPLA geri alınınca (layoutState "undone") kayıt, BAĞLA geri alınınca (bindState "none"/"partial") aşama silinir |
+| Yarım iş koruması (`guard.ts assertNotStopped`, `spread.stoppedState.v2`) | TOPLA / BAĞLA "YARIM hâlde … BAŞLAMADI" | `confirmNotStopped`: tutuyorsa SORU; tutmuyorsa silinir; SPREAD de kullanır |
+| ↻ (`index.ts reloadPanels`) | yarım iş varsa "Yine de yenilensin mi?"; kayıtlara dokunmuyordu | bu sequence'ın bütün kayıtlarını siler, soru yok — TEK istisna: Bağla kesimi bağlanmayı bekliyorsa "Kayıtlar da temizlensin mi?" [Temizle ve yenile] [Yalnız yenile]; "Yalnız yenile" de adım işaretlerini ve yarım iş kaydını siler, yalnız Topla / Bağla verisini ve KES planını korur (silinirse o kesim artık bağlanamaz) |
+| TOPLA: "Bu sequence BAĞLA'dan geçti … BAŞLAMADI" (kesimli BAĞLA) | kilit | SORU ("Bağla zaten yapılmış görünüyor … Yine de çalıştırılsın mı?", kesim uyarısıyla) |
+| TOPLA / BAĞLA: "BAĞLA'dan sonra düzen değişmiş … BAŞLAMADI" (bindState "partial") | kilit | bayat → aşama + eski KES planı silinir; timeline'da kesilmiş / silinmiş sesler karışık olduğu için yarım iş kaydı yazılır → bir sonraki işlem SORAR ("Bağla kısmen geri alınmış görünüyor"); Evet'te canlı timeline'dan çalışır (BAĞLA'nın ön koşulları planı yine denetler) |
+| TOPLA, kayıt YOKKEN kesilmiş sesler (↻ sonrası, başka bilgisayar) | kontrol yoktu | canlı timeline'dan tanınır (aynı kaynağın aynı track'te aynı senkron konumunda ≥ 2 parçası, `topla.ts cutPieces`) → SORU |
+| BAĞLA: "son TOPLA geri alınmış — önce TOPLA'ya bas" | plan hatası | TOPLA kaydı bayat → silinir → "Önce TOPLA'ya bas: kayıt yok" (VERİ gereksinimi: BAĞLA'nın çerçevesi / eşlemesi TOPLA'dan) |
+| BAĞLA: "Önce TOPLA'ya bas: kayıt yok" | red | AYNI (veri gereksinimi, kayıt kilidi değil) |
+| BAĞLA: "Ayar TOPLA'dan sonra değişti" (recordDrift) | red | AYNI (ayar ↔ kayıt; timeline'la ilgisi yok — yanlış planı önler) |
+| TOPLA: "PARK KAYDI" (layoutState "changed") | soru | AYNI (zaten soru) |
+| Yardımcı panel "Bağla bekliyor" (`link-plan.json`) | geri alınmış BAĞLA'nın planı kalıyordu | bayat BAĞLA ve ↻ bu sequence'ın planını (+ o planın `link-result.json`'unu) siler; başka sequence'ın planına dokunulmaz |
+| Düğme devre dışı (`index.ts ACTIONS`) | yalnız işlem sürerken / aktif sequence yokken | AYNI (kayda bağlı değil) |
+| Kırpma kalibrasyonu (`spread.trimCal.v1`) | — | DOKUNULMAZ (↻ dahil; Premiere'in ölçümü) |
+
+### HATA 2 — tasarım (`spread/src/records.ts`)
+
+- **Parmak izi:** `fingerprint` = klip sayısı + klip başına (kaynak, tür, track, start, end, in, out) hash'i; `trackPrint` = aynısı
+  zamanlar HARİÇ. Adım işaretine işlem bitince yazılır (`index.ts stampStep`, `steps.setStepPrint`).
+- **reconcile** (bayatı sil): panel açılınca, sequence değişince, timeline'ın **şekli** değişince (track / klip sayıları, 3 sn'de bir
+  hafif okuma, yalnız kayıt varsa — `model.readShape`) ve **her işlemden önce**. Günlük: "Timeline değişmiş (geri alma/elle düzenleme) —
+  önceki <adım> kaydı unutuldu." 1.2.0'dan kalan parmak izsiz işaret: "… doğrulanamıyor (eski sürümün kaydı) — unutuldu."
+  - Dağıt işaretinin bayatlığı `trackPrint`'e bakar: Dağıt'tan sonra **Clip › Synchronize klipleri zamanda kaydırır ama track'lerini
+    değiştirmez** (beklenen adım) — tam parmak izi kullanılsaydı her Synchronize Dağıt ✓'ünü silerdi. Ctrl+Z klipleri eski track'lerine
+    döndürür → bayat.
+  - Topla: TOPLA kaydının kendi parmak izi (`layout.pre/post`) — yalnız "undone" (TOPLA tamamen geri alınmış) bayat. Elle düzeltme
+    ("changed") bayat SAYILMAZ: BAĞLA'nın verisi bu kayıttan; tutarlılığı BAĞLA canlı timeline'dan kendisi denetler (yeni kilit eklenmesin).
+  - Bağla: `bindState` "none" / "partial" → bayat.
+  - Zincir: en son geçerli adım ve öncekiler kalır, sonrakiler silinir.
+- **Tutan kayıt → soru** (`confirmRedo`): "Bu sequence'ta <adım> zaten yapılmış görünüyor. Yine de çalıştırılsın mı?" — timeline, o
+  adımın bittiği hâliyle BİREBİR (tam parmak izi). Dağıt, sonraki adımlara da bakar; Topla yalnız kendine (Bağla sonrası hâli kendi,
+  daha ayrıntılı sorusuyla); Bağla yalnız bağlama bittiyse.
+- **↻** (`clearSequenceRecords`): işaretler, yarım iş, TOPLA / BAĞLA kaydı, bu sequence'ın eski KES planı. Kalibrasyon ve başka
+  sequence'lar kalır. Bildirim yeniden yüklemeden sonra ("Bu sequence'ın kayıtları temizlendi.", `spread.reloadNote.v1`).
+- **Boş track'ler:** SPREAD'in hedefleri 0'dan sıralı → var olan track'ler (boşlar dahil) yenilerinden ÖNCE kullanılır; A027 verisinde
+  (V 12 / A 16, yalnız V9 / A4 / A9 dolu) yeni track açılmaz (mock: "0 track açılacak (V 0, A 0)").
+- Durum raporunda yeni bölüm "KAYITLAR": her kaydın canlı timeline'la tutup tutmadığı (salt okuma).
+
+### İnceleme #13 (bağımsız alt ajan, ca1b200..161b59b) ve düzeltmeler
+
+Tek kural, d.ts / uxp.d.ts yorumları, End + Out yokluğu, transaction'ı aşan referans yokluğu, sert kısıtlar: bulgu yok.
+
+| Bulgu | Düzeltme |
+|---|---|
+| **M1** kısmi Ctrl+Z Dağıt'ı kameraların eksik olduğu ara hâlde bırakıyor; kayıt "bayat" sayılıp Dağıt sessizce eksik kamerayla çalışabiliyordu | ara hâllerin parmak izi + kalan Ctrl+Z sayısı (`Trail`) → tanınınca SORU "Ctrl+Z'ye N kez daha"; Ctrl+Z sayısı sonuç ipucunda da |
+| **M2** kısmen geri alınmış BAĞLA ("partial") unutulup TOPLA sorusuz çalışıyordu | "partial" → yarım iş kaydı (`bindPartial`) → TOPLA / BAĞLA SORAR; `partial_undo` TOPLA'yı da sınar |
+| **M3** ↻ güvenliğin dayandığı veriyi de siliyor: (a) TOPLA'nın "Bağla yapılmış" sorusu kayda bağlıydı, (b) bekleyen bağlamada KES planı + kayıt gidiyordu | (a) kesilmiş sesler canlı timeline'dan tanınır → SORU; (b) yalnız bağlama beklerken ↻ sorar (Yalnız yenile / Temizle ve yenile) |
+| m1 `follow === false` bilindikten sonra video + ses SetOutPoint'i tek transaction'da (ölçülmemiş birleşim) | her zaman önce video, ses ayrı transaction'da; ilk ölçümle çelişen → DUR (`a027_follow_mismatch`) |
+| m2 `shapeOf` getTrackIndex, `readShape` döngü index'i kullanıyordu | ikisi de döngü index'i (`loopTrack`) |
+| m3 `stampStep` sequence değişince iz yazmıyordu → ✓ "eski sürüm kaydı" diye silinebiliyordu | işlemin sequence'ı listeden bulunup okunur; iz yoksa metin "parmak izi yok" (eski sürüm iddiası yok) |
+| m4 kısmi TOPLA geri alması ("changed") Topla ✓'ünü bırakıyordu | ara hâl tanınır → yarım iş + TOPLA kaydı unutulur. Kalan: TOPLA hiçbir kamerayı taşımadıysa (pre = post) tam geri alma "undone" sayılamaz — ✓ ipucu olarak kalır, işlem yine sorar |
+| m5 satır içi "partial" dalları ve Bağla sonrası "Evet"le biten TOPLA eski KES planını silmiyordu | `dropLinkPlan` eklendi |
+| Nit: JSDoc yeri, yeniden yükleme olmazsa ↻ bildirimi sonraki açılışta çıkıyordu, "Zaten dağıtılmış" `forgetStopped` çağırmıyordu | düzeltildi. `reconcile` planı `createdAt`'sız siler (bilerek: yalnız-bağla yolu `bind.at`'ı günceller) |
+| Eksik sınamalar: toplu overwrite'ta DUR, izleme tutarsızlığı, yarım işte "Yine de çalıştır" | `a027_batch_stop`, `a027_follow_mismatch`, `hint_spread_undo` (Yine de) |
+
+Düzeltmelerin doğrulaması (aynı ajan, 161b59b..98f164b): M1–M3, m1–m5 ve nit'ler düzeltilmiş; normal akışta (Dağıt → Synchronize →
+Topla → Bağla) ara hâl tanıma ya da `cutPieces` yanlış tetiklenmiyor. Kalan 3 Minor da düzeltildi:
+- N1: "Zaten dağıtılmış / toplanmış" (no-op) işaretin parmak izini, ara hâllerini ve yedeğini silmiyor (`hint_noop_mids`).
+- N2: kayıt unutulunca, geçerli olduğu hâlin parmak iziyle "unutulanlar"a (`spread.forgotten.v1`) konur; Ctrl+Z → Ctrl+Y ile o hâle
+  dönülürse işaretler, TOPLA / BAĞLA verisi ve KES planı geri yüklenir ("… unutulan kayıtlar geri yüklendi."). Yeni bir işlem bitince
+  ya da ↻'da silinir (`hint_redo`).
+- N3: ↻'da "Yalnız yenile" de işaretleri ve yarım iş kaydını siler; yalnız Topla / Bağla verisi ve KES planı kalır. (`pendingLink`
+  timeline okumaz: Ctrl+Z'den hemen sonra ↻'da soru gereksiz çıkabilir — yalnız soru.)
+- Nit'ler: iki kez "ara hâl" satırı yazılmıyor; kesim sorusu yalnız "Bağla kısmen geri alınmış" sorusu sorulduysa atlanıyor.
+
+### Belirsizlikler / gerçek Premiere'de bakılacak (v1.2.1)
+
+1. Gerçek overwrite'ın kuyruğu: Premiere tam kare mi yerleştiriyor (ölçüm "birebir") yoksa medya sonuna mı uzatıyor ("yalnız kuyruk",
+   SetOutPoint düzeltir)? İkisi de mock'ta sınandı; hangisi olduğu ilk gerçek Dağıt'ın günlüğünde ("ölçüm …" satırı) görünür.
+2. Bağlı video klibine `createSetOutPointAction` bağlı sesi de değiştiriyor mu (ölçülür; iki durum da mock'ta).
+3. `getFootageInterpretation().getFrameRate()` Premiere 26.5.1'de dönüyor mu (dönmezse sequence timebase — raporda "kare kaynağı").
+4. Premiere'de Ctrl+Z, işlemin açtığı track'leri de siliyor mu (Emre'nin sequence'ı: silmiyor gibi — boş track'ler kalmış).
+5. UXP `fs.unlink` (plan dosyası silme; belgede var, Spread'de ilk kullanım — olmazsa yalnız kayıt silinir, yardımcı eski planı gösterir).
+6. Şekil izleme 3 sn'de bir (yalnız kayıt varken) track başına `getTrackItems` — Premiere'i yormadığı gerçek projede görülecek.
+7. Premiere yerleşen kuyruğu bir SONRAKİ kareye yuvarlarsa (Δ tam 1 kare) kural "< 1 kare" gereği DURUR (istenen kural; olursa ölçüm
+   satırı gösterir).
+8. Kısmi Ctrl+Z tanıma, ara hâlin tam parmak izine dayanır: gerçek Premiere'in geri alması klipleri birebir eski tick'lerine
+   döndürmezse ara hâl tanınmaz → kayıt "bayat" sayılır (1.2.0'daki gibi değil ama M1 öncesi davranış).
+
+### Mock (v1.2.1): 102 → 119 senaryo (316 → 379 ✓)
+
+- HATA 1: `trimstate_unit` (12 gerçek değer, sınırlar, kare kaynağı, overwriteFit), `a027_spread` (a), `a027_status`, `a027_trimmed` (b),
+  `a027_tail` + `a027_tail_follow` (c: kuyruk medya sonuna uzadı → SetOutPoint; bağlı ses izlemiyor / izliyor), `a027_head` (d: baş
+  kayması → DUR; kuyruk ≥ 1 kare → DUR).
+- HATA 2: `hint_spread_undo` (1.2.0'dan kalan izsiz işaret + Dağıt → Ctrl+Z → Dağıt, kısmi Ctrl+Z), `hint_spread_reload` (Dağıt → Ctrl+Z →
+  Dağıt → ↻ → Dağıt), `hint_topla_undo`, `hint_same_question` (değişmemiş timeline → soru; Synchronize Dağıt ✓'ünü silmez), `reload_scope`
+  (↻ başka sequence'a, kalibrasyona ve ötekinin planına dokunmaz).
+- Beklentisi DEĞİŞEN eski senaryolar (davranış bilerek değişti; güvenlik özelliği aynı — hiçbir şey değişmez / Vazgeç'te hiçbir şey):
+  `real` (transaction listesi + Ctrl+Z 2 → 4; düzen denetimi aynen), `broken` (bozukluk artık ilk overwrite ölçümünde; Ctrl+Z 3),
+  `partial_undo`, `adv_after` (a), `adv_undone_park` (günlük satırı), `stop_per_guid`, `stale` (yarım iş → soru), `reload` (↻ soru
+  sormaz), güncelleme senaryoları (sürüm sabitleri paketin sürümünden). 12 Eylül rapor fixture'ıyla (`senkron-raporu-260912.txt`)
+  çalışan senaryoların hiçbirinin beklentisi değişmedi; aynı günün düzenini kuran `real` (setupReal) transaction listesi / Ctrl+Z
+  sayısı yüzünden değişti (düzen denetimi aynen).
+- İnceleme #13'ten sonra: `reload_pending_link`, `a027_batch_stop`, `a027_follow_mismatch`, `hint_noop_mids`, `hint_redo`; `hint_spread_undo` / `hint_topla_undo` /
+  `partial_undo` kısmi geri almayı ve "Yine de"yi sınar; `a027_tail` artık video ve ses SetOutPoint'lerini ayrı bekler.
+
+
 
 ## v1.2.0 — otomatik güncelleme + ↻ Yenile + BadIdea tasarım dili (TOPLA / BAĞLA / SPREAD mantığı DEĞİŞMEDİ)
 

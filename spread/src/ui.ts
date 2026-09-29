@@ -367,6 +367,16 @@ function paintResult(kind: ResultKind, headline: string, hint: string, details: 
   }
 }
 
+/** v1.2.1: işlem dışında kısa bildirim (ör. ↻ Yenile'den sonra "Bu sequence'ın kayıtları temizlendi."). */
+export function notice(kind: ResultKind, headline: string): void {
+  if (opActive) return;
+  try {
+    paintResult(kind, headline, "", []);
+  } catch {
+    /* gösterge yoksa geç */
+  }
+}
+
 /** "Ne yapmalıyım?" → ne yapılacağını göster / gizle. */
 export function toggleHint(): void {
   const h = maybe("result-hint");
@@ -420,6 +430,9 @@ const HUMAN: [RegExp, string][] = [
   [/YARIM hâlde/, "Önceki işlem yarım kaldı; önce geri al (Ctrl+Z) ya da yedek sequence'ı aç."],
   [/^KAMERA klibinin çift kopyası var/, "Bir kamera klibi aynı yerde iki kez var; fazlasını elle sil."],
   [/^İLK TAŞIMA TUTMADI/, "İlk taşıma beklendiği gibi olmadı; işlem durdu."],
+  [/^İLK OVERWRITE TUTMADI|^OVERWRITE TUTMADI/, "Kamera klibi aslıyla aynı yerleşmedi; Dağıt durdu."],
+  [/^Kuyruk düzeltme/, "Kamera klibinin sonu düzeltilemedi; Dağıt durdu."],
+  [/^Yedek sequence bulunamadı|yedek sequence'ta bulunamadı/, "Yedek sequence okunamadı; Dağıt durdu."],
   [/^İLK PARÇA TUTMADI/, "İlk ses kesimi beklendiği gibi olmadı; işlem durdu."],
   [/^KALİBRASYON TUTARLI BİR KURAL VERMEDİ/, "Kırpma komutları ölçülemedi; hiçbir şey kesilmedi."],
   [/^Kalibrasyonda .* beklenmeyen bir değişiklik/, "Kırpma ölçümü sırasında beklenmeyen bir değişiklik oldu; işlem durdu."],

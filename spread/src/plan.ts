@@ -5,6 +5,8 @@
 //   SADECE-VİDEO    = eşleşen sesi olmayan video klibi
 //   SES birimi      = kamera birimine ait olmayan her ses klibi (harici WAV'lar)
 // Hedef düzen: video birimleri start sırasıyla V1, V2, …; kamera sesleri (kanal kanal) A1, A2, …; ses birimleri onların altında.
+// Hedefler 0'dan sıralı → sequence'ta VAR OLAN track'ler (boş olanlar dahil) yenilerinden ÖNCE kullanılır; yeni track yalnız
+// gereken sayı mevcut sayıyı aşarsa açılır (v1.2.1: kısmi Ctrl+Z'den kalan boş track'ler böylece yeniden doldurulur).
 // Sonuç: her track'te en fazla 1 klip. HİÇBİR klibin start/end/in/out'u değişmez, yalnız track'i değişir.
 //
 // Taşıma (TX-B, tek transaction, bu sırayla):
@@ -14,6 +16,7 @@
 // "Kalan" birim: tüm klipleri zaten hedef track'indeyse hiç dokunulmaz.
 
 import { big, trackLabel, type ClipInfo, type Snapshot } from "./model";
+import { trimState, type TrimState } from "./trimstate";
 
 export type UnitKind = "camera" | "video" | "audio";
 
@@ -30,8 +33,10 @@ export interface Unit {
   vTarget: number | null;
   aTarget: number | null;
   stays: boolean;
-  /** kamera: in≠0 ya da out≠medya süresi (true), kırpılmamış (false), bilinmiyor (null) */
+  /** kamera: kırpılmış (true), kırpılmamış (false), bilinmiyor (null) — v1.2.1: TEK kural trimstate.ts → trimState */
   trimmed: boolean | null;
+  /** kamera: kırpma durumunun ayrıntısı (medya − out, kare) — kamera değilse null */
+  trim: TrimState | null;
 }
 
 export interface Placement {
@@ -65,8 +70,9 @@ const sameTimes = (a: ClipInfo, b: ClipInfo) => a.start === b.start && a.end ===
 
 /**
  * @param clipType ppro.ProjectItem.TYPE_CLIP (kamera birimlerinin proje öğesi overwrite edilebilir bir klip olmalı)
+ * @param seqFrame sequence timebase'inin kare süresi (tick) — kırpma kuralında footage kare hızı okunamazsa kullanılır (null → 23.976)
  */
-export function makePlan(s: Snapshot, clipType: number | null): Plan {
+export function makePlan(s: Snapshot, clipType: number | null, seqFrame: bigint | null = null): Plan {
   const errors: string[] = [];
   const warnings: string[] = [];
   for (const w of s.warnings) warnings.push(`okuma uyarısı: ${w}`);
@@ -90,6 +96,7 @@ export function makePlan(s: Snapshot, clipType: number | null): Plan {
       aTarget: null,
       stays: false,
       trimmed: null,
+      trim: null,
     };
   };
 
@@ -155,8 +162,10 @@ export function makePlan(s: Snapshot, clipType: number | null): Plan {
       if (c.name !== c.projName && c.projName !== "?")
         warnings.push(`yeniden adlandırılmış kamera klibi "${c.name}" (kaynak "${c.projName}") — overwrite kaynak adını kullanır, klip adı taşınmaz`);
     }
-    // başı kırpılmışsa (in ≠ 0) medya süresi okunamasa da kırpılmış (v0.3.4: SPREAD baştan reddeder)
-    u.trimmed = v.inPt !== "0" ? true : v.mediaDur === null ? null : v.outPt !== v.mediaDur;
+    // v1.2.1: TEK kural (trimstate.ts): kırpılmamış ⇔ in = 0 VE 0 ≤ medya − out < 1 kare. Başı kırpılmışsa (in ≠ 0) medya süresi
+    // okunamasa da kırpılmış (v0.3.4: SPREAD baştan reddeder).
+    u.trim = trimState(v, seqFrame);
+    u.trimmed = u.trim.state === "trimmed" ? true : u.trim.state === "full" ? false : null;
   }
 
   const stay = units.filter((u) => u.stays);

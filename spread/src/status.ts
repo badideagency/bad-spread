@@ -8,10 +8,13 @@ import { bindState, layoutState, parkedFromRecord } from "./collect";
 import { analyze, describeLinks, sessionGroups } from "./sessions";
 import { getThreshold, loadRecord, loadTrimCal, mappingFor, recordDrift } from "./settings";
 import { hostVersion } from "./calibrate";
+import { frameTicks } from "./guard";
+import { fmtDiff, frameText } from "./trimstate";
 import { describeCal } from "./trimcal";
 import { readPanelLinkResult } from "./linker";
 import { big, secOf, snapshot, trackLabel, type ClipInfo } from "./model";
 import { makePlan, type Unit } from "./plan";
+import { describeRecords } from "./records";
 import { requireActive } from "./session";
 import { SPREAD_VERSION } from "./version";
 
@@ -26,7 +29,7 @@ function overlapTicks(a: ClipInfo, b: ClipInfo): bigint {
 export async function buildStatusReport(): Promise<string> {
   const ctx = await requireActive();
   const s = await snapshot(ctx, { media: true });
-  const plan = makePlan(s, null);
+  const plan = makePlan(s, null, await frameTicks(ctx));
   const cls = classify(s);
   const roleOf = new Map(cls.map((x) => [x.clip, roleLabel(x)]));
   const L: string[] = [];
@@ -58,6 +61,14 @@ export async function buildStatusReport(): Promise<string> {
   L.push("");
   L.push(`BİRİMLER: ${plan.counts.camera} kamera (${plan.counts.cameraChannels} ses kanalı), ${plan.counts.videoOnly} sadece-video, ${plan.counts.audio} ses`);
   for (const w of plan.warnings) L.push(`  uyarı: ${w}`);
+  // v1.2.1: kırpma durumu — SPREAD'in reddiyle AYNI kural (trimstate.ts)
+  for (const u of plan.units.filter((x) => x.kind === "camera" && x.trim)) {
+    const t = u.trim!;
+    const tag = t.state === "trimmed" ? " [kırpılmış]" : t.state === "unknown" ? " [kırpma bilinmiyor]" : "";
+    L.push(
+      `  kamera ${trackLabel("V", u.video!.track)} "${u.label}"${tag}: ${t.why}${t.diff !== null && t.state !== "full" && !/medya − out/.test(t.why) ? ` (medya − out = ${fmtDiff(t.diff, t.frame)})` : ""}; ${frameText(t.frame)}`
+    );
+  }
 
   L.push("");
   L.push("EŞLEŞME — her ses birimi için zamanda çakıştığı kameralar (en uzun çakışma önce)");
@@ -113,6 +124,9 @@ export async function buildStatusReport(): Promise<string> {
       );
     if ((bs === "applied" || bs === "thinned") && rec.bind!.created.length) L.push("  not: harici sesler çapalara kesildi — aşağıdaki oturum analizi kesilmiş düzene göredir (TOPLA/BAĞLA bunu kullanmaz)");
   }
+  L.push("");
+  L.push("KAYITLAR (v1.2.1: ipucu, kilit değil — tutmayan kayıt bir sonraki işlemde / panel açılınca unutulur)");
+  for (const l of describeRecords(ctx.guid, s)) L.push(`  ${l}`);
   const cal = loadTrimCal(ctx.guid, hostVersion());
   if (cal) {
     L.push(`  KIRPMA KALİBRASYONU (kanıtlanmış, bu sequence'ta ${cal.at}, Premiere ${cal.host}; δ = ${cal.delta} tick):`);
